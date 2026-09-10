@@ -1,4 +1,4 @@
-// ===== js/main.js – 主循环与启动（含武器面板点击锁定 + 移动端适配） =====
+// ===== js/main.js – 主循环与启动（含移动端横屏适配） =====
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -8,14 +8,48 @@ renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.setScissorTest(false);
 
 // ---- 手机端性能优化 ----
-const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+// 用 CSS 媒体查询判断：仅手机/平板（触摸为主）返回 true
+// 带触摸屏的 PC 依然返回 false，不影响鼠标锁定
+const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
 if (isTouchDevice) {
-    renderer.setPixelRatio(1);               // 降低像素比，省电
+    renderer.setPixelRatio(1);
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    // 若手机发热严重，可取消下面注释关闭阴影
-    // renderer.shadowMap.enabled = false;
+    // renderer.shadowMap.enabled = false; // 发热严重时开启
 }
 document.body.appendChild(renderer.domElement);
+
+// ===== 手机横屏锁定与检测 =====
+async function lockLandscape() {
+    if (!isTouchDevice) return;
+    try {
+        if (screen.orientation && screen.orientation.lock) {
+            await screen.orientation.lock('landscape');
+            console.log('✅ 已锁定横屏');
+        }
+    } catch (err) {
+        console.warn('⚠️ 横屏锁定失败（浏览器不支持或用户拒绝）:', err);
+    }
+}
+
+function checkOrientation() {
+    if (!isTouchDevice) return;
+    const isPortrait = window.innerHeight > window.innerWidth;
+    const overlay = document.getElementById('rotateOverlay');
+    // 仅在游戏进行中且竖屏时显示提示
+    const shouldShow = isPortrait && running;
+    if (overlay) {
+        overlay.style.display = shouldShow ? 'flex' : 'none';
+    }
+    // 横屏时尝试锁定
+    if (!isPortrait) {
+        lockLandscape();
+    }
+}
+
+window.addEventListener('resize', checkOrientation);
+window.addEventListener('orientationchange', () => {
+    setTimeout(checkOrientation, 200);
+});
 
 // ---------- 鼠标控制 ----------
 renderer.domElement.addEventListener('click', () => {
@@ -32,18 +66,23 @@ document.addEventListener('mousemove', e => {
     }
 });
 
-// ---------- 全屏与锁鼠标（移动端适配） ----------
+// ---------- 全屏与锁鼠标 ----------
 function enterFullscreenAndLock() {
-    // 触摸设备：只全屏，不锁定指针
+    // 触摸设备：只全屏 + 尝试横屏锁定，不锁指针
     if (isTouchDevice) {
         if (!document.fullscreenElement && !document.webkitFullscreenElement) {
             const el = document.documentElement;
-            if (el.requestFullscreen) {
-                el.requestFullscreen().catch(() => {});
-            } else if (el.webkitRequestFullscreen) {
-                el.webkitRequestFullscreen();
-            }
+            const fsPromise = el.requestFullscreen
+                ? el.requestFullscreen()
+                : (el.webkitRequestFullscreen ? Promise.resolve(el.webkitRequestFullscreen()) : Promise.resolve());
+
+            Promise.resolve(fsPromise)
+                .then(() => { lockLandscape(); })
+                .catch(() => {});
+        } else {
+            lockLandscape();
         }
+        setTimeout(checkOrientation, 300);
         return;
     }
 
@@ -74,11 +113,13 @@ document.addEventListener('fullscreenchange', () => {
     if (running && document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
         renderer.domElement.requestPointerLock();
     }
+    if (isTouchDevice) lockLandscape();
 });
 document.addEventListener('webkitfullscreenchange', () => {
     if (running && document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
         renderer.domElement.requestPointerLock();
     }
+    if (isTouchDevice) lockLandscape();
 });
 
 // ---------- 武器面板按钮事件 ----------

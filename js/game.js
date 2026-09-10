@@ -333,6 +333,11 @@ function endMatch(winner) {
     document.getElementById('endScore').textContent = `${p1.score} : ${p2.score}`;
     el.style.display = 'flex';
     sWin();
+
+    // 结束游戏时隐藏横屏提示
+    document.body.classList.remove('in-game');
+    const rot = document.getElementById('rotateOverlay');
+    if (rot) rot.style.display = 'none';
 }
 
 function resetMatch() {
@@ -345,6 +350,10 @@ function resetMatch() {
     document.getElementById('endOverlay').style.display = 'none';
     document.getElementById('startOverlay').style.display = 'none';
     running = true;
+
+    // 进入游戏：让竖屏时显示横屏提示（仅在手机触发）
+    document.body.classList.add('in-game');
+    if (typeof checkOrientation === 'function') checkOrientation();
 }
 
 // ---- 更新玩家1 ----

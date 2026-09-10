@@ -411,56 +411,74 @@ table.ctrl td.k {
     display: none;
 }
 
-/* ===== 移动端触控层样式 ===== */
+/* ============================================================
+   移动端适配
+   ============================================================ */
+
+/* ---------- 横屏提示层 ---------- */
+#rotateOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: #08131f;
+    color: #fff;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    touch-action: none;
+}
+#rotateOverlay .rotate-icon {
+    font-size: 80px;
+    animation: rotateHint 1.8s ease-in-out infinite;
+    margin-bottom: 24px;
+}
+#rotateOverlay .rotate-text {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    color: #ffd24a;
+}
+#rotateOverlay .rotate-sub {
+    font-size: 14px;
+    color: #9fb2c8;
+    margin-top: 12px;
+    letter-spacing: 2px;
+}
+@keyframes rotateHint {
+    0%, 100% { transform: rotate(0deg); }
+    50%      { transform: rotate(90deg); }
+}
+
+/* ---------- 触摸设备通用调整 ---------- */
 #mobile-controls {
     display: none !important;
 }
-/* 仅触摸设备显示 */
 @media (pointer: coarse) {
     #mobile-controls {
         display: block !important;
     }
-    /* 隐藏PC端提示语 */
     .subhint {
         display: none !important;
     }
-    /* 调整HUD文字大小，适应小屏 */
-    .score {
-        font-size: 28px;
-        top: 8px;
-    }
-    .timer {
-        font-size: 18px;
-        top: 8px;
-        padding: 2px 10px;
-    }
-    .ammo {
-        font-size: 22px;
-    }
-    .hp-armor {
-        font-size: 14px;
-        gap: 10px;
-    }
-    .wtag {
-        font-size: 11px;
-        bottom: 55px;
-    }
-    .bottom {
-        left: 12px;
-        right: 12px;
-        bottom: 12px;
-    }
-    /* 覆盖层文字适应 */
-    .overlay h1 {
-        font-size: 30px;
-        letter-spacing: 2px;
-    }
-    table.ctrl th, table.ctrl td {
-        padding: 4px 10px;
-        font-size: 13px;
-    }
-    .btn {
-        font-size: 16px;
-        padding: 10px 30px;
+    /* HUD 文字缩小 */
+    .score { font-size: 28px; top: 8px; }
+    .timer { font-size: 18px; top: 8px; padding: 2px 10px; }
+    .ammo  { font-size: 22px; }
+    .hp-armor { font-size: 14px; gap: 10px; }
+    .wtag  { font-size: 11px; bottom: 55px; }
+    .bottom { left: 12px; right: 12px; bottom: 12px; }
+
+    /* 覆盖层适配 */
+    .overlay h1 { font-size: 30px; letter-spacing: 2px; }
+    table.ctrl th, table.ctrl td { padding: 4px 10px; font-size: 13px; }
+    .btn { font-size: 16px; padding: 10px 30px; }
+}
+
+/* ---------- 竖屏时，手机显示横屏提示 ---------- */
+@media (pointer: coarse) and (orientation: portrait) {
+    body.in-game #rotateOverlay {
+        display: flex !important;
     }
 }

@@ -1,23 +1,19 @@
-// ===== js/input.js – 键盘/鼠标/触摸输入（B键切换面板并控制鼠标锁定） =====
+// ===== js/input.js – 键盘/鼠标/触摸输入 =====
 const keys = {};
 const mouse = { aim: false, leftDown: false };
 
 // ---------- 键盘事件 ----------
 window.addEventListener('keydown', e => {
-    // 阻止可能导致页面退出的按键
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
     if ((e.ctrlKey || e.metaKey) && (e.key === 'w' || e.key === 'W' || e.key === 't' || e.key === 'T')) {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
     }
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F' || e.key === 's' || e.key === 'S' || e.key === 'p' || e.key === 'P')) {
-        e.preventDefault();
-        e.stopPropagation();
+    if ((e.ctrlKey || e.metaKey) && ['f','F','s','S','p','P'].includes(e.key)) {
+        e.preventDefault(); e.stopPropagation();
     }
-    
+
     if (!e.repeat) {
         if (e.code === 'KeyR') startReload(p1, performance.now());
-        // 按 B 键切换武器面板
         if (e.code === 'KeyB') {
             if (running && !isOver()) {
                 const panel = document.getElementById('weaponPanel');
@@ -25,14 +21,15 @@ window.addEventListener('keydown', e => {
                     const isOpen = panel.style.display !== 'none';
                     if (isOpen) {
                         panel.style.display = 'none';
-                        if (document.pointerLockElement !== renderer.domElement) {
-                            renderer.domElement.requestPointerLock();
+                        // PC 端重新锁定鼠标
+                        if (typeof isTouchDevice !== 'undefined' && !isTouchDevice) {
+                            if (document.pointerLockElement !== renderer.domElement) {
+                                renderer.domElement.requestPointerLock();
+                            }
                         }
                     } else {
                         panel.style.display = 'flex';
-                        if (document.pointerLockElement) {
-                            document.exitPointerLock();
-                        }
+                        if (document.pointerLockElement) document.exitPointerLock();
                     }
                 }
             }
@@ -43,51 +40,35 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-// ---------- 鼠标事件 ----------
+// ---------- 鼠标事件（唯一处理鼠标的地方） ----------
 document.addEventListener('mousedown', e => {
     if (e.button === 0) {
+        // 左键：开火
         mouse.leftDown = true;
-    }
-    if (e.button === 2) {
+    } else if (e.button === 2) {
+        // 右键：切换开镜（仅一次）
         e.preventDefault();
         e.stopPropagation();
         if (running && !isOver()) {
             mouse.aim = !mouse.aim;
         }
-    }
-    if (e.button !== 0 && e.button !== 2) {
+    } else {
         e.preventDefault();
         e.stopPropagation();
     }
 });
+
 document.addEventListener('mouseup', e => {
     if (e.button === 0) {
         mouse.leftDown = false;
-    }
-    if (e.button === 2) {
+    } else if (e.button === 2) {
         e.preventDefault();
         e.stopPropagation();
     }
 });
 
-// Pointer 事件
-document.addEventListener('pointerdown', e => {
-    if (e.button === 2) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (running && !isOver()) {
-            mouse.aim = !mouse.aim;
-        }
-    }
-});
-document.addEventListener('pointerup', e => {
-    if (e.button === 2) {
-        e.preventDefault();
-        e.stopPropagation();
-    }
-});
+// ---------- 触摸事件：手机控制映射 ----------
 
-// ---------- 触摸事件（手机操作映射） ----------
 // 左侧摇杆 – 模拟 WASD
 let leftTouchId = null;
 const leftEl = document.getElementById('touch-left');
@@ -121,16 +102,14 @@ if (leftEl) {
         keys['KeyD'] = false;
         leftTouchId = null;
     }, { passive: false });
-    leftEl.addEventListener('touchcancel', (e) => {
-        keys['KeyW'] = false;
-        keys['KeyS'] = false;
-        keys['KeyA'] = false;
-        keys['KeyD'] = false;
+    leftEl.addEventListener('touchcancel', () => {
+        keys['KeyW'] = false; keys['KeyS'] = false;
+        keys['KeyA'] = false; keys['KeyD'] = false;
         leftTouchId = null;
     });
 }
 
-// 右侧滑动 – 模拟鼠标移动
+// 右侧滑动 – 模拟鼠标移动（视角）
 let rightTouchId = null;
 let lastRightX = 0, lastRightY = 0;
 const rightEl = document.getElementById('touch-right');
@@ -150,7 +129,7 @@ if (rightEl) {
         const deltaY = t.clientY - lastRightY;
         lastRightX = t.clientX;
         lastRightY = t.clientY;
-        const sens = 0.006; // 手机灵敏度
+        const sens = 0.006;
         if (running && !isOver()) {
             p1.yaw -= deltaX * sens;
             p1.pitch -= deltaY * sens;
@@ -161,12 +140,10 @@ if (rightEl) {
         e.preventDefault();
         rightTouchId = null;
     }, { passive: false });
-    rightEl.addEventListener('touchcancel', () => {
-        rightTouchId = null;
-    });
+    rightEl.addEventListener('touchcancel', () => { rightTouchId = null; });
 }
 
-// 开火按钮 – 模拟鼠标左键
+// 开火按钮
 const fireBtn = document.getElementById('btn-fire');
 if (fireBtn) {
     fireBtn.addEventListener('touchstart', (e) => {
@@ -177,9 +154,7 @@ if (fireBtn) {
         e.preventDefault();
         mouse.leftDown = false;
     }, { passive: false });
-    fireBtn.addEventListener('touchcancel', () => {
-        mouse.leftDown = false;
-    });
+    fireBtn.addEventListener('touchcancel', () => { mouse.leftDown = false; });
 }
 
 // 跳跃按钮
@@ -193,19 +168,15 @@ if (jumpBtn) {
         e.preventDefault();
         keys['Space'] = false;
     }, { passive: false });
-    jumpBtn.addEventListener('touchcancel', () => {
-        keys['Space'] = false;
-    });
+    jumpBtn.addEventListener('touchcancel', () => { keys['Space'] = false; });
 }
 
-// 开镜按钮 (点击切换)
+// 开镜按钮（点击切换）
 const aimBtn = document.getElementById('btn-aim');
 if (aimBtn) {
     aimBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (running && !isOver()) {
-            mouse.aim = !mouse.aim;
-        }
+        if (running && !isOver()) mouse.aim = !mouse.aim;
     }, { passive: false });
 }
 
@@ -214,27 +185,21 @@ const reloadBtn = document.getElementById('btn-reload');
 if (reloadBtn) {
     reloadBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (running && !isOver()) {
-            startReload(p1, performance.now());
-        }
+        if (running && !isOver()) startReload(p1, performance.now());
     }, { passive: false });
 }
 
-// 全局阻止默认触摸行为（防止滚动/缩放）
+// 全局阻止默认触摸行为（防止滚动/缩放），但覆盖层和按钮允许交互
 document.addEventListener('touchstart', (e) => {
-    if (e.target.closest('.overlay')) return; // 覆盖层可操作
+    if (e.target.closest('.overlay') || e.target.closest('#mobile-controls')) return;
     e.preventDefault();
 }, { passive: false });
 document.addEventListener('touchmove', (e) => {
-    if (e.target.closest('.overlay')) return;
-    e.preventDefault();
-}, { passive: false });
-document.addEventListener('touchend', (e) => {
-    if (e.target.closest('.overlay')) return;
+    if (e.target.closest('.overlay') || e.target.closest('#mobile-controls')) return;
     e.preventDefault();
 }, { passive: false });
 
-// 阻止上下文菜单、滚轮等
+// 阻止右键菜单、滚轮、手势等
 document.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); }, false);
 document.addEventListener('wheel', e => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
 window.addEventListener('gesturestart', e => { e.preventDefault(); e.stopPropagation(); }, false);

@@ -54,6 +54,13 @@
 </head>
 <body>
 
+    <!-- ===== 横屏提示层（手机竖屏时显示，仅在游戏进行中） ===== -->
+    <div id="rotateOverlay">
+        <div class="rotate-icon">📱</div>
+        <div class="rotate-text">请将手机横屏使用</div>
+        <div class="rotate-sub">旋转后自动继续游戏</div>
+    </div>
+
     <div id="timer" class="timer">5:00</div>
 
     <div id="hud1" class="hud" style="width:100%; left:0;">
@@ -74,20 +81,20 @@
         <div class="wtag"></div>
     </div>
 
-    <!-- ===== 移动端触控层 (默认隐藏，仅触摸设备显示) ===== -->
+    <!-- ===== 移动端触控层（仅触摸设备显示） ===== -->
     <div id="mobile-controls" style="position:fixed;inset:0;z-index:20;pointer-events:none;display:none;">
-        <!-- 左侧摇杆 (移动) -->
+        <!-- 左侧摇杆（移动） -->
         <div id="touch-left" style="position:absolute;left:20px;bottom:100px;width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.3);pointer-events:auto;touch-action:none;"></div>
 
-        <!-- 右侧瞄准区域 (滑动视角) -->
+        <!-- 右侧瞄准区（滑动视角） -->
         <div id="touch-right" style="position:absolute;right:0;top:0;width:60%;height:100%;pointer-events:auto;background:transparent;touch-action:none;"></div>
 
-        <!-- 开火按钮 (右下) -->
+        <!-- 开火按钮（右下） -->
         <div id="btn-fire" style="position:absolute;right:20px;bottom:40px;width:90px;height:90px;border-radius:50%;background:rgba(255,50,50,0.7);border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff;font-weight:bold;pointer-events:auto;box-shadow:0 4px 10px rgba(0,0,0,0.5);touch-action:manipulation;">
             开火
         </div>
 
-        <!-- 功能按钮组 (左下) -->
+        <!-- 功能按钮组（左下） -->
         <div style="position:absolute;left:20px;bottom:250px;display:flex;gap:12px;pointer-events:none;">
             <div id="btn-jump" style="pointer-events:auto;padding:10px 18px;background:rgba(0,0,0,0.6);border-radius:8px;color:#fff;border:1px solid #aaa;font-size:16px;touch-action:manipulation;">跳跃</div>
             <div id="btn-aim" style="pointer-events:auto;padding:10px 18px;background:rgba(0,0,0,0.6);border-radius:8px;color:#fff;border:1px solid #aaa;font-size:16px;touch-action:manipulation;">开镜</div>
