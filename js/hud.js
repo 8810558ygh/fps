@@ -1,4 +1,4 @@
-// ===== js/hud.js – HUD更新与击杀报告 =====
+// ===== js/hud.js – HUD更新与击杀报告（回合制） =====
 function q(s) { return document.querySelector(s); }
 
 const H = {
@@ -63,7 +63,8 @@ function createCombatReport() {
     return div;
 }
 
-function showCombatReport(attacker, victim, damageInfo) {
+// ★ 新增 opts.persistent：持久显示，不自动关闭（用于回合制）
+function showCombatReport(attacker, victim, damageInfo, opts = {}) {
     const report = createCombatReport();
 
     const titleRow = document.createElement('div');
@@ -147,17 +148,19 @@ function showCombatReport(attacker, victim, damageInfo) {
         color: rgba(255,255,255,0.25);
         text-align: right;
     `;
-    footer.textContent = '点击任意处关闭';
+    footer.textContent = opts.persistent ? '准备阶段结束后自动关闭' : '点击任意处关闭';
     report.appendChild(footer);
 
     report.addEventListener('click', () => {
         closeCombatReport();
     });
 
-    if (reportTimeout) clearTimeout(reportTimeout);
-    reportTimeout = setTimeout(() => {
-        closeCombatReport();
-    }, 4000);
+    if (!opts.persistent) {
+        if (reportTimeout) clearTimeout(reportTimeout);
+        reportTimeout = setTimeout(() => {
+            closeCombatReport();
+        }, 4000);
+    }
 }
 
 function closeCombatReport() {
@@ -227,17 +230,25 @@ function updateHUD(now) {
     h.ammo.innerHTML = ammoText + ` <span class="rsv">/ ${p.reserve}</span>`;
 
     h.wtag.textContent = p.weapon.name;
-    const scoped = running && p.aiming && p.weapon.scope && now >= p.deadUntil;
+    const scoped = running && gameState === 'combat' && p.aiming && p.weapon.scope && now >= p.deadUntil;
     h.scope.style.display = scoped ? 'block' : 'none';
 
-    const left = Math.max(0, MATCH_MS - (now - matchStart));
-    const mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);
-    q('#timer').textContent = `${mm}:${String(ss).padStart(2,'0')}`;
-    if (running && left <= 0) {
-        endMatch(p1.score === p2.score ? null : (p1.score > p2.score ? p1 : p2));
+    // ===== 计时器区域：准备阶段显示倒计时，其余显示比赛剩余时间 =====
+    const timerEl = q('#timer');
+    if (running && gameState === 'prep') {
+        const remain = Math.max(0, (stateEndTime - now) / 1000);
+        timerEl.textContent = `准备 ${remain.toFixed(1)}s`;
+        timerEl.style.color = '#ffd24a';
+    } else {
+        const left = Math.max(0, MATCH_MS - (now - matchStart));
+        const mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);
+        timerEl.textContent = `${mm}:${String(ss).padStart(2,'0')}`;
+        timerEl.style.color = '#fff';
+        if (running && left <= 0) {
+            endMatch(p1.score === p2.score ? null : (p1.score > p2.score ? p1 : p2));
+        }
     }
-    if (h.hint) h.hint.style.display =
-        (running && document.pointerLockElement !== renderer.domElement && !isOver()) ? 'block' : 'none';
 
-  
+    if (h.hint) h.hint.style.display =
+        (running && gameState === 'prep' && document.pointerLockElement !== renderer.domElement && !isOver()) ? 'block' : 'none';
 }

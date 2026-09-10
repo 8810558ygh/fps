@@ -1,4 +1,4 @@
-// ===== js/main.js – 主循环与启动（含移动端横屏适配） =====
+// ===== js/main.js – 主循环与启动（大厅 + 回合制 + 小地图） =====
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -8,8 +8,6 @@ renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.setScissorTest(false);
 
 // ---- 手机端性能优化 ----
-// 用 CSS 媒体查询判断：仅手机/平板（触摸为主）返回 true
-// 带触摸屏的 PC 依然返回 false，不影响鼠标锁定
 const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
 if (isTouchDevice) {
     renderer.setPixelRatio(1);
@@ -35,12 +33,10 @@ function checkOrientation() {
     if (!isTouchDevice) return;
     const isPortrait = window.innerHeight > window.innerWidth;
     const overlay = document.getElementById('rotateOverlay');
-    // 仅在游戏进行中且竖屏时显示提示
     const shouldShow = isPortrait && running;
     if (overlay) {
         overlay.style.display = shouldShow ? 'flex' : 'none';
     }
-    // 横屏时尝试锁定
     if (!isPortrait) {
         lockLandscape();
     }
@@ -68,7 +64,6 @@ document.addEventListener('mousemove', e => {
 
 // ---------- 全屏与锁鼠标 ----------
 function enterFullscreenAndLock() {
-    // 触摸设备：只全屏 + 尝试横屏锁定，不锁指针
     if (isTouchDevice) {
         if (!document.fullscreenElement && !document.webkitFullscreenElement) {
             const el = document.documentElement;
@@ -86,7 +81,6 @@ function enterFullscreenAndLock() {
         return;
     }
 
-    // 电脑端：全屏 + 指针锁定
     if (!document.fullscreenElement && !document.webkitFullscreenElement) {
         const el = document.documentElement;
         if (el.requestFullscreen) {
@@ -125,19 +119,32 @@ document.addEventListener('webkitfullscreenchange', () => {
 // ---------- 武器面板按钮事件 ----------
 document.getElementById('weaponPanel').addEventListener('click', function(e) {
     const btn = e.target.closest('.weapon-btn');
-    if (btn) {
-        const key = btn.dataset.weapon;
-        if (key && WEAPONS[key]) {
-            setWeapon(p1, key);
-            sPickup(1);
-            const panel = document.getElementById('weaponPanel');
-            panel.style.display = 'none';
-            if (document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
-                renderer.domElement.requestPointerLock();
-            }
+    if (!btn) return;
+    if (!(running && gameState === 'prep')) return;
+
+    const key = btn.dataset.weapon;
+    if (key && WEAPONS[key]) {
+        setWeapon(p1, key);
+        sPickup(1);
+        const panel = document.getElementById('weaponPanel');
+        panel.style.display = 'none';
+        if (document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
+            renderer.domElement.requestPointerLock();
         }
     }
 });
+
+// ---------- 小地图显隐跟随游戏状态 ----------
+const minimapEl = document.getElementById('minimap');
+let minimapVisible = false;
+function syncMinimapVisibility() {
+    if (!minimapEl) return;
+    const shouldShow = running && !isOver();
+    if (shouldShow !== minimapVisible) {
+        minimapVisible = shouldShow;
+        minimapEl.style.display = shouldShow ? 'block' : 'none';
+    }
+}
 
 // ---------- 主循环 ----------
 const clock = new THREE.Clock();
@@ -153,13 +160,22 @@ function loop() {
     requestAnimationFrame(loop);
     const dt = Math.min(clock.getDelta(), 0.05);
     const now = performance.now();
+
     if (running) {
+        if (gameState === 'prep' && now >= stateEndTime) {
+            endPrep(now);
+        } else if (gameState === 'roundEnd' && now >= stateEndTime) {
+            startRound(now);
+        }
         updatePlayer(p1, dt, now);
         updateTarget(p2, dt, now);
-        updatePickups(now);
     }
     updateEffects(dt, now);
     updateHUD(now);
+
+    syncMinimapVisibility();
+    if (minimapVisible && typeof updateMinimap === 'function') updateMinimap();
+
     render();
 }
 loop();
@@ -170,11 +186,15 @@ window.addEventListener('resize', () => {
     p1.cam.updateProjectionMatrix();
 });
 
-document.getElementById('startBtn').addEventListener('click', () => {
+// ---------- 大厅「开始游戏」→ 直接进入游戏 ----------
+document.getElementById('lobbyStartBtn').addEventListener('click', () => {
     audio();
+    document.getElementById('lobbyOverlay').style.display = 'none';
     resetMatch();
     enterFullscreenAndLock();
 });
+
+// ---------- 结束页 → 再来一局 ----------
 document.getElementById('againBtn').addEventListener('click', () => {
     audio();
     resetMatch();

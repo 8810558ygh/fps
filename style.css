@@ -35,6 +35,20 @@ canvas {
     transform: translateX(-1.5px);
 }
 
+/* ---------- 小地图 ---------- */
+#minimap {
+    position: fixed !important;
+    top: 14px;
+    left: 14px;
+    z-index: 12;
+    border-radius: 10px;
+    box-shadow:
+        0 8px 28px rgba(0, 0, 0, 0.75),
+        0 0 0 1px rgba(255, 255, 255, 0.12);
+    pointer-events: none;
+    background: #1c1f24;
+}
+
 /* ---------- 狙击镜覆盖层 ---------- */
 .scope {
     position: absolute;
@@ -412,6 +426,90 @@ table.ctrl td.k {
 }
 
 /* ============================================================
+   大厅页
+   ============================================================ */
+#lobbyOverlay {
+    z-index: 55;
+    background: radial-gradient(ellipse at center, #16263a 0%, #08131f 75%);
+    overflow: hidden;
+}
+.lobby-glow {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 900px;
+    height: 900px;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, rgba(107, 179, 255, 0.18) 0%, rgba(107, 179, 255, 0) 60%);
+    pointer-events: none;
+    animation: lobbyPulse 5s ease-in-out infinite;
+}
+@keyframes lobbyPulse {
+    0%, 100% { opacity: 0.7; transform: translate(-50%, -50%) scale(1); }
+    50%      { opacity: 1;   transform: translate(-50%, -50%) scale(1.08); }
+}
+.lobby-title {
+    position: relative;
+    font-size: 84px !important;
+    letter-spacing: 16px !important;
+    margin-bottom: 16px !important;
+    text-shadow:
+        0 6px 30px rgba(107, 179, 255, 0.5),
+        0 2px 10px rgba(0, 0, 0, 0.85);
+}
+.lobby-title .b {
+    color: #6db3ff;
+}
+.lobby-sub {
+    position: relative;
+    font-size: 15px;
+    color: #7c92a8;
+    letter-spacing: 8px;
+    margin-bottom: 70px;
+    text-transform: uppercase;
+    font-weight: 500;
+}
+.lobby-desc {
+    position: relative;
+    font-size: 16px;
+    color: #cfe0f0;
+    line-height: 2.2;
+    text-align: center;
+    margin-bottom: 55px;
+    letter-spacing: 2px;
+}
+.lobby-desc p {
+    margin: 0;
+}
+.lobby-btn {
+    position: relative;
+    font-size: 22px !important;
+    padding: 16px 68px !important;
+    letter-spacing: 8px !important;
+    box-shadow:
+        0 8px 30px rgba(255, 210, 74, 0.4),
+        0 4px 12px rgba(0, 0, 0, 0.65);
+    transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+}
+.lobby-btn:hover {
+    transform: translateY(-2px);
+    box-shadow:
+        0 12px 36px rgba(255, 210, 74, 0.55),
+        0 6px 16px rgba(0, 0, 0, 0.7);
+    filter: brightness(1.08);
+}
+.lobby-btn:active {
+    transform: translateY(0);
+}
+.lobby-footer {
+    position: absolute;
+    bottom: 30px;
+    font-size: 12px;
+    color: #3e4d5e;
+    letter-spacing: 3px;
+}
+
+/* ============================================================
    移动端适配
    ============================================================ */
 
@@ -470,10 +568,25 @@ table.ctrl td.k {
     .wtag  { font-size: 11px; bottom: 55px; }
     .bottom { left: 12px; right: 12px; bottom: 12px; }
 
+    /* 小地图：左上角，尺寸由 JS 决定（210px） */
+    #minimap {
+        top: 10px;
+        left: 10px;
+        border-radius: 8px;
+    }
+
     /* 覆盖层适配 */
     .overlay h1 { font-size: 30px; letter-spacing: 2px; }
     table.ctrl th, table.ctrl td { padding: 4px 10px; font-size: 13px; }
     .btn { font-size: 16px; padding: 10px 30px; }
+
+    /* 大厅适配 */
+    .lobby-title { font-size: 52px !important; letter-spacing: 10px !important; }
+    .lobby-sub { font-size: 12px; letter-spacing: 4px; margin-bottom: 40px; }
+    .lobby-desc { font-size: 13px; margin-bottom: 36px; line-height: 2; }
+    .lobby-btn { font-size: 18px !important; padding: 14px 48px !important; letter-spacing: 6px !important; }
+    .lobby-glow { width: 600px; height: 600px; }
+    .lobby-footer { font-size: 10px; bottom: 16px; }
 }
 
 /* ---------- 竖屏时，手机显示横屏提示 ---------- */

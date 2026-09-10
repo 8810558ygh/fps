@@ -1,5 +1,5 @@
 // ===== js/config.js – 游戏常量（狂徒、冥驹、判官、奥丁） =====
-const ARENA = 20;
+const ARENA = 35;            // ★ 地图半径：20 → 35（地图 70×70）
 const EYE_STAND = 1.6;
 const EYE_CROUCH = 1.02;
 const EYE_PRONE = 0.4;
@@ -15,11 +15,15 @@ const JUMP_V = 9.0;
 const RELOAD_MS = 2000;
 const FIRE_MS = 125;
 const HP_MAX = 100;
-const TARGET_KILLS = 15;
+const TARGET_KILLS = 10;
 const MATCH_MS = 300000;
 const RESPAWN_MS = 3000;
 const INVULN_MS = 3000;
 const BASE_FOV = 78;
+
+// ===== 回合制新增 =====
+const PREP_MS = 5000;       // 准备阶段时长（5 秒，无敌无伤害）
+const ROUND_END_MS = 2500;  // 击杀后到下一回合开始的过渡时长
 
 const WEAPONS = {
     rifle: {

@@ -1,4 +1,4 @@
-// ===== js/input.js – 键盘/鼠标/触摸输入 =====
+// ===== js/input.js – 键盘/鼠标/触摸输入（回合制：仅准备阶段换枪） =====
 const keys = {};
 const mouse = { aim: false, leftDown: false };
 
@@ -14,11 +14,13 @@ window.addEventListener('keydown', e => {
 
     if (!e.repeat) {
         if (e.code === 'KeyR') startReload(p1, performance.now());
+
+        // ★ 只在准备阶段允许打开武器面板
         if (e.code === 'KeyB') {
-            if (running && !isOver()) {
+            if (running && !isOver() && gameState === 'prep') {
                 const panel = document.getElementById('weaponPanel');
                 if (panel) {
-                    const isOpen = panel.style.display !== 'none';
+                    const isOpen = panel.style.display === 'flex';
                     if (isOpen) {
                         panel.style.display = 'none';
                         // PC 端重新锁定鼠标
@@ -40,16 +42,16 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-// ---------- 鼠标事件（唯一处理鼠标的地方） ----------
+// ---------- 鼠标事件 ----------
 document.addEventListener('mousedown', e => {
     if (e.button === 0) {
         // 左键：开火
         mouse.leftDown = true;
     } else if (e.button === 2) {
-        // 右键：切换开镜（仅一次）
+        // 右键：切换开镜（仅战斗阶段）
         e.preventDefault();
         e.stopPropagation();
-        if (running && !isOver()) {
+        if (running && !isOver() && gameState === 'combat') {
             mouse.aim = !mouse.aim;
         }
     } else {
@@ -171,21 +173,21 @@ if (jumpBtn) {
     jumpBtn.addEventListener('touchcancel', () => { keys['Space'] = false; });
 }
 
-// 开镜按钮（点击切换）
+// 开镜按钮（点击切换，仅战斗阶段）
 const aimBtn = document.getElementById('btn-aim');
 if (aimBtn) {
     aimBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (running && !isOver()) mouse.aim = !mouse.aim;
+        if (running && !isOver() && gameState === 'combat') mouse.aim = !mouse.aim;
     }, { passive: false });
 }
 
-// 换弹按钮
+// 换弹按钮（仅战斗阶段）
 const reloadBtn = document.getElementById('btn-reload');
 if (reloadBtn) {
     reloadBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (running && !isOver()) startReload(p1, performance.now());
+        if (running && !isOver() && gameState === 'combat') startReload(p1, performance.now());
     }, { passive: false });
 }
 

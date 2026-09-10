@@ -149,7 +149,6 @@ function setWeapon(p, key) {
     p.spinUpProgress = 0;
     p.lastShotTime = 0;
     p.damageDealt = {};
-    // 重置后坐力状态
     p.recoilVertical = 0;
     p.recoilHorizontal = 0;
     p.shotCount = 0;
@@ -178,7 +177,8 @@ function makePlayer(id, color, spawn, weaponKey) {
     g.traverse(o => { if (o.isMesh) o.castShadow = true; });
     scene.add(g);
 
-    const cam = new THREE.PerspectiveCamera(BASE_FOV, (window.innerWidth / 2) / window.innerHeight, 0.1, 200);
+    // 摄像机：完整窗口宽高比（不再是分屏遗留的 /2），远裁剪面扩大到 250 以适应大地图
+    const cam = new THREE.PerspectiveCamera(BASE_FOV, window.innerWidth / window.innerHeight, 0.1, 250);
     cam.rotation.order = 'YXZ';
     scene.add(cam);
     const vm = new THREE.Group();
@@ -221,7 +221,6 @@ function makePlayer(id, color, spawn, weaponKey) {
         spinUpProgress: 0,
         lastShotTime: 0,
         damageDealt: {},
-        // ===== 后坐力状态 =====
         recoilVertical: 0,
         recoilHorizontal: 0,
         shotCount: 0,
@@ -268,7 +267,8 @@ function makeTarget(id, color, spawn) {
     return target;
 }
 
-const p1 = makePlayer(1, 0x3a7bd5, { x: -14, z: -14, yaw: -3 * Math.PI / 4 }, 'rifle');
-const p2 = makeTarget(2, 0xd54a3a, { x: 14, z: 14, yaw: Math.PI / 4 });
+// ★ 出生点随地图放大到 ±30（两端对应两边角落）
+const p1 = makePlayer(1, 0x3a7bd5, { x: -30, z: -30, yaw: -3 * Math.PI / 4 }, 'rifle');
+const p2 = makeTarget(2, 0xd54a3a, { x: 30, z: 30, yaw: Math.PI / 4 });
 const players = [p1, p2];
 const other = p => p === p1 ? p2 : p1;

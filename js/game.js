@@ -1,30 +1,14 @@
-// ===== js/game.js – 核心游戏逻辑（含伤害记录、奥丁预热、击杀报告） =====
+// ===== js/game.js – 核心游戏逻辑（回合制版，大地图，无补给） =====
 let running = false;
 let matchStart = 0;
 
-const pickups = [];
+// ===== 回合制状态 =====
+let gameState = 'idle';    // 'idle' | 'prep' | 'combat' | 'roundEnd'
+let stateEndTime = 0;      // 当前状态结束的时间戳
+let roundNumber = 0;
+let lastKillReport = null; // { attacker, victim, damageInfo } —— 用于下一回合准备阶段展示
 
-function addPickup(x, z, kind) {
-    const color = kind === 'hp' ? 0x37c46a : 0xf0c020;
-    const base = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.7, 0.8, 0.12, 20),
-        new THREE.MeshLambertMaterial({ color: 0x333a44 })
-    );
-    base.position.set(x, 0.06, z);
-    base.receiveShadow = true;
-    const box = new THREE.Mesh(
-        new THREE.BoxGeometry(0.42, 0.42, 0.42),
-        new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.35 })
-    );
-    box.position.set(x, 0.9, z);
-    box.castShadow = true;
-    scene.add(base, box);
-    pickups.push({ x, z, kind, box, active: true, respawnAt: 0 });
-}
-addPickup(-8, 8, 'hp');
-addPickup(8, -8, 'hp');
-addPickup(-8, -8, 'ammo');
-addPickup(8, 8, 'ammo');
+// 补给系统已删除（pickups 数组与 addPickup 函数全部移除）
 
 const tracers = [];
 const sparks = [];
@@ -73,12 +57,13 @@ function updateEffects(dt, now) {
     if (p1.vmMuzzle.intensity > 0) p1.vmMuzzle.intensity = Math.max(0, p1.vmMuzzle.intensity - 14 * dt);
 }
 
-function isOver() { return document.getElementById('endOverlay').style.display !== 'none'; }
+function isOver() { return document.getElementById('endOverlay').style.display === 'flex'; }
 
 function startReload(p, now) {
-    if (p.id !== 1) return; // 只有玩家1能换弹
+    if (p.id !== 1) return;
+    if (!running || gameState !== 'combat') return;
     const w = p.weapon;
-    if (!running || now < p.deadUntil || p.reloadEnd > now || p.ammo === w.mag || p.reserve <= 0) return;
+    if (now < p.deadUntil || p.reloadEnd > now || p.ammo === w.mag || p.reserve <= 0) return;
     p.reloadEnd = now + w.reloadMs;
     sReload(p.id);
 }
@@ -165,9 +150,11 @@ function collidePlayers() {
     }
 }
 
-// ---- 射击（仅玩家1） ----
+// ---- 射击（仅战斗阶段允许） ----
 function tryFire(p, now) {
     if (p.id !== 1) return;
+    if (gameState !== 'combat') return;
+
     const w = p.weapon;
     if (now < p.nextShot || now < p.deadUntil || p.reloadEnd > now) return;
     if (p.ammo <= 0) { sEmpty(p.id); p.nextShot = now + 300; startReload(p, now); return; }
@@ -187,7 +174,6 @@ function tryFire(p, now) {
     p.nextShot = now + currentFireMs;
     p.lastShotTime = now;
 
-    // ----- 根据武器类型播放不同射击音效 -----
     switch (w.key) {
         case 'sniper':
             sShootSniper(p.id);
@@ -206,7 +192,7 @@ function tryFire(p, now) {
     p.muzzle.intensity = 2.2;
     p.vmMuzzle.intensity = 2.2;
 
-    const origin = p.cam.getWorldPosition(_v1);
+    const origin = p.cam.getWorldPosition(_v1).clone();
     const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
     const pellets = w.pellets || 1;
     const spread = w.spread || 0;
@@ -227,9 +213,9 @@ function tryFire(p, now) {
             const quat2 = new THREE.Quaternion().setFromAxisAngle(dir, theta);
             randDir.applyQuaternion(quat).applyQuaternion(quat2);
         }
-        const rc = new THREE.Raycaster(origin.clone(), randDir.clone(), 0, 120);
+        const rc = new THREE.Raycaster(origin.clone(), randDir.clone(), 0, 150);
         const hits = rc.intersectObjects(targets, false);
-        let end = origin.clone().add(randDir.multiplyScalar(120));
+        let end = origin.clone().add(randDir.multiplyScalar(150));
         if (hits.length) {
             const h = hits[0];
             end = h.point;
@@ -258,18 +244,20 @@ function tryFire(p, now) {
 }
 
 function damage(victim, dmg, from) {
+    if (gameState !== 'combat') return;
     const now = performance.now();
     if (victim.hp <= 0) return;
     if (now < victim.invulnUntil) { sEmpty(from.id); return; }
     victim.hp -= dmg;
-    dmgFlash(from); // 攻击者闪红（玩家1）
+    dmgFlash(victim);
     if (victim.hp <= 0) kill(victim, from, now);
 }
 
+// ---- 击杀 = 回合结束 ----
 function kill(victim, from, now) {
     from.score++;
     victim.hp = 0;
-    victim.deadUntil = now + RESPAWN_MS;
+    victim.deadUntil = Infinity;
     feed(victim, `被 <b style="color:${from.id===1?'#6db3ff':'#ff7a6d'}">玩家${from.id}</b> 击杀`);
     feed(from, `<b style="color:#ffd24a">击杀 玩家${victim.id}！</b>  +1`);
     sDeath();
@@ -277,16 +265,20 @@ function kill(victim, from, now) {
 
     const damageInfo = from.damageDealt[victim.id];
     if (damageInfo && damageInfo.total > 0) {
+        lastKillReport = { attacker: from, victim: victim, damageInfo: damageInfo };
         if (window.showCombatReport) {
-            window.showCombatReport(from, victim, damageInfo);
+            window.showCombatReport(from, victim, damageInfo, { persistent: true });
         }
     }
     delete from.damageDealt[victim.id];
 
-    if (from.score >= TARGET_KILLS) endMatch(from);
+    if (from.score >= TARGET_KILLS) { endMatch(from); return; }
+
+    gameState = 'roundEnd';
+    stateEndTime = now + ROUND_END_MS;
 }
 
-// 重置玩家1（不含靶子）
+// 重置玩家1（每回合开始）
 function resetPlayer(p, now) {
     if (p.id !== 1) return;
     p.pos.set(p.spawn.x, 0, p.spawn.z);
@@ -300,18 +292,22 @@ function resetPlayer(p, now) {
     p.mesh.scale.y = 1;
     p.hp = HP_MAX;
     p.ammo = p.weapon.mag;
-    p.reserve = Math.max(p.reserve, Math.ceil(p.weapon.reserveMax * 2 / 3));
+    p.reserve = p.weapon.startReserve;
     p.reloadEnd = 0;
+    p.nextShot = 0;
     p.aiming = false;
     p.cam.fov = BASE_FOV;
     p.cam.updateProjectionMatrix();
-    p.invulnUntil = now + INVULN_MS;
+    p.deadUntil = 0;
+    p.invulnUntil = 0;
     p.spinUpProgress = 0;
     p.lastShotTime = 0;
     p.damageDealt = {};
+    p.baseVisible = true;
+    p.mat.opacity = 1;
 }
 
-// 重置靶子
+// 重置靶子（每回合开始）
 function resetTarget(t, now) {
     t.pos.set(t.spawn.x, 0, t.spawn.z);
     t.yaw = t.spawn.yaw;
@@ -319,13 +315,43 @@ function resetTarget(t, now) {
     t.mesh.scale.y = 1;
     t.hp = HP_MAX;
     t.deadUntil = 0;
-    t.invulnUntil = now + INVULN_MS;
+    t.invulnUntil = 0;
     t.baseVisible = true;
+    t.mat.opacity = 1;
+}
+
+// ===== 回合流程 =====
+
+function startRound(now) {
+    roundNumber++;
+    resetPlayer(p1, now);
+    resetTarget(p2, now);
+
+    for (const k in keys) keys[k] = false;
+    mouse.leftDown = false;
+    mouse.aim = false;
+
+    gameState = 'prep';
+    stateEndTime = now + PREP_MS;
+}
+
+function endPrep(now) {
+    gameState = 'combat';
+    if (window.closeCombatReport) window.closeCombatReport();
+    const panel = document.getElementById('weaponPanel');
+    if (panel) panel.style.display = 'none';
+    if (typeof isTouchDevice !== 'undefined' && !isTouchDevice) {
+        if (document.pointerLockElement !== renderer.domElement && running) {
+            renderer.domElement.requestPointerLock();
+        }
+    }
 }
 
 function endMatch(winner) {
     running = false;
+    gameState = 'idle';
     if (document.pointerLockElement) document.exitPointerLock();
+    if (window.closeCombatReport) window.closeCombatReport();
     const el = document.getElementById('endOverlay');
     document.getElementById('endTitle').innerHTML = winner ?
         `<span class="${winner.id===1?'b':'r'}">${winner.id===1?'蓝色':'红色'}</span>玩家获胜！` :
@@ -334,7 +360,6 @@ function endMatch(winner) {
     el.style.display = 'flex';
     sWin();
 
-    // 结束游戏时隐藏横屏提示
     document.body.classList.remove('in-game');
     const rot = document.getElementById('rotateOverlay');
     if (rot) rot.style.display = 'none';
@@ -342,14 +367,17 @@ function endMatch(winner) {
 
 function resetMatch() {
     const now = performance.now();
-    resetPlayer(p1, now);
-    resetTarget(p2, now);
     p1.score = 0;
     p2.score = 0;
+    roundNumber = 0;
+    lastKillReport = null;
     matchStart = now;
+    if (window.closeCombatReport) window.closeCombatReport();
     document.getElementById('endOverlay').style.display = 'none';
-    document.getElementById('startOverlay').style.display = 'none';
+    document.getElementById('weaponPanel').style.display = 'none';
     running = true;
+
+    startRound(now);
 
     // 进入游戏：让竖屏时显示横屏提示（仅在手机触发）
     document.body.classList.add('in-game');
@@ -359,15 +387,23 @@ function resetMatch() {
 // ---- 更新玩家1 ----
 function updatePlayer(p, dt, now) {
     if (p.id !== 1) return;
+
     if (now < p.deadUntil) {
         p.baseVisible = false;
         p.aiming = false;
-        const left = ((p.deadUntil - now) / 1000).toFixed(1);
-        centerMsg(p, `阵亡！${left} 秒后重生`);
+        centerMsg(p, '回合结束');
         return;
     }
-    if (p.baseVisible === false) { p.baseVisible = true; centerMsg(p, ''); }
-    centerMsg(p, now < p.invulnUntil ? '重生保护中…' : '');
+
+    p.baseVisible = true;
+
+    let msg = '';
+    if (gameState === 'prep') {
+        msg = `第 ${roundNumber} 回合 · 准备阶段`;
+    } else if (gameState === 'roundEnd') {
+        msg = '回合结束';
+    }
+    centerMsg(p, msg);
 
     if (p.reloadEnd > 0 && now >= p.reloadEnd) {
         const w = p.weapon, need = w.mag - p.ammo, take = Math.min(need, p.reserve);
@@ -377,7 +413,7 @@ function updatePlayer(p, dt, now) {
     }
 
     const wantAim = mouse.aim;
-    p.aiming = wantAim;
+    p.aiming = wantAim && gameState === 'combat';
     const targetFov = p.aiming ? p.weapon.zoomFov : BASE_FOV;
     if (Math.abs(p.cam.fov - targetFov) > 0.05) {
         p.cam.fov += (targetFov - p.cam.fov) * Math.min(1, dt * 11);
@@ -432,8 +468,7 @@ function updatePlayer(p, dt, now) {
 
     if (mouse.leftDown) tryFire(p, now);
 
-    const blink = now < p.invulnUntil && Math.floor(now / 100) % 2 === 0;
-    p.mat.opacity = blink ? 0.35 : 1;
+    p.mat.opacity = 1;
 
     p.cam.position.set(p.pos.x, p.pos.y + p.eyeH, p.pos.z);
     p.cam.rotation.y = p.yaw;
@@ -450,39 +485,11 @@ function updateTarget(t, dt, now) {
         return;
     }
     t.baseVisible = true;
-    // 固定位置
     t.pos.set(t.spawn.x, 0, t.spawn.z);
     t.yaw = t.spawn.yaw;
     t.pitch = 0;
     t.mesh.position.copy(t.pos);
     t.mesh.rotation.y = t.yaw;
     t.mesh.scale.y = 1;
-    const blink = now < t.invulnUntil && Math.floor(now / 100) % 2 === 0;
-    t.mat.opacity = blink ? 0.35 : 1;
-}
-
-function updatePickups(now) {
-    pickups.forEach(pk => {
-        if (!pk.active) {
-            if (now >= pk.respawnAt) { pk.active = true; pk.box.visible = true; }
-            return;
-        }
-        pk.box.rotation.y += 0.03;
-        pk.box.position.y = 0.9 + Math.sin(now / 300 + pk.x) * 0.12;
-        // 只检测玩家1，靶子不会拾取
-        const p = p1;
-        if (now < p.deadUntil) return;
-        const dx = p.pos.x - pk.x, dz = p.pos.z - pk.z;
-        if (dx * dx + dz * dz < 1.44) {
-            if (pk.kind === 'hp' && p.hp < HP_MAX) { p.hp = HP_MAX; sPickup(p.id); pk.active = false; pk.box.visible = false; pk.respawnAt = now + 10000; }
-            if (pk.kind === 'ammo' && p.reserve < p.weapon.reserveMax) {
-                const add = p.weapon.key === 'sniper' ? 5 : (p.weapon.key === 'shotgun' ? 8 : (p.weapon.key === 'odin' ? 30 : 30));
-                p.reserve = Math.min(p.weapon.reserveMax, p.reserve + add);
-                sPickup(p.id);
-                pk.active = false;
-                pk.box.visible = false;
-                pk.respawnAt = now + 10000;
-            }
-        }
-    });
+    t.mat.opacity = 1;
 }
