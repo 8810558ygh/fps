@@ -132,6 +132,11 @@ function makeViewmodel(type, mat) {
         g.position.set(0.28, -0.28, -0.5);
     }
     g.traverse(o => { if (o.isMesh) { o.castShadow = false; o.frustumCulled = false; } });
+
+    // ★ 记录基础位置与旋转（供拉栓动画使用）
+    g.userData.basePos = g.position.clone();
+    g.userData.baseRot = g.rotation.clone();
+
     return g;
 }
 
@@ -146,6 +151,8 @@ function setWeapon(p, key) {
     p.reserve = w.startReserve;
     p.reloadEnd = 0;
     p.aiming = false;
+    p.aimStage = 0;      // ★ 重置开镜档位
+    p.boltEnd = 0;       // ★ 重置拉栓状态
     p.spinUpProgress = 0;
     p.lastShotTime = 0;
     p.damageDealt = {};
@@ -155,7 +162,7 @@ function setWeapon(p, key) {
     p.lastRecoilTime = 0;
 }
 
-// 创建玩家（玩家1）
+// 创建玩家（p1 和 p2 都是完整玩家；靶场模式下 p2 只是静止不动）
 function makePlayer(id, color, spawn, weaponKey) {
     const mat = new THREE.MeshLambertMaterial({ color, transparent: true });
     const g = new THREE.Group();
@@ -177,7 +184,6 @@ function makePlayer(id, color, spawn, weaponKey) {
     g.traverse(o => { if (o.isMesh) o.castShadow = true; });
     scene.add(g);
 
-    // 摄像机：完整窗口宽高比（不再是分屏遗留的 /2），远裁剪面扩大到 250 以适应大地图
     const cam = new THREE.PerspectiveCamera(BASE_FOV, window.innerWidth / window.innerHeight, 0.1, 250);
     cam.rotation.order = 'YXZ';
     scene.add(cam);
@@ -200,6 +206,8 @@ function makePlayer(id, color, spawn, weaponKey) {
         vmMuzzle,
         weapon: WEAPONS.rifle,
         aiming: false,
+        aimStage: 0,        // ★ 0=不开镜，1=一段，2=二段（仅狙击枪用 2）
+        boltEnd: 0,         // ★ 拉栓结束时间戳（0 表示未在拉栓）
         pos: new THREE.Vector3(spawn.x, 0, spawn.z),
         spawn,
         yaw: spawn.yaw,
@@ -210,6 +218,7 @@ function makePlayer(id, color, spawn, weaponKey) {
         height: HEIGHT_STAND,
         eyeH: EYE_STAND,
         hp: HP_MAX,
+        armor: ARMOR_MAX,
         ammo: 30,
         reserve: 60,
         reloadEnd: 0,
@@ -230,45 +239,14 @@ function makePlayer(id, color, spawn, weaponKey) {
     return p;
 }
 
-// 创建靶子（玩家2）
-function makeTarget(id, color, spawn) {
-    const mat = new THREE.MeshLambertMaterial({ color, transparent: true });
-    const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.92, 0.42), mat);
-    body.position.y = 0.95;
-    body.userData.part = 'body';
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.42, 0.44), mat);
-    head.position.y = 1.62;
-    head.userData.part = 'head';
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.1, 0.05), DARK_MAT);
-    visor.position.set(0, 1.64, -0.23);
-    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.22), DARK_MAT);
-    pack.position.set(0, 1.05, 0.32);
-    g.add(body, head, visor, pack);
-    g.traverse(o => { if (o.isMesh) o.castShadow = true; });
-    scene.add(g);
+// 地图缩小后出生点相应内收（ARENA = 26）
+const p1 = makePlayer(1, 0x3a7bd5, { x: -21, z: -21, yaw: -3 * Math.PI / 4 }, 'rifle');
+const p2 = makePlayer(2, 0xd54a3a, { x: 21, z: 21, yaw: Math.PI / 4 }, 'rifle');
 
-    const target = {
-        id,
-        mesh: g,
-        body,
-        head,
-        mat,
-        pos: new THREE.Vector3(spawn.x, 0, spawn.z),
-        spawn: spawn,
-        yaw: spawn.yaw,
-        pitch: 0,
-        hp: HP_MAX,
-        deadUntil: 0,
-        invulnUntil: 0,
-        score: 0,
-        baseVisible: true,
-    };
-    return target;
-}
+// p2 初始同步位置/朝向；靶场模式下默认隐藏手上的枪
+p2.mesh.position.copy(p2.pos);
+p2.mesh.rotation.y = p2.yaw;
+p2.gunHolder.visible = false;
 
-// ★ 出生点随地图放大到 ±30（两端对应两边角落）
-const p1 = makePlayer(1, 0x3a7bd5, { x: -30, z: -30, yaw: -3 * Math.PI / 4 }, 'rifle');
-const p2 = makeTarget(2, 0xd54a3a, { x: 30, z: 30, yaw: Math.PI / 4 });
 const players = [p1, p2];
 const other = p => p === p1 ? p2 : p1;

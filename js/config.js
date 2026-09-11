@@ -1,20 +1,19 @@
 // ===== js/config.js – 游戏常量（狂徒、冥驹、判官、奥丁） =====
-const ARENA = 35;            // ★ 地图半径：20 → 35（地图 70×70）
+const ARENA = 26;            // 地图半径：26（地图 52×52）
 const EYE_STAND = 1.6;
 const EYE_CROUCH = 1.02;
-const EYE_PRONE = 0.4;
 const HEIGHT_STAND = 1.84;
 const HEIGHT_CROUCH = 1.25;
-const HEIGHT_PRONE = 0.55;
 const STEP_UP = 0.55;
 const GRAV = 22;
 const SPEED = 6.2;
 const SPEED_CROUCH = 3.4;
-const SPEED_PRONE = 1.9;
 const JUMP_V = 9.0;
 const RELOAD_MS = 2000;
 const FIRE_MS = 125;
 const HP_MAX = 100;
+const ARMOR_MAX = 50;
+const ARMOR_ABSORB = 0.66;
 const TARGET_KILLS = 10;
 const MATCH_MS = 300000;
 const RESPAWN_MS = 3000;
@@ -22,8 +21,11 @@ const INVULN_MS = 3000;
 const BASE_FOV = 78;
 
 // ===== 回合制新增 =====
-const PREP_MS = 5000;       // 准备阶段时长（5 秒，无敌无伤害）
-const ROUND_END_MS = 2500;  // 击杀后到下一回合开始的过渡时长
+const PREP_MS = 5000;
+const ROUND_END_MS = 2500;
+
+// 触摸设备检测
+const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
 
 const WEAPONS = {
     rifle: {
@@ -37,7 +39,10 @@ const WEAPONS = {
         key: 'sniper', name: '冥驹',
         dmgBody: 150, dmgHead: 255,
         fireMs: 1667, mag: 5, reserveMax: 10, startReserve: 10, reloadMs: 3700,
-        zoomFov: 14, scope: true,
+        zoomFov: 14,           // ★ 一段开镜
+        zoomFov2: 6,           // ★ 二段开镜（更放大）
+        scope: true,
+        boltMs: 850,           // ★ 拉栓时长
         speedMul: 0.72, adsSpeedMul: 0.72
     },
     shotgun: {

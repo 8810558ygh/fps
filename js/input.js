@@ -1,9 +1,36 @@
-// ===== js/input.js – 键盘/鼠标/触摸输入（回合制：仅准备阶段换枪） =====
+// ===== js/input.js – 键盘/鼠标/触摸输入（含聊天 + 观战屏蔽 + 狙击三档） =====
 const keys = {};
 const mouse = { aim: false, leftDown: false };
 
-// ---------- 键盘事件 ----------
+// ---------- 键盘 ----------
 window.addEventListener('keydown', e => {
+    if (typeof isChatOpen === 'function' && isChatOpen()) return;
+
+    // ★ 观战者：只允许 Enter（聊天）
+    if (typeof NET !== 'undefined' && NET.role === 'spectator') {
+        if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+            if (running && !isOver() && typeof openChat === 'function') {
+                e.preventDefault();
+                openChat();
+                return;
+            }
+        }
+        // 其他按键全部屏蔽
+        if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) {
+            e.preventDefault();
+        }
+        return;
+    }
+
+    // Enter 打开聊天
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+        if (running && !isOver() && typeof openChat === 'function') {
+            e.preventDefault();
+            openChat();
+            return;
+        }
+    }
+
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
     if ((e.ctrlKey || e.metaKey) && (e.key === 'w' || e.key === 'W' || e.key === 't' || e.key === 'T')) {
         e.preventDefault(); e.stopPropagation();
@@ -15,7 +42,6 @@ window.addEventListener('keydown', e => {
     if (!e.repeat) {
         if (e.code === 'KeyR') startReload(p1, performance.now());
 
-        // ★ 只在准备阶段允许打开武器面板
         if (e.code === 'KeyB') {
             if (running && !isOver() && gameState === 'prep') {
                 const panel = document.getElementById('weaponPanel');
@@ -23,7 +49,6 @@ window.addEventListener('keydown', e => {
                     const isOpen = panel.style.display === 'flex';
                     if (isOpen) {
                         panel.style.display = 'none';
-                        // PC 端重新锁定鼠标
                         if (typeof isTouchDevice !== 'undefined' && !isTouchDevice) {
                             if (document.pointerLockElement !== renderer.domElement) {
                                 renderer.domElement.requestPointerLock();
@@ -39,20 +64,36 @@ window.addEventListener('keydown', e => {
     }
     keys[e.code] = true;
 });
-window.addEventListener('keyup', e => { keys[e.code] = false; });
+window.addEventListener('keyup', e => {
+    if (typeof isChatOpen === 'function' && isChatOpen()) return;
+    keys[e.code] = false;
+});
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-// ---------- 鼠标事件 ----------
+// ---------- 鼠标 ----------
 document.addEventListener('mousedown', e => {
+    if (typeof isChatOpen === 'function' && isChatOpen()) return;
+
+    // ★ 观战者：左键切换视角
+    if (typeof NET !== 'undefined' && NET.role === 'spectator') {
+        if (e.button === 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof NET_spectatorToggle === 'function') NET_spectatorToggle();
+        } else {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        return;
+    }
+
     if (e.button === 0) {
-        // 左键：开火
         mouse.leftDown = true;
     } else if (e.button === 2) {
-        // 右键：切换开镜（仅战斗阶段）
         e.preventDefault();
         e.stopPropagation();
         if (running && !isOver() && gameState === 'combat') {
-            mouse.aim = !mouse.aim;
+            toggleAim();
         }
     } else {
         e.preventDefault();
@@ -61,6 +102,12 @@ document.addEventListener('mousedown', e => {
 });
 
 document.addEventListener('mouseup', e => {
+    if (typeof isChatOpen === 'function' && isChatOpen()) return;
+    if (typeof NET !== 'undefined' && NET.role === 'spectator') {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
     if (e.button === 0) {
         mouse.leftDown = false;
     } else if (e.button === 2) {
@@ -69,19 +116,24 @@ document.addEventListener('mouseup', e => {
     }
 });
 
-// ---------- 触摸事件：手机控制映射 ----------
+// ---------- 触摸 ----------
 
-// 左侧摇杆 – 模拟 WASD
+// 左侧摇杆
 let leftTouchId = null;
 const leftEl = document.getElementById('touch-left');
 if (leftEl) {
     leftEl.addEventListener('touchstart', (e) => {
         e.preventDefault();
+        if (typeof NET !== 'undefined' && NET.role === 'spectator') {
+            if (typeof NET_spectatorToggle === 'function') NET_spectatorToggle();
+            return;
+        }
         const t = e.changedTouches[0];
         leftTouchId = t.identifier;
     }, { passive: false });
     leftEl.addEventListener('touchmove', (e) => {
         e.preventDefault();
+        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
         const t = Array.from(e.changedTouches).find(t => t.identifier === leftTouchId);
         if (!t) return;
         const rect = e.target.getBoundingClientRect();
@@ -98,6 +150,7 @@ if (leftEl) {
     }, { passive: false });
     leftEl.addEventListener('touchend', (e) => {
         e.preventDefault();
+        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
         keys['KeyW'] = false;
         keys['KeyS'] = false;
         keys['KeyA'] = false;
@@ -111,13 +164,17 @@ if (leftEl) {
     });
 }
 
-// 右侧滑动 – 模拟鼠标移动（视角）
+// 右侧滑动
 let rightTouchId = null;
 let lastRightX = 0, lastRightY = 0;
 const rightEl = document.getElementById('touch-right');
 if (rightEl) {
     rightEl.addEventListener('touchstart', (e) => {
         e.preventDefault();
+        if (typeof NET !== 'undefined' && NET.role === 'spectator') {
+            if (typeof NET_spectatorToggle === 'function') NET_spectatorToggle();
+            return;
+        }
         const t = e.changedTouches[0];
         rightTouchId = t.identifier;
         lastRightX = t.clientX;
@@ -125,6 +182,7 @@ if (rightEl) {
     }, { passive: false });
     rightEl.addEventListener('touchmove', (e) => {
         e.preventDefault();
+        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
         const t = Array.from(e.changedTouches).find(t => t.identifier === rightTouchId);
         if (!t) return;
         const deltaX = t.clientX - lastRightX;
@@ -145,11 +203,12 @@ if (rightEl) {
     rightEl.addEventListener('touchcancel', () => { rightTouchId = null; });
 }
 
-// 开火按钮
+// 开火
 const fireBtn = document.getElementById('btn-fire');
 if (fireBtn) {
     fireBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
+        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
         mouse.leftDown = true;
     }, { passive: false });
     fireBtn.addEventListener('touchend', (e) => {
@@ -159,11 +218,12 @@ if (fireBtn) {
     fireBtn.addEventListener('touchcancel', () => { mouse.leftDown = false; });
 }
 
-// 跳跃按钮
+// 跳跃
 const jumpBtn = document.getElementById('btn-jump');
 if (jumpBtn) {
     jumpBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
+        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
         keys['Space'] = true;
     }, { passive: false });
     jumpBtn.addEventListener('touchend', (e) => {
@@ -173,35 +233,62 @@ if (jumpBtn) {
     jumpBtn.addEventListener('touchcancel', () => { keys['Space'] = false; });
 }
 
-// 开镜按钮（点击切换，仅战斗阶段）
+// 开镜
 const aimBtn = document.getElementById('btn-aim');
 if (aimBtn) {
     aimBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (running && !isOver() && gameState === 'combat') mouse.aim = !mouse.aim;
+        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (running && !isOver() && gameState === 'combat') toggleAim();
     }, { passive: false });
 }
 
-// 换弹按钮（仅战斗阶段）
+// 换弹
 const reloadBtn = document.getElementById('btn-reload');
 if (reloadBtn) {
     reloadBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
+        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
         if (running && !isOver() && gameState === 'combat') startReload(p1, performance.now());
     }, { passive: false });
 }
 
-// 全局阻止默认触摸行为（防止滚动/缩放），但覆盖层和按钮允许交互
+// 换枪
+const weaponBtn = document.getElementById('btn-weapon');
+if (weaponBtn) {
+    weaponBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (!(running && !isOver() && gameState === 'prep')) return;
+
+        const panel = document.getElementById('weaponPanel');
+        if (!panel) return;
+        const isOpen = panel.style.display === 'flex';
+        panel.style.display = isOpen ? 'none' : 'flex';
+    }, { passive: false });
+}
+
+// 武器面板关闭按钮
+const weaponCloseBtn = document.getElementById('weaponCloseBtn');
+if (weaponCloseBtn) {
+    weaponCloseBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const panel = document.getElementById('weaponPanel');
+        if (panel) panel.style.display = 'none';
+    });
+}
+
+// 阻止默认触摸
 document.addEventListener('touchstart', (e) => {
-    if (e.target.closest('.overlay') || e.target.closest('#mobile-controls')) return;
+    if (e.target.closest('.overlay') || e.target.closest('#mobile-controls') || e.target.closest('#chatBox')) return;
     e.preventDefault();
 }, { passive: false });
 document.addEventListener('touchmove', (e) => {
-    if (e.target.closest('.overlay') || e.target.closest('#mobile-controls')) return;
+    if (e.target.closest('.overlay') || e.target.closest('#mobile-controls') || e.target.closest('#chatBox')) return;
     e.preventDefault();
 }, { passive: false });
 
-// 阻止右键菜单、滚轮、手势等
 document.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); }, false);
 document.addEventListener('wheel', e => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
 window.addEventListener('gesturestart', e => { e.preventDefault(); e.stopPropagation(); }, false);

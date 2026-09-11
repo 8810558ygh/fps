@@ -1,4 +1,4 @@
-// ===== js/hud.js – HUD更新与击杀报告（回合制） =====
+// ===== js/hud.js – HUD更新与回合结算报告 =====
 function q(s) { return document.querySelector(s); }
 
 const H = {
@@ -6,6 +6,7 @@ const H = {
         score: q('#hud1 .score'),
         hpText: q('#hpText'),
         armorText: q('#armorText'),
+        armorWrap: q('#hud1 .armor-val'),
         ammo: q('#hud1 .ammo'),
         feed: q('#hud1 .feed'),
         center: q('#hud1 .centermsg'),
@@ -17,11 +18,11 @@ const H = {
     }
 };
 
-// ---------- 击杀报告（右上角） ----------
+// ---------- 回合结算报告（右上角） ----------
 let combatReportEl = null;
 let reportTimeout = null;
 
-function createCombatReport() {
+function createReportContainer() {
     if (combatReportEl) {
         combatReportEl.remove();
         combatReportEl = null;
@@ -32,22 +33,21 @@ function createCombatReport() {
     }
 
     const div = document.createElement('div');
-    div.id = 'combatReport';
+    div.id = 'roundReport';
     div.style.cssText = `
         position: fixed;
-        top: 60px;
+        top: 70px;
         right: 20px;
         z-index: 100;
-        background: rgba(13, 19, 30, 0.92);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 6px;
-        padding: 12px 16px;
-        min-width: 220px;
-        max-width: 320px;
+        background: rgba(13, 19, 30, 0.94);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 14px 18px;
+        min-width: 290px;
         font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
         color: #fff;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.7);
-        backdrop-filter: blur(8px);
+        box-shadow: 0 10px 36px rgba(0, 0, 0, 0.8);
+        backdrop-filter: blur(10px);
         pointer-events: auto;
         cursor: default;
         transition: opacity 0.2s ease;
@@ -63,104 +63,168 @@ function createCombatReport() {
     return div;
 }
 
-// ★ 新增 opts.persistent：持久显示，不自动关闭（用于回合制）
-function showCombatReport(attacker, victim, damageInfo, opts = {}) {
-    const report = createCombatReport();
+// ============================================================
+// ★ 决定列头（联机模式：你 / 对手名；单机：玩家1 / 玩家2）
+// ============================================================
+function getReportColumns(attacker) {
+    const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
+    const hasNET = (typeof NET !== 'undefined' && NET && NET.roomId);
 
+    if (isOnline && hasNET) {
+        if (NET.role === 'spectator') {
+            // 观战者：蓝方 / 红方
+            return {
+                leftLabel: '蓝方',
+                leftColor: '#6db3ff',
+                rightLabel: '红方',
+                rightColor: '#ff7a6d',
+                // 谁击杀（attacker.id：1=蓝方, 2=红方）
+                killLabel: attacker.id === 1 ? '蓝方' : '红方'
+            };
+        }
+        // 房主 / 玩家：p1 = 我（自己座位的颜色），p2 = 对手
+        const myIsBlue = (NET.mySeat === 'blue');
+        const myColor = myIsBlue ? '#6db3ff' : '#ff7a6d';
+        const opColor = myIsBlue ? '#ff7a6d' : '#6db3ff';
+        const opName = (NET.getOpponentName && NET.getOpponentName()) || '对手';
+
+        // attacker.id === 1 → 我击杀；=== 2 → 对手击杀
+        const killLabel = (attacker.id === 1) ? '你' : opName;
+
+        return {
+            leftLabel: '你',
+            leftColor: myColor,
+            rightLabel: opName,
+            rightColor: opColor,
+            killLabel
+        };
+    }
+
+    // 单机 / 人机
+    return {
+        leftLabel: '玩家1',
+        leftColor: '#6db3ff',
+        rightLabel: '玩家2',
+        rightColor: '#ff7a6d',
+        killLabel: '玩家' + attacker.id
+    };
+}
+
+function showRoundReport(roundNumber, attacker, victim, dmgByAttacker, dmgByVictim) {
+    const report = createReportContainer();
+
+    // 从 attacker.id 判断左右列的伤害
+    let dmg1, dmg2;
+    if (attacker.id === 1) {
+        dmg1 = dmgByAttacker;
+        dmg2 = dmgByVictim;
+    } else {
+        dmg1 = dmgByVictim;
+        dmg2 = dmgByAttacker;
+    }
+
+    // 动态列头
+    const cols = getReportColumns(attacker);
+
+    // ---- 标题行 ----
     const titleRow = document.createElement('div');
     titleRow.style.cssText = `
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding-bottom: 8px;
-        border-bottom: 1px solid rgba(255,255,255,0.06);
-        margin-bottom: 8px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        margin-bottom: 10px;
         font-size: 13px;
         font-weight: 600;
     `;
-    const attackerColor = attacker.id === 1 ? '#6db3ff' : '#ff7a6d';
-    const victimColor = victim.id === 1 ? '#6db3ff' : '#ff7a6d';
     titleRow.innerHTML = `
-        <span style="color: ${attackerColor};">玩家${attacker.id}</span>
-        <span style="color: rgba(255,255,255,0.3); margin: 0 6px;">→</span>
-        <span style="color: ${victimColor};">玩家${victim.id}</span>
-        <span style="margin-left: auto; font-size: 12px; color: #ffd24a; background: rgba(255,210,74,0.15); padding: 0 8px; border-radius: 3px;">💀 击杀</span>
+        <span style="color: #cfe0f0; letter-spacing: 1px;">第 ${roundNumber} 回合结算</span>
+        <span style="font-size: 12px; color: #ffd24a; background: rgba(255,210,74,0.15); padding: 2px 8px; border-radius: 3px;">💀 ${cols.killLabel} 击杀</span>
     `;
     report.appendChild(titleRow);
 
-    const list = document.createElement('div');
-    list.style.cssText = `font-size: 13px;`;
+    // ---- 列头 ----
+    const header = document.createElement('div');
+    header.style.cssText = `
+        display: grid;
+        grid-template-columns: 1fr 70px 70px;
+        gap: 8px;
+        padding: 4px 0 8px;
+        font-size: 12px;
+        color: #9fb2c8;
+        letter-spacing: 1px;
+    `;
+    header.innerHTML = `
+        <span></span>
+        <span style="text-align: right; color: ${cols.leftColor};">${cols.leftLabel}</span>
+        <span style="text-align: right; color: ${cols.rightColor};">${cols.rightLabel}</span>
+    `;
+    report.appendChild(header);
 
-    if (damageInfo.body > 0) {
-        const row = document.createElement('div');
-        row.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            padding: 3px 0;
-            color: rgba(255,255,255,0.8);
+    // ---- 数据行工厂 ----
+    function makeRow(icon, label, v1, v2, color) {
+        const r = document.createElement('div');
+        r.style.cssText = `
+            display: grid;
+            grid-template-columns: 1fr 70px 70px;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 13px;
         `;
-        row.innerHTML = `
-            <span>🔫 身体</span>
-            <span style="color: #ff6b6b; font-weight: 600;">-${damageInfo.body}</span>
+        const c1 = v1 > 0 ? color : 'rgba(255,255,255,0.25)';
+        const c2 = v2 > 0 ? color : 'rgba(255,255,255,0.25)';
+        r.innerHTML = `
+            <span style="color: rgba(255,255,255,0.75);">${icon} ${label}</span>
+            <span style="text-align: right; color: ${c1}; font-weight: 600;">-${v1}</span>
+            <span style="text-align: right; color: ${c2}; font-weight: 600;">-${v2}</span>
         `;
-        list.appendChild(row);
+        return r;
     }
 
-    if (damageInfo.head > 0) {
-        const row = document.createElement('div');
-        row.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            padding: 3px 0;
-            color: rgba(255,255,255,0.8);
-        `;
-        row.innerHTML = `
-            <span>🎯 头部</span>
-            <span style="color: #ffd24a; font-weight: 600;">-${damageInfo.head}</span>
-        `;
-        list.appendChild(row);
-    }
+    report.appendChild(makeRow('🎯', '头部', dmg1.head, dmg2.head, '#ffd24a'));
+    report.appendChild(makeRow('🔫', '身体', dmg1.body, dmg2.body, '#ff6b6b'));
 
+    // ---- 分隔 ----
+    const sep = document.createElement('div');
+    sep.style.cssText = `margin: 8px 0 6px; border-top: 1px solid rgba(255,255,255,0.08);`;
+    report.appendChild(sep);
+
+    // ---- 总伤害 ----
     const totalRow = document.createElement('div');
     totalRow.style.cssText = `
-        display: flex;
-        justify-content: space-between;
-        padding: 6px 0 2px 0;
-        border-top: 1px solid rgba(255,255,255,0.08);
-        margin-top: 4px;
+        display: grid;
+        grid-template-columns: 1fr 70px 70px;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 15px;
         font-weight: 700;
-        font-size: 14px;
     `;
+    const t1c = dmg1.total > 0 ? cols.leftColor : 'rgba(255,255,255,0.25)';
+    const t2c = dmg2.total > 0 ? cols.rightColor : 'rgba(255,255,255,0.25)';
     totalRow.innerHTML = `
         <span style="color: rgba(255,255,255,0.6);">总伤害</span>
-        <span style="color: #ff6b6b;">${damageInfo.total}</span>
+        <span style="text-align: right; color: ${t1c};">${dmg1.total}</span>
+        <span style="text-align: right; color: ${t2c};">${dmg2.total}</span>
     `;
-    list.appendChild(totalRow);
+    report.appendChild(totalRow);
 
-    report.appendChild(list);
-
+    // ---- 底部 ----
     const footer = document.createElement('div');
     footer.style.cssText = `
-        margin-top: 8px;
-        padding-top: 6px;
-        border-top: 1px solid rgba(255,255,255,0.04);
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
         font-size: 11px;
-        color: rgba(255,255,255,0.25);
+        color: rgba(255, 255, 255, 0.3);
         text-align: right;
     `;
-    footer.textContent = opts.persistent ? '准备阶段结束后自动关闭' : '点击任意处关闭';
+    footer.textContent = '下一回合准备阶段结束时自动关闭';
     report.appendChild(footer);
 
     report.addEventListener('click', () => {
         closeCombatReport();
     });
-
-    if (!opts.persistent) {
-        if (reportTimeout) clearTimeout(reportTimeout);
-        reportTimeout = setTimeout(() => {
-            closeCombatReport();
-        }, 4000);
-    }
 }
 
 function closeCombatReport() {
@@ -179,10 +243,10 @@ function closeCombatReport() {
     }
 }
 
-window.showCombatReport = showCombatReport;
+window.showRoundReport = showRoundReport;
 window.closeCombatReport = closeCombatReport;
 
-// ---------- 原有feed/centerMsg/dmgFlash/hitmark ----------
+// ---------- 反馈 ----------
 function feed(p, html) {
     if (p.id !== 1) return;
     const d = document.createElement('div');
@@ -220,7 +284,12 @@ function updateHUD(now) {
     if (!h) return;
     h.score.textContent = p.score;
     h.hpText.textContent = Math.max(0, Math.round(p.hp));
-    h.armorText.textContent = '50';
+
+    const armorVal = Math.max(0, Math.round(p.armor));
+    h.armorText.textContent = armorVal;
+    if (h.armorWrap) {
+        h.armorWrap.style.color = armorVal > 0 ? '#6db3ff' : '#5a6a7a';
+    }
 
     let ammoText = p.ammo;
     if (p.reloadEnd > now) {
@@ -233,7 +302,6 @@ function updateHUD(now) {
     const scoped = running && gameState === 'combat' && p.aiming && p.weapon.scope && now >= p.deadUntil;
     h.scope.style.display = scoped ? 'block' : 'none';
 
-    // ===== 计时器区域：准备阶段显示倒计时，其余显示比赛剩余时间 =====
     const timerEl = q('#timer');
     if (running && gameState === 'prep') {
         const remain = Math.max(0, (stateEndTime - now) / 1000);
@@ -242,7 +310,7 @@ function updateHUD(now) {
     } else {
         const left = Math.max(0, MATCH_MS - (now - matchStart));
         const mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);
-        timerEl.textContent = `${mm}:${String(ss).padStart(2,'0')}`;
+        timerEl.textContent = `${mm}:${String(ss).padStart(2, '0')}`;
         timerEl.style.color = '#fff';
         if (running && left <= 0) {
             endMatch(p1.score === p2.score ? null : (p1.score > p2.score ? p1 : p2));
