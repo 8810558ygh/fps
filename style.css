@@ -531,6 +531,7 @@ table.ctrl td.k {
    移动端适配
    ============================================================ */
 
+/* ---------- 横屏提示层 ---------- */
 #rotateOverlay {
     display: none;
     position: fixed;
@@ -602,8 +603,9 @@ table.ctrl td.k {
     .lobby-footer { font-size: 10px; bottom: 16px; }
 }
 
+/* ---------- ★ 移动端竖屏时：无论什么阶段都显示横屏提示 ---------- */
 @media (pointer: coarse) and (orientation: portrait) {
-    body.in-game #rotateOverlay {
+    #rotateOverlay {
         display: flex !important;
     }
 }
@@ -730,7 +732,7 @@ body.in-game #chatBox {
 }
 
 /* ============================================================
-   ★ 系统消息样式（透视命令的反馈）
+   系统消息
    ============================================================ */
 .chat-msg.system {
     background: linear-gradient(90deg, rgba(80, 60, 10, 0.75), rgba(60, 40, 10, 0.6));
@@ -745,7 +747,7 @@ body.in-game #chatBox {
 }
 
 /* ============================================================
-   ★ 联机大厅
+   联机大厅
    ============================================================ */
 .lobby-btn-online {
     background: linear-gradient(180deg, #6ee7b7, #10b981) !important;
@@ -785,7 +787,6 @@ body.in-game #chatBox {
     margin-bottom: 16px;
 }
 
-/* ★ 我的身份徽章 */
 .online-my-role {
     display: inline-flex;
     align-items: center;
@@ -827,7 +828,6 @@ body.in-game #chatBox {
     border-color: rgba(110, 231, 183, 0.7);
 }
 
-/* ---------- 入场区（未进房间） ---------- */
 .online-entry-section {
     padding: 20px 0;
 }
@@ -909,7 +909,6 @@ body.in-game #chatBox {
     background: rgba(255, 255, 255, 0.16) !important;
 }
 
-/* ---------- 座位区 ---------- */
 .online-seats {
     display: flex;
     align-items: center;
@@ -986,7 +985,6 @@ body.in-game #chatBox {
     letter-spacing: 1px;
 }
 
-/* "你" 标签 */
 .seat-you-tag {
     position: absolute;
     top: 8px;
@@ -1106,4 +1104,84 @@ body.in-game #chatBox {
     .online-join-btn { font-size: 16px !important; padding: 12px 28px !important; }
     .online-my-role { font-size: 13px; padding: 6px 16px; }
     .online-my-role .my-role-value { font-size: 15px; }
+}
+
+/* ============================================================
+   ★ 联机对手信息栏
+   ============================================================ */
+#opponentInfo {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 11;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    background: rgba(13, 19, 30, 0.85);
+    border: 1px solid rgba(255, 122, 109, 0.5);
+    border-radius: 10px;
+    padding: 8px 16px;
+    font-size: 14px;
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+    user-select: none;
+}
+
+body.online-mode #opponentInfo {
+    display: flex;
+}
+
+.op-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ff7a6d;
+    box-shadow: 0 0 8px rgba(255, 122, 109, 0.8);
+    animation: opPulse 1.6s ease-in-out infinite;
+}
+@keyframes opPulse {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.15); }
+}
+
+.op-label {
+    color: #9fb2c8;
+    font-size: 12px;
+    letter-spacing: 1px;
+}
+
+.op-name {
+    color: #ff7a6d;
+    font-weight: 700;
+    font-size: 15px;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.op-ping {
+    color: #6ee7b7;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    padding: 2px 8px;
+    background: rgba(110, 231, 183, 0.12);
+    border-radius: 6px;
+    min-width: 46px;
+    text-align: center;
+}
+.op-ping.warn { color: #ffd24a; background: rgba(255, 210, 74, 0.12); }
+.op-ping.bad  { color: #ff7a6d; background: rgba(255, 122, 109, 0.12); }
+
+@media (pointer: coarse) {
+    #opponentInfo {
+        top: 10px;
+        right: 10px;
+        padding: 6px 12px;
+        font-size: 12px;
+    }
+    .op-name { font-size: 13px; max-width: 90px; }
+    .op-ping { font-size: 11px; min-width: 40px; }
 }
