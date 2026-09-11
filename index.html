@@ -18,25 +18,41 @@
             width: 100%;
             height: 100%;
         }
-        canvas { touch-action: none; user-select: none; }
-        .overlay { touch-action: auto; }
-        .overlay button, .overlay .wbtn { touch-action: manipulation; }
-        .weapon-btn { transition: all 0.2s; }
-        .weapon-btn:hover { background: #3a5a7a !important; border-color: #ffd24a !important; }
-        .hp-armor { display: flex; gap: 20px; font-size: 18px; font-weight: bold; text-shadow: 0 2px 6px #000; color: #fff; }
-        .hp-armor span { background: rgba(0,0,0,0.5); padding: 2px 12px; border-radius: 4px; }
+        canvas {
+            touch-action: none;
+            user-select: none;
+        }
+        .overlay {
+            touch-action: auto;
+        }
+        .overlay button, .overlay .wbtn {
+            touch-action: manipulation;
+        }
+        .weapon-btn {
+            transition: all 0.2s;
+        }
+        .weapon-btn:hover {
+            background: #3a5a7a !important;
+            border-color: #ffd24a !important;
+        }
+        .hp-armor {
+            display: flex;
+            gap: 20px;
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 0 2px 6px #000;
+            color: #fff;
+        }
+        .hp-armor span {
+            background: rgba(0,0,0,0.5);
+            padding: 2px 12px;
+            border-radius: 4px;
+        }
         .hp-armor .hp-val { color: #7ee08a; }
         .hp-armor .armor-val { color: #6db3ff; }
     </style>
 </head>
 <body>
-
-    <!-- ===== 横屏提示层 ===== -->
-    <div id="rotateOverlay">
-        <div class="rotate-icon">📱</div>
-        <div class="rotate-text">请将手机横屏使用</div>
-        <div class="rotate-sub">旋转后自动继续游戏</div>
-    </div>
 
     <!-- ===== 大厅覆盖层 ===== -->
     <div id="lobbyOverlay" class="overlay">
@@ -61,20 +77,17 @@
             <div class="online-room-header">
                 <h2>⚔️ 联机对战房间</h2>
 
-                <!-- 我的身份徽章 -->
                 <div class="online-my-role" id="onlineMyRole" style="display:none;">
                     <span class="my-role-label">你：</span>
                     <span class="my-role-value" id="onlineMyRoleValue">-</span>
                 </div>
 
-                <!-- 房间码（仅进入房间后显示） -->
                 <div class="room-code-display" id="onlineRoomCode" onclick="copyOnlineRoomCode()" style="display:none;">
                     <span id="onlineRoomCodeText">----</span>
                     <span style="font-size:12px;opacity:.6;margin-left:8px;">点击复制</span>
                 </div>
             </div>
 
-            <!-- ============ 入场区（未进房间） ============ -->
             <div id="onlineEntrySection" class="online-entry-section">
                 <div class="entry-hint">创建房间或输入房间码加入</div>
                 <div class="entry-buttons">
@@ -88,7 +101,6 @@
                 <button class="btn online-back-btn" id="onlineBackBtn">← 返 回 大 厅</button>
             </div>
 
-            <!-- ============ 房间区（已进房间） ============ -->
             <div id="onlineRoomSection" style="display:none;">
                 <div class="online-seats">
                     <div class="seat-card blue-seat" id="onlineSeatBlue" onclick="chooseOnlineSeat('blue')">
@@ -156,6 +168,14 @@
             <div class="ammo">30 <span class="rsv">/ 60</span></div>
         </div>
         <div class="wtag"></div>
+    </div>
+
+    <!-- ===== 联机对手信息栏 ===== -->
+    <div id="opponentInfo">
+        <span class="op-dot"></span>
+        <span class="op-label">对手</span>
+        <span class="op-name" id="opponentName">-</span>
+        <span class="op-ping" id="opponentPing">-</span>
     </div>
 
     <!-- ===== 聊天框 ===== -->

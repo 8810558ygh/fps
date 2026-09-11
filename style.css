@@ -531,42 +531,6 @@ table.ctrl td.k {
    移动端适配
    ============================================================ */
 
-/* ---------- 横屏提示层 ---------- */
-#rotateOverlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    background: #08131f;
-    color: #fff;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    touch-action: none;
-}
-#rotateOverlay .rotate-icon {
-    font-size: 80px;
-    animation: rotateHint 1.8s ease-in-out infinite;
-    margin-bottom: 24px;
-}
-#rotateOverlay .rotate-text {
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: 4px;
-    color: #ffd24a;
-}
-#rotateOverlay .rotate-sub {
-    font-size: 14px;
-    color: #9fb2c8;
-    margin-top: 12px;
-    letter-spacing: 2px;
-}
-@keyframes rotateHint {
-    0%, 100% { transform: rotate(0deg); }
-    50%      { transform: rotate(90deg); }
-}
-
 #mobile-controls {
     display: none !important;
 }
@@ -601,13 +565,6 @@ table.ctrl td.k {
     .lobby-btn { font-size: 18px !important; padding: 14px 42px !important; letter-spacing: 4px !important; }
     .lobby-glow { width: 600px; height: 600px; }
     .lobby-footer { font-size: 10px; bottom: 16px; }
-}
-
-/* ---------- ★ 移动端竖屏时：无论什么阶段都显示横屏提示 ---------- */
-@media (pointer: coarse) and (orientation: portrait) {
-    #rotateOverlay {
-        display: flex !important;
-    }
 }
 
 #weaponCloseBtn {
@@ -1107,7 +1064,7 @@ body.in-game #chatBox {
 }
 
 /* ============================================================
-   ★ 联机对手信息栏
+   联机对手信息栏
    ============================================================ */
 #opponentInfo {
     position: fixed;

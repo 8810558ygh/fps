@@ -16,34 +16,20 @@ if (isTouchDevice) {
 document.body.appendChild(renderer.domElement);
 
 // ============================================================
-// ★ 移动端全程横屏锁定
+// 移动端：尝试全屏 + 锁定横屏（不再显示任何提示遮罩）
 // ============================================================
 async function lockLandscape() {
     if (!isTouchDevice) return;
     try {
         if (screen.orientation && screen.orientation.lock) {
             await screen.orientation.lock('landscape');
-            console.log('✅ 已锁定横屏');
         }
     } catch (err) {
-        // 部分浏览器（如 iOS Safari）不支持，静默失败
+        // 部分浏览器（iOS Safari 等）不支持，静默失败
     }
 }
 
-function checkOrientation() {
-    if (!isTouchDevice) return;
-    const isPortrait = window.innerHeight > window.innerWidth;
-    const overlay = document.getElementById('rotateOverlay');
-    if (overlay) {
-        overlay.style.display = isPortrait ? 'flex' : 'none';
-    }
-    // 横屏时尝试锁定
-    if (!isPortrait) {
-        lockLandscape();
-    }
-}
-
-// ★ 首次任意触摸/点击时尝试进入全屏 + 锁定横屏（浏览器要求用户手势）
+// 首次触摸/点击时尝试进入全屏并锁定横屏（浏览器要求用户手势）
 let _lastLockAttempt = 0;
 async function tryLockOnInteract() {
     if (!isTouchDevice) return;
@@ -51,7 +37,7 @@ async function tryLockOnInteract() {
     if (now - _lastLockAttempt < 1000) return;
     _lastLockAttempt = now;
 
-    // 1) 尝试全屏
+    // 1) 进入全屏
     try {
         if (!document.fullscreenElement && !document.webkitFullscreenElement) {
             const el = document.documentElement;
@@ -62,28 +48,22 @@ async function tryLockOnInteract() {
         }
     } catch (e) {}
 
-    // 2) 尝试锁定横屏
+    // 2) 锁定横屏
     await lockLandscape();
-
-    // 3) 更新朝向遮罩
-    checkOrientation();
 }
 document.addEventListener('touchstart', tryLockOnInteract, { passive: true });
 document.addEventListener('click', tryLockOnInteract);
 
-// 页面加载时立刻检查一次朝向
-checkOrientation();
-
-window.addEventListener('resize', checkOrientation);
-window.addEventListener('orientationchange', () => {
-    setTimeout(checkOrientation, 200);
-});
-
-// 每次从后台切回时也尝试重锁横屏
+// 从后台切回时，尝试重锁横屏
 document.addEventListener('visibilitychange', () => {
     if (!document.hidden && isTouchDevice) {
-        checkOrientation();
+        lockLandscape();
     }
+});
+
+// 屏幕方向变化时尝试锁定
+window.addEventListener('orientationchange', () => {
+    if (isTouchDevice) lockLandscape();
 });
 
 // ---------- 鼠标 ----------
@@ -106,7 +86,7 @@ document.addEventListener('mousemove', e => {
 
 // ---------- 全屏 + 指针锁定（进入游戏时调用） ----------
 function enterFullscreenAndLock() {
-    // 移动端：全屏 + 横屏（不论什么角色都做）
+    // 移动端：全屏 + 横屏（无论什么角色都做）
     if (isTouchDevice) {
         if (!document.fullscreenElement && !document.webkitFullscreenElement) {
             const el = document.documentElement;
@@ -117,7 +97,6 @@ function enterFullscreenAndLock() {
         } else {
             lockLandscape();
         }
-        setTimeout(checkOrientation, 300);
         return;
     }
 
@@ -144,10 +123,7 @@ function enterFullscreenAndLock() {
 }
 
 document.addEventListener('fullscreenchange', () => {
-    if (isTouchDevice) {
-        lockLandscape();
-        checkOrientation();
-    }
+    if (isTouchDevice) lockLandscape();
     if (running && document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
         if (typeof isChatOpen === 'function' && isChatOpen()) return;
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
@@ -155,10 +131,7 @@ document.addEventListener('fullscreenchange', () => {
     }
 });
 document.addEventListener('webkitfullscreenchange', () => {
-    if (isTouchDevice) {
-        lockLandscape();
-        checkOrientation();
-    }
+    if (isTouchDevice) lockLandscape();
     if (running && document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
         if (typeof isChatOpen === 'function' && isChatOpen()) return;
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
