@@ -1,33 +1,23 @@
-// ===== js/input.js – 键盘/鼠标/触摸输入（含聊天 + 观战屏蔽 + 狙击三档） =====
+// ===== js/input.js – 键盘/鼠标/触摸输入（含刀 + 烟雾弹 + 闪光弹） =====
 const keys = {};
 const mouse = { aim: false, leftDown: false };
 
-// ---------- 键盘 ----------
 window.addEventListener('keydown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
-    // ★ 观战者：只允许 Enter（聊天）
     if (typeof NET !== 'undefined' && NET.role === 'spectator') {
         if (e.code === 'Enter' || e.code === 'NumpadEnter') {
             if (running && !isOver() && typeof openChat === 'function') {
-                e.preventDefault();
-                openChat();
-                return;
+                e.preventDefault(); openChat(); return;
             }
         }
-        // 其他按键全部屏蔽
-        if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) {
-            e.preventDefault();
-        }
+        if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(e.code)) e.preventDefault();
         return;
     }
 
-    // Enter 打开聊天
     if (e.code === 'Enter' || e.code === 'NumpadEnter') {
         if (running && !isOver() && typeof openChat === 'function') {
-            e.preventDefault();
-            openChat();
-            return;
+            e.preventDefault(); openChat(); return;
         }
     }
 
@@ -40,6 +30,39 @@ window.addEventListener('keydown', e => {
     }
 
     if (!e.repeat) {
+        // 1：主武器
+        if (e.code === 'Digit1' || e.code === 'Numpad1') {
+            if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
+                if (p1.isMelee || p1.isSmoke || p1.isFlash) {
+                    setWeapon(p1, p1.primaryWeaponKey || 'rifle');
+                }
+            }
+            return;
+        }
+        // 2：近战刀
+        if (e.code === 'Digit2' || e.code === 'Numpad2') {
+            if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
+                if (!p1.isMelee) setWeapon(p1, 'knife');
+            }
+            return;
+        }
+        // 3：烟雾弹
+        if (e.code === 'Digit3' || e.code === 'Numpad3') {
+            if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
+                if (!p1.isSmoke) setWeapon(p1, 'smoke');
+                else setWeapon(p1, p1.primaryWeaponKey || 'rifle');
+            }
+            return;
+        }
+        // ★ 4：闪光弹
+        if (e.code === 'Digit4' || e.code === 'Numpad4') {
+            if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
+                if (!p1.isFlash) setWeapon(p1, 'flash');
+                else setWeapon(p1, p1.primaryWeaponKey || 'rifle');
+            }
+            return;
+        }
+
         if (e.code === 'KeyR') startReload(p1, performance.now());
 
         if (e.code === 'KeyB') {
@@ -50,9 +73,7 @@ window.addEventListener('keydown', e => {
                     if (isOpen) {
                         panel.style.display = 'none';
                         if (typeof isTouchDevice !== 'undefined' && !isTouchDevice) {
-                            if (document.pointerLockElement !== renderer.domElement) {
-                                renderer.domElement.requestPointerLock();
-                            }
+                            if (document.pointerLockElement !== renderer.domElement) renderer.domElement.requestPointerLock();
                         }
                     } else {
                         panel.style.display = 'flex';
@@ -74,51 +95,57 @@ window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; }
 document.addEventListener('mousedown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
-    // ★ 观战者：左键切换视角
     if (typeof NET !== 'undefined' && NET.role === 'spectator') {
         if (e.button === 0) {
-            e.preventDefault();
-            e.stopPropagation();
+            e.preventDefault(); e.stopPropagation();
             if (typeof NET_spectatorToggle === 'function') NET_spectatorToggle();
-        } else {
-            e.preventDefault();
-            e.stopPropagation();
-        }
+        } else { e.preventDefault(); e.stopPropagation(); }
         return;
     }
 
     if (e.button === 0) {
+        if (typeof p1 !== 'undefined' && p1 && p1.isSmoke) {
+            if (running && !isOver() && gameState === 'combat') throwSmoke(p1, performance.now());
+            e.preventDefault(); return;
+        }
+        if (typeof p1 !== 'undefined' && p1 && p1.isFlash) {
+            if (running && !isOver() && gameState === 'combat') throwFlash(p1, performance.now());
+            e.preventDefault(); return;
+        }
         mouse.leftDown = true;
     } else if (e.button === 2) {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         if (running && !isOver() && gameState === 'combat') {
-            toggleAim();
+            if (typeof p1 !== 'undefined' && p1 && p1.isMelee) tryMelee(p1, performance.now(), true);
+            else if (typeof p1 !== 'undefined' && p1 && (p1.isSmoke || p1.isFlash)) { /* 无右键 */ }
+            else toggleAim();
         }
-    } else {
-        e.preventDefault();
-        e.stopPropagation();
-    }
+    } else { e.preventDefault(); e.stopPropagation(); }
 });
 
 document.addEventListener('mouseup', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
-    if (typeof NET !== 'undefined' && NET.role === 'spectator') {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-    }
-    if (e.button === 0) {
-        mouse.leftDown = false;
-    } else if (e.button === 2) {
-        e.preventDefault();
-        e.stopPropagation();
-    }
+    if (typeof NET !== 'undefined' && NET.role === 'spectator') { e.preventDefault(); e.stopPropagation(); return; }
+    if (e.button === 0) mouse.leftDown = false;
+    else if (e.button === 2) { e.preventDefault(); e.stopPropagation(); }
 });
 
-// ---------- 触摸 ----------
+// ★ 滚轮：主武器 → 刀 → 烟雾弹 → 闪光弹 → 主武器
+document.addEventListener('wheel', e => {
+    if (typeof isChatOpen === 'function' && isChatOpen()) return;
+    if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+    e.preventDefault(); e.stopPropagation();
+    if (!running || isOver()) return;
+    if (typeof p1 === 'undefined' || !p1) return;
+    if (gameState === 'prep') return;
 
-// 左侧摇杆
+    if (p1.isMelee)       setWeapon(p1, 'smoke');
+    else if (p1.isSmoke)  setWeapon(p1, 'flash');
+    else if (p1.isFlash)  setWeapon(p1, p1.primaryWeaponKey || 'rifle');
+    else                  setWeapon(p1, 'knife');
+}, { passive: false });
+
+// ---------- 触摸 ----------
 let leftTouchId = null;
 const leftEl = document.getElementById('touch-left');
 if (leftEl) {
@@ -128,8 +155,7 @@ if (leftEl) {
             if (typeof NET_spectatorToggle === 'function') NET_spectatorToggle();
             return;
         }
-        const t = e.changedTouches[0];
-        leftTouchId = t.identifier;
+        leftTouchId = e.changedTouches[0].identifier;
     }, { passive: false });
     leftEl.addEventListener('touchmove', (e) => {
         e.preventDefault();
@@ -143,18 +169,14 @@ if (leftEl) {
         let dy = (t.clientY - cy) / (rect.height / 2);
         if (Math.abs(dx) < 0.15) dx = 0;
         if (Math.abs(dy) < 0.15) dy = 0;
-        keys['KeyW'] = dy < -0.1;
-        keys['KeyS'] = dy > 0.1;
-        keys['KeyA'] = dx < -0.1;
-        keys['KeyD'] = dx > 0.1;
+        keys['KeyW'] = dy < -0.1; keys['KeyS'] = dy > 0.1;
+        keys['KeyA'] = dx < -0.1; keys['KeyD'] = dx > 0.1;
     }, { passive: false });
     leftEl.addEventListener('touchend', (e) => {
         e.preventDefault();
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
-        keys['KeyW'] = false;
-        keys['KeyS'] = false;
-        keys['KeyA'] = false;
-        keys['KeyD'] = false;
+        keys['KeyW'] = false; keys['KeyS'] = false;
+        keys['KeyA'] = false; keys['KeyD'] = false;
         leftTouchId = null;
     }, { passive: false });
     leftEl.addEventListener('touchcancel', () => {
@@ -164,7 +186,6 @@ if (leftEl) {
     });
 }
 
-// 右侧滑动
 let rightTouchId = null;
 let lastRightX = 0, lastRightY = 0;
 const rightEl = document.getElementById('touch-right');
@@ -177,48 +198,46 @@ if (rightEl) {
         }
         const t = e.changedTouches[0];
         rightTouchId = t.identifier;
-        lastRightX = t.clientX;
-        lastRightY = t.clientY;
+        lastRightX = t.clientX; lastRightY = t.clientY;
     }, { passive: false });
     rightEl.addEventListener('touchmove', (e) => {
         e.preventDefault();
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
         const t = Array.from(e.changedTouches).find(t => t.identifier === rightTouchId);
         if (!t) return;
-        const deltaX = t.clientX - lastRightX;
-        const deltaY = t.clientY - lastRightY;
-        lastRightX = t.clientX;
-        lastRightY = t.clientY;
-        const sens = 0.006;
+        const dx = t.clientX - lastRightX;
+        const dy = t.clientY - lastRightY;
+        lastRightX = t.clientX; lastRightY = t.clientY;
         if (running && !isOver()) {
-            p1.yaw -= deltaX * sens;
-            p1.pitch -= deltaY * sens;
+            p1.yaw -= dx * 0.006;
+            p1.pitch -= dy * 0.006;
             p1.pitch = Math.max(-1.35, Math.min(1.35, p1.pitch));
         }
     }, { passive: false });
-    rightEl.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        rightTouchId = null;
-    }, { passive: false });
+    rightEl.addEventListener('touchend', (e) => { e.preventDefault(); rightTouchId = null; }, { passive: false });
     rightEl.addEventListener('touchcancel', () => { rightTouchId = null; });
 }
 
-// 开火
+// 开火 / 投掷
 const fireBtn = document.getElementById('btn-fire');
 if (fireBtn) {
     fireBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (typeof p1 !== 'undefined' && p1 && p1.isSmoke) {
+            if (running && !isOver() && gameState === 'combat') throwSmoke(p1, performance.now());
+            return;
+        }
+        if (typeof p1 !== 'undefined' && p1 && p1.isFlash) {
+            if (running && !isOver() && gameState === 'combat') throwFlash(p1, performance.now());
+            return;
+        }
         mouse.leftDown = true;
     }, { passive: false });
-    fireBtn.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        mouse.leftDown = false;
-    }, { passive: false });
+    fireBtn.addEventListener('touchend', (e) => { e.preventDefault(); mouse.leftDown = false; }, { passive: false });
     fireBtn.addEventListener('touchcancel', () => { mouse.leftDown = false; });
 }
 
-// 跳跃
 const jumpBtn = document.getElementById('btn-jump');
 if (jumpBtn) {
     jumpBtn.addEventListener('touchstart', (e) => {
@@ -226,24 +245,23 @@ if (jumpBtn) {
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
         keys['Space'] = true;
     }, { passive: false });
-    jumpBtn.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        keys['Space'] = false;
-    }, { passive: false });
+    jumpBtn.addEventListener('touchend', (e) => { e.preventDefault(); keys['Space'] = false; }, { passive: false });
     jumpBtn.addEventListener('touchcancel', () => { keys['Space'] = false; });
 }
 
-// 开镜
 const aimBtn = document.getElementById('btn-aim');
 if (aimBtn) {
     aimBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
-        if (running && !isOver() && gameState === 'combat') toggleAim();
+        if (running && !isOver() && gameState === 'combat') {
+            if (typeof p1 !== 'undefined' && p1 && p1.isMelee) tryMelee(p1, performance.now(), true);
+            else if (typeof p1 !== 'undefined' && p1 && (p1.isSmoke || p1.isFlash)) { /* 无 */ }
+            else toggleAim();
+        }
     }, { passive: false });
 }
 
-// 换弹
 const reloadBtn = document.getElementById('btn-reload');
 if (reloadBtn) {
     reloadBtn.addEventListener('touchstart', (e) => {
@@ -253,23 +271,30 @@ if (reloadBtn) {
     }, { passive: false });
 }
 
-// 换枪
+// 换武器（移动端）：战斗中循环切换
 const weaponBtn = document.getElementById('btn-weapon');
 if (weaponBtn) {
     weaponBtn.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
-        if (!(running && !isOver() && gameState === 'prep')) return;
+        if (!(running && !isOver())) return;
+        if (typeof p1 === 'undefined' || !p1) return;
 
-        const panel = document.getElementById('weaponPanel');
-        if (!panel) return;
-        const isOpen = panel.style.display === 'flex';
-        panel.style.display = isOpen ? 'none' : 'flex';
+        if (gameState === 'prep') {
+            const panel = document.getElementById('weaponPanel');
+            if (!panel) return;
+            panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
+            return;
+        }
+        if (gameState === 'combat') {
+            if (p1.isMelee)      setWeapon(p1, 'smoke');
+            else if (p1.isSmoke) setWeapon(p1, 'flash');
+            else if (p1.isFlash) setWeapon(p1, p1.primaryWeaponKey || 'rifle');
+            else                 setWeapon(p1, 'knife');
+        }
     }, { passive: false });
 }
 
-// 武器面板关闭按钮
 const weaponCloseBtn = document.getElementById('weaponCloseBtn');
 if (weaponCloseBtn) {
     weaponCloseBtn.addEventListener('click', (e) => {
@@ -279,7 +304,6 @@ if (weaponCloseBtn) {
     });
 }
 
-// 阻止默认触摸
 document.addEventListener('touchstart', (e) => {
     if (e.target.closest('.overlay') || e.target.closest('#mobile-controls') || e.target.closest('#chatBox')) return;
     e.preventDefault();
@@ -290,7 +314,6 @@ document.addEventListener('touchmove', (e) => {
 }, { passive: false });
 
 document.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); }, false);
-document.addEventListener('wheel', e => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
 window.addEventListener('gesturestart', e => { e.preventDefault(); e.stopPropagation(); }, false);
 window.addEventListener('gesturechange', e => { e.preventDefault(); e.stopPropagation(); }, false);
 window.addEventListener('gestureend', e => { e.preventDefault(); e.stopPropagation(); }, false);

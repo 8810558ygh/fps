@@ -1,5 +1,5 @@
-// ===== js/config.js – 游戏常量（狂徒、冥驹、判官、奥丁） =====
-const ARENA = 26;            // 地图半径：26（地图 52×52）
+// ===== js/config.js – 游戏常量（枪 + 刀 + 烟雾弹 + 闪光弹） =====
+const ARENA = 26;
 const EYE_STAND = 1.6;
 const EYE_CROUCH = 1.02;
 const HEIGHT_STAND = 1.84;
@@ -20,12 +20,50 @@ const RESPAWN_MS = 3000;
 const INVULN_MS = 3000;
 const BASE_FOV = 78;
 
-// ===== 回合制新增 =====
 const PREP_MS = 5000;
 const ROUND_END_MS = 2500;
 
-// 触摸设备检测
 const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
+
+// ===== 近战武器 =====
+const MELEE = {
+    key: 'knife', name: '军刀',
+    range: 8.0,
+    dmgLight: 50, dmgHeavy: 75,
+    backMultiplier: 2.0,
+    lightFireMs: 400, heavyFireMs: 900,
+    lightRecovery: 250, heavyRecovery: 550,
+    equipMs: 500,
+    speedMul: 1.0, scope: false, adsSpeedMul: 1.0,
+    mag: 0, startReserve: 0, reloadMs: 0
+};
+
+// ===== 烟雾弹（球状浓密） =====
+const SMOKE = {
+    key: 'smoke', name: '烟雾弹',
+    throwSpeed: 20, throwUpBias: 0.35,
+    gravity: 16, bounces: 0.35, friction: 0.55,
+    fuseMs: 5000, growMs: 1500, durationMs: 15000,
+    radius: 4.2, verticalRadius: 4.6, centerHeight: 3.8,
+    cooldownMs: 800, maxPerRound: 1,
+    speedMul: 1.0, scope: false, adsSpeedMul: 1.0,
+    mag: 0, startReserve: 0, reloadMs: 0
+};
+
+// ===== ★ 闪光弹（5 秒引信 · 视锥内无遮挡即被闪 · 全白 5 秒） =====
+const FLASH = {
+    key: 'flash', name: '闪光弹',
+    throwSpeed: 20, throwUpBias: 0.35,
+    gravity: 16, bounces: 0.35, friction: 0.55,
+    fuseMs: 5000,               // 5 秒引信
+    maxDistance: 45,            // 最大可被闪距离（米）
+    minFovMargin: 0.0,          // 视锥边距（0 = 完全按 FOV 判定）
+    flashDurationMs: 5000,      // 完全白屏总时长
+    flashFadeMs: 800,           // 最后 0.8 秒淡出
+    cooldownMs: 800, maxPerRound: 1,
+    speedMul: 1.0, scope: false, adsSpeedMul: 1.0,
+    mag: 0, startReserve: 0, reloadMs: 0
+};
 
 const WEAPONS = {
     rifle: {
@@ -39,10 +77,8 @@ const WEAPONS = {
         key: 'sniper', name: '冥驹',
         dmgBody: 150, dmgHead: 255,
         fireMs: 1667, mag: 5, reserveMax: 10, startReserve: 10, reloadMs: 3700,
-        zoomFov: 14,           // ★ 一段开镜
-        zoomFov2: 6,           // ★ 二段开镜（更放大）
-        scope: true,
-        boltMs: 850,           // ★ 拉栓时长
+        zoomFov: 14, zoomFov2: 6,
+        scope: true, boltMs: 850,
         speedMul: 0.72, adsSpeedMul: 0.72
     },
     shotgun: {

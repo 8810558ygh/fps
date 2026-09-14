@@ -1,11 +1,11 @@
-// ===== js/minimap.js – 小地图（敌人仅在我方视野内可见时显示） =====
+// ===== js/minimap.js – 小地图（通用，跟随当前地图的 colliders 自动绘制） =====
 (function () {
     const canvas = document.getElementById('minimap');
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
 
-    // 离屏静态层：背景、网格、墙体（只在 resize 时重绘）
+    // 离屏静态层：背景、网格、墙体（只在 resize / 地图切换时重绘）
     const staticCanvas = document.createElement('canvas');
     const staticCtx = staticCanvas.getContext('2d');
 
@@ -30,15 +30,19 @@
         drawStatic();
     }
 
+    // ============================================================
+    // 静态层绘制（背景 + 网格 + 墙体 + 边界）
+    // 数据来源：全局 colliders（由 scene.js / map_xxx.js 填充）
+    // ============================================================
     function drawStatic() {
         const s = mapSize;
         staticCtx.clearRect(0, 0, s, s);
 
-        // ---- 地面 / 通道底色（中性深灰，与整体 HUD 风格统一） ----
+        // ---- 底色 ----
         staticCtx.fillStyle = '#1c1f24';
         staticCtx.fillRect(0, 0, s, s);
 
-        // ---- 网格（更淡的参考线） ----
+        // ---- 网格 ----
         staticCtx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
         staticCtx.lineWidth = 1;
         const step = s / 4;
@@ -53,7 +57,16 @@
             staticCtx.stroke();
         }
 
-        // ---- 墙体：暖灰白实心 + 深色描边（与深灰通道强对比） ----
+        // ---- 墙体 ----
+        // 用 colliders 数组绘制，跳过外围大墙
+        if (typeof colliders === 'undefined' || !colliders) {
+            // 还没有地图数据，只画边界
+            staticCtx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+            staticCtx.lineWidth = 1.5;
+            staticCtx.strokeRect(0.75, 0.75, s - 1.5, s - 1.5);
+            return;
+        }
+
         const scale = s / (ARENA * 2);
         const wallFill = '#d8d2c6';
         const wallEdge = 'rgba(30, 30, 34, 0.85)';
@@ -102,7 +115,7 @@
         if (dist < 0.001) return true;
         _dir.normalize();
 
-        // ---- 水平视锥检测 ----
+        // ---- 水平视锥 ----
         const hLen = Math.hypot(_dir.x, _dir.z) || 1;
         const ndx = _dir.x / hLen, ndz = _dir.z / hLen;
 
@@ -135,13 +148,15 @@
         ctx.clearRect(0, 0, s, s);
         ctx.drawImage(staticCanvas, 0, 0, s, s);
 
+        if (typeof p1 === 'undefined' || !p1) return;
+
         // ---- 玩家三角 + 视野扇形 ----
         const px = (p1.pos.x + ARENA) * scale;
         const py = (p1.pos.z + ARENA) * scale;
 
         ctx.save();
         ctx.translate(px, py);
-        ctx.rotate(-p1.yaw);  // 世界 yaw=0 朝 -Z，canvas 上对应"上"
+        ctx.rotate(-p1.yaw);
 
         // 视野扇形
         const vFov = p1.cam.fov * Math.PI / 180;
@@ -206,4 +221,15 @@
 
     // 暴露给主循环
     window.updateMinimap = draw;
+
+    // ★ 暴露静态层重绘（地图切换时由 scene.js 的 loadMap 调用）
+    window.refreshMinimap = function () {
+        try {
+            requestAnimationFrame(() => {
+                try { drawStatic(); } catch (e) { console.warn('minimap refresh failed', e); }
+            });
+        } catch (e) {
+            console.warn('minimap refresh outer failed', e);
+        }
+    };
 })();

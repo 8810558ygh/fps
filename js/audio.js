@@ -1,4 +1,4 @@
-// ===== js/audio.js – 程序化音效（含四种武器射击声 + 脚步声） =====
+// ===== js/audio.js – 程序化音效（含四种武器射击声 + 脚步声 + 近战挥刀） =====
 let AC = null;
 let noiseBuf = null;
 const masterGain = {};
@@ -31,7 +31,6 @@ function env(g, t, peak, dur) {
 
 // ---- 四种武器射击音效 ----
 
-// 狂徒（步枪）- 清脆有力
 function sShootRifle(id) {
     const ac = audio(), t = ac.currentTime;
     const src = ac.createBufferSource();
@@ -60,7 +59,6 @@ function sShootRifle(id) {
     o.stop(t + 0.08);
 }
 
-// 冥驹（狙击枪）- 响亮震撼
 function sShootSniper(id) {
     const ac = audio(), t = ac.currentTime;
     const src = ac.createBufferSource();
@@ -89,7 +87,6 @@ function sShootSniper(id) {
     o.stop(t + 0.31);
 }
 
-// 判官（霰弹枪）- 低沉厚重
 function sShootShotgun(id) {
     const ac = audio(), t = ac.currentTime;
     const src = ac.createBufferSource();
@@ -119,7 +116,6 @@ function sShootShotgun(id) {
     }
 }
 
-// 奥丁（机枪）- 短促机械
 function sShootOdin(id) {
     const ac = audio(), t = ac.currentTime;
     const src = ac.createBufferSource();
@@ -148,7 +144,6 @@ function sShootOdin(id) {
     o.stop(t + 0.05);
 }
 
-// ---- 保留原 sShoot 作为后备（但不主动调用） ----
 function sShoot(id) {
     const ac = audio(), t = ac.currentTime;
     const src = ac.createBufferSource();
@@ -176,7 +171,44 @@ function sShoot(id) {
     o.stop(t + 0.1);
 }
 
-// ---- 其他音效保持不变 ----
+// ★ 近战挥刀音效
+function sMelee(isHeavy) {
+    const ac = audio();
+    const t = ac.currentTime;
+
+    // 挥空的风声（带通噪声）
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    const f = ac.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.setValueAtTime(isHeavy ? 500 : 900, t);
+    f.frequency.exponentialRampToValueAtTime(isHeavy ? 1800 : 2400, t + 0.08);
+    f.Q.value = isHeavy ? 1.8 : 2.4;
+    const g = ac.createGain();
+    const vol = isHeavy ? 0.32 : 0.20;
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + (isHeavy ? 0.22 : 0.14));
+    src.connect(f);
+    f.connect(g);
+    g.connect(masterGain[1]);
+    src.start(t);
+    src.stop(t + 0.25);
+
+    // 金属质感（重击更低沉、更重）
+    const o = ac.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(isHeavy ? 1400 : 2200, t);
+    o.frequency.exponentialRampToValueAtTime(isHeavy ? 250 : 500, t + (isHeavy ? 0.12 : 0.08));
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(isHeavy ? 0.12 : 0.07, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + (isHeavy ? 0.15 : 0.1));
+    o.connect(g2);
+    g2.connect(masterGain[1]);
+    o.start(t);
+    o.stop(t + (isHeavy ? 0.18 : 0.12));
+}
+
+// ---- 其他音效 ----
 function sHit(id) {
     const ac = audio(), t = ac.currentTime;
     const o = ac.createOscillator();
@@ -280,15 +312,12 @@ function sWin() {
 }
 
 // ============================================================
-// ★ 新增：脚步声
+// 脚步声
 // ============================================================
-
-// 自己的脚步：轻柔、居中，增加沉浸感
 function sFootstepSelf() {
     const ac = audio();
     const t = ac.currentTime;
 
-    // 低频闷响（脚掌触地）
     const o = ac.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(130 + Math.random() * 30, t);
@@ -301,7 +330,6 @@ function sFootstepSelf() {
     o.start(t);
     o.stop(t + 0.11);
 
-    // 高频沙沙（鞋底摩擦）
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -318,18 +346,15 @@ function sFootstepSelf() {
     src.stop(t + 0.05);
 }
 
-// 敌人脚步：立体声声像 + 距离衰减（volume ∈ [0,1]，pan ∈ [-1,1]）
 function sFootstepEnemy(volume, pan) {
     if (volume <= 0.005) return;
     const ac = audio();
     const t = ac.currentTime;
 
-    // 立体声声像器（直接连 destination，因为位置已手动计算）
     const panner = ac.createStereoPanner();
     panner.pan.value = Math.max(-1, Math.min(1, pan));
     panner.connect(AC.destination);
 
-    // 低频闷响
     const o = ac.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(125 + Math.random() * 35, t);
@@ -342,7 +367,6 @@ function sFootstepEnemy(volume, pan) {
     o.start(t);
     o.stop(t + 0.11);
 
-    // 高频沙沙（更尖，容易辨识方向）
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -357,4 +381,145 @@ function sFootstepEnemy(volume, pan) {
     g2.connect(panner);
     src.start(t);
     src.stop(t + 0.05);
+}
+
+// 烟雾弹投掷音效（短促的"咻"声）
+function sSmokeThrow() {
+    const ac = audio();
+    const t = ac.currentTime;
+
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    const f = ac.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.setValueAtTime(2000, t);
+    f.frequency.exponentialRampToValueAtTime(600, t + 0.15);
+    f.Q.value = 1.5;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.15, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    src.connect(f);
+    f.connect(g);
+    g.connect(masterGain[1]);
+    src.start(t);
+    src.stop(t + 0.2);
+
+    const o = ac.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(600, t);
+    o.frequency.exponentialRampToValueAtTime(180, t + 0.12);
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(0.08, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+    o.connect(g2);
+    g2.connect(masterGain[1]);
+    o.start(t);
+    o.stop(t + 0.15);
+}
+
+// 烟雾弹展开音效（低沉的"呼"声）
+function sSmokePop() {
+    const ac = audio();
+    const t = ac.currentTime;
+
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    const f = ac.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(200, t);
+    f.frequency.exponentialRampToValueAtTime(1200, t + 0.4);
+    f.Q.value = 0.8;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(0.22, t + 0.1);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    src.connect(f);
+    f.connect(g);
+    g.connect(masterGain[1]);
+    src.start(t);
+    src.stop(t + 0.65);
+
+    const o = ac.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(180, t);
+    o.frequency.exponentialRampToValueAtTime(60, t + 0.35);
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(0.15, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    o.connect(g2);
+    g2.connect(masterGain[1]);
+    o.start(t);
+    o.stop(t + 0.55);
+}
+
+// ===== 追加到 js/audio.js 末尾 =====
+
+// ★ 闪光弹投掷（与烟雾弹类似，稍尖锐）
+function sFlashThrow() {
+    const ac = audio();
+    const t = ac.currentTime;
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    const f = ac.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.setValueAtTime(2400, t);
+    f.frequency.exponentialRampToValueAtTime(700, t + 0.12);
+    f.Q.value = 1.8;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.14, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+    src.connect(f); f.connect(g); g.connect(masterGain[1]);
+    src.start(t); src.stop(t + 0.18);
+
+    const o = ac.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(900, t);
+    o.frequency.exponentialRampToValueAtTime(220, t + 0.1);
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(0.07, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    o.connect(g2); g2.connect(masterGain[1]);
+    o.start(t); o.stop(t + 0.13);
+}
+
+// ★ 闪光弹爆炸（短促爆音 + 高频"闪"感）
+function sFlashDetonate() {
+    const ac = audio();
+    const t = ac.currentTime;
+
+    // 爆音：白噪声短促
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    const f = ac.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.setValueAtTime(4000, t);
+    f.frequency.exponentialRampToValueAtTime(1500, t + 0.08);
+    f.Q.value = 0.9;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.35, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    src.connect(f); f.connect(g); g.connect(masterGain[1]);
+    src.start(t); src.stop(t + 0.28);
+
+    // 高频"啾"
+    const o = ac.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(4500, t);
+    o.frequency.exponentialRampToValueAtTime(900, t + 0.18);
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(0.18, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    o.connect(g2); g2.connect(masterGain[1]);
+    o.start(t); o.stop(t + 0.24);
+
+    // 低频冲击
+    const o2 = ac.createOscillator();
+    o2.type = 'sine';
+    o2.frequency.setValueAtTime(160, t);
+    o2.frequency.exponentialRampToValueAtTime(40, t + 0.3);
+    const g3 = ac.createGain();
+    g3.gain.setValueAtTime(0.22, t);
+    g3.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    o2.connect(g3); g3.connect(masterGain[1]);
+    o2.start(t); o2.stop(t + 0.4);
 }

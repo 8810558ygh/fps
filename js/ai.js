@@ -1,19 +1,14 @@
-// ===== js/ai.js – 人机对战 AI =====
+// ===== js/ai.js – 人机对战 AI（不使用近战刀，防御性确保始终持枪） =====
 
 const AI_CFG = {
-    // 瞄准
     aimTurnSpeed: 3.5,
     pitchSpeed: 6,
     aimErrorMax: 0.07,
     fireAngle: 0.14,
     reactionTime: 200,
-
-    // 移动
     moveInterval: 1400,
     jumpCooldown: 3500,
     jumpChance: 0.4,
-
-    // 姿态
     stanceInterval: 3000,
 };
 
@@ -39,12 +34,13 @@ const ai = {
     lastVisibilityResult: false,
 };
 
-// 武器随机池（狂徒出现率略高）
 const AI_WEAPON_POOL = ['rifle', 'rifle', 'sniper', 'shotgun', 'odin'];
 
 function aiResetRound(now) {
     const key = AI_WEAPON_POOL[Math.floor(Math.random() * AI_WEAPON_POOL.length)];
     setWeapon(p2, key);
+    p2.isMelee = false;
+    p2.equipEnd = 0;
 
     ai.targetYaw = p2.yaw;
     ai.targetPitch = 0;
@@ -101,6 +97,7 @@ const _aiDir = new THREE.Vector3();
 const _aiEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
 function aiStartReload(now) {
+    if (p2.isMelee) return;
     const w = p2.weapon;
     if (p2.reloadEnd > 0 || p2.ammo === w.mag || p2.reserve <= 0) return;
     p2.reloadEnd = now + w.reloadMs;
@@ -109,6 +106,7 @@ function aiStartReload(now) {
 
 function aiFire(now) {
     if (gameState !== 'combat') return;
+    if (p2.isMelee) return;
     if (now < p2.nextShot || p2.reloadEnd > now) return;
     if (p2.deadUntil > now) return;
 
@@ -121,7 +119,6 @@ function aiFire(now) {
     }
     p2.ammo--;
 
-    // 奥丁预热
     let currentFireMs = w.fireMs;
     if (w.spinUpMs && w.minFireMs) {
         const since = now - (p2.lastShotTime || 0);
@@ -151,7 +148,10 @@ function aiFire(now) {
 
     const pellets = w.pellets || 1;
     const spread = w.spread || 0;
-    const targets = wallMeshes.concat(crateMeshes);
+    // ★ 使用含地面的目标列表
+    const targets = (typeof getShotTargets === 'function')
+        ? getShotTargets()
+        : wallMeshes.concat(crateMeshes);
     if (now >= p1.deadUntil) targets.push(p1.body, p1.head);
 
     for (let i = 0; i < pellets; i++) {
@@ -183,18 +183,21 @@ function aiFire(now) {
                 sHit(p2.id);
             } else {
                 spawnSparks(h.point, 0xffd28a);
+                // ★ AI 环境命中：留下弹痕
+                if (typeof spawnBulletHole === 'function' && typeof getHitWorldNormal === 'function') {
+                    spawnBulletHole(h.point, getHitWorldNormal(h));
+                }
             }
         }
         if (i === 0) spawnTracer(_aiEye.clone(), end);
     }
 }
 
-// 根据武器选择偏好距离
 function aiPreferredRange(w) {
     if (w.key === 'sniper') return 22;
     if (w.key === 'shotgun') return 4;
     if (w.key === 'odin') return 12;
-    return 10; // rifle
+    return 10;
 }
 
 function aiUpdate(dt, now) {
@@ -204,7 +207,13 @@ function aiUpdate(dt, now) {
     }
     p2.baseVisible = true;
 
-    // 换弹完成
+    if (p2.isMelee) {
+        const key = AI_WEAPON_POOL[Math.floor(Math.random() * AI_WEAPON_POOL.length)];
+        setWeapon(p2, key);
+        p2.isMelee = false;
+        p2.equipEnd = 0;
+    }
+
     if (p2.reloadEnd > 0 && now >= p2.reloadEnd) {
         const w = p2.weapon;
         const need = w.mag - p2.ammo;
@@ -214,7 +223,6 @@ function aiUpdate(dt, now) {
         p2.reloadEnd = 0;
     }
 
-    // 准备阶段：站在出生点，面向出生朝向
     if (gameState !== 'combat') {
         p2.mesh.position.copy(p2.pos);
         p2.mesh.rotation.y = p2.yaw;
@@ -241,7 +249,6 @@ function aiUpdate(dt, now) {
 
     p2.pitch += (wantPitch - p2.pitch) * Math.min(1, dt * AI_CFG.pitchSpeed);
 
-    // 瞄准抖动
     if (now > ai.nextJitterAt) {
         ai.nextJitterAt = now + 250 + Math.random() * 500;
         ai.aimJitterYaw = (Math.random() - 0.5) * AI_CFG.aimErrorMax;
@@ -289,7 +296,7 @@ function aiUpdate(dt, now) {
         p2.pos.z += (fz * f + rz * s) * spd * dt;
     }
 
-    // ================= 姿态（仅站立 / 蹲下） =================
+    // ================= 姿态 =================
     if (now > ai.stanceUntil) {
         const r = Math.random();
         if (r < 0.7) {

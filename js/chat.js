@@ -1,4 +1,4 @@
-// ===== js/chat.js – 聊天系统（含透视特殊代码 + 强化嘲讽 + 联机同步） =====
+// ===== js/chat.js – 聊天系统（含透视特殊代码 + 强化嘲讽 + 联机同步 + 烟雾遮挡透视） =====
 
 const chat = {
     open: false,
@@ -11,7 +11,6 @@ const chat = {
 // ============================================================
 // AI 嘲讽池
 // ============================================================
-
 const CHAT_AI_TAUNTS_NORMAL = [
     '菜', '真菜啊', '菜鸡', '菜得抠脚', '就这？', '就这水平？',
     'cb', 'easy', 'EZ Clap', 'GGEZ', 'ez peasy', '太弱了',
@@ -39,7 +38,6 @@ const CHAT_AI_REPLIES = ['？', '哦', '呵', '。。。', '是吗', '继续', '
 // ============================================================
 // 特殊代码
 // ============================================================
-
 const XRAY_ON_CMDS = [
     '打开透视', '开透视', '透视开', '透视打开',
     'xray on', 'xray', 'XRAY', 'XrayOn',
@@ -78,18 +76,15 @@ function initChat() {
 
             if (text) {
                 if (handleSpecialCommand(text)) {
-                    // 特殊代码已处理，不发送
+                    // 特殊代码已处理
                 } else {
-                    // 本地显示
                     addChatMessage(1, text);
 
-                    // ★ 联机模式：把消息同步给对手
                     if (typeof gameMode !== 'undefined' && gameMode === 'online'
                         && typeof NET_sendChat === 'function') {
                         NET_sendChat(text);
                     }
 
-                    // 人机模式：AI 概率回应
                     if (typeof gameMode !== 'undefined' && gameMode === 'ai' && running) {
                         if (Math.random() < 0.4) {
                             setTimeout(() => {
@@ -136,7 +131,7 @@ function handleSpecialCommand(text) {
 }
 
 // ============================================================
-// 透视
+// 透视材质
 // ============================================================
 function ensureXrayMat(o) {
     if (!o.userData._origMat) o.userData._origMat = o.material;
@@ -181,6 +176,26 @@ const _xrayTarget = new THREE.Vector3();
 const _xrayDir = new THREE.Vector3();
 const _xrayRay = new THREE.Raycaster();
 
+// ★ 收集烟雾云网格，作为遮挡物（只收足够浓的）
+function collectSmokeOccluders(targets) {
+    if (typeof activeSmokes === 'undefined' || !activeSmokes) return;
+    for (const s of activeSmokes) {
+        if (!s.cloudMesh) continue;
+        const layers = s.cloudMesh.userData.layers;
+        if (!layers || !layers.length) continue;
+        // 用主圆柱（layers 中不透明度最高的那个）判断是否够浓
+        let maxOpacity = 0;
+        for (const m of layers) {
+            if (m && m.material && typeof m.material.opacity === 'number') {
+                if (m.material.opacity > maxOpacity) maxOpacity = m.material.opacity;
+            }
+        }
+        if (maxOpacity < 0.4) continue;  // 太淡了不算遮挡
+        // 把该烟雾云的所有子网格加入目标
+        s.cloudMesh.traverse(o => { if (o.isMesh) targets.push(o); });
+    }
+}
+
 function isOpponentOccluded() {
     if (!p2 || !p2.baseVisible) return false;
     p1.cam.getWorldPosition(_xrayEye);
@@ -191,7 +206,10 @@ function isOpponentOccluded() {
         p2.pos.y + 1.62 * scaleY,
     ];
 
+    // ★ 遮挡检测目标 = 墙体 + 木箱 + 活跃烟雾
     const targets = wallMeshes.concat(crateMeshes);
+    collectSmokeOccluders(targets);
+
     for (const y of checkPoints) {
         _xrayTarget.set(p2.pos.x, y, p2.pos.z);
         _xrayDir.copy(_xrayTarget).sub(_xrayEye);
@@ -301,7 +319,6 @@ function renderChatMessages() {
     if (!chatMessagesEl) return;
     const visible = chat.messages.slice(-chat.maxVisible);
 
-    // 联机模式：用真名显示对手
     let enemyName = '对手';
     if (typeof gameMode !== 'undefined' && gameMode === 'online'
         && typeof NET !== 'undefined' && NET.getOpponentName) {
@@ -332,7 +349,7 @@ function escapeHtml(s) {
 }
 
 // ============================================================
-// AI 嘲讽（只在人机模式触发）
+// AI 嘲讽
 // ============================================================
 function aiTaunt() {
     if (typeof gameMode === 'undefined' || gameMode !== 'ai') return;

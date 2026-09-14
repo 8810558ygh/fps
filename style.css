@@ -1142,3 +1142,54 @@ body.online-mode #opponentInfo {
     .op-name { font-size: 13px; max-width: 90px; }
     .op-ping { font-size: 11px; min-width: 40px; }
 }
+
+/* ===== 追加到 style.css 末尾 ===== */
+
+/* 地图选择器（大厅） */
+.lobby-map-select {
+    position: relative;
+    margin-bottom: 28px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+.map-select-title {
+    font-size: 14px;
+    color: #7c92a8;
+    letter-spacing: 4px;
+}
+.map-select-row {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+.map-btn {
+    cursor: pointer;
+    padding: 10px 30px;
+    font-size: 16px;
+    letter-spacing: 3px;
+    font-weight: 700;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 2px solid rgba(255, 255, 255, 0.18);
+    color: #cfe0f0;
+    transition: all 0.2s;
+    font-family: inherit;
+}
+.map-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.35);
+    transform: translateY(-2px);
+}
+.map-btn.active {
+    background: linear-gradient(180deg, #ffd24a, #f0a92e);
+    color: #08131f;
+    border-color: #ffd24a;
+    box-shadow: 0 6px 20px rgba(255, 210, 74, 0.45);
+}
+@media (pointer: coarse) {
+    .map-btn { padding: 8px 22px; font-size: 14px; letter-spacing: 2px; }
+    .map-select-title { font-size: 12px; letter-spacing: 2px; }
+}
