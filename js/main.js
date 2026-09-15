@@ -150,6 +150,8 @@ function render() {
     p1.mesh.visible = false;
     p2.mesh.visible = p2.baseVisible;
     p1.vm.visible = p1.baseVisible && !(p1.aiming && p1.weapon.scope);
+    // ★ 隐藏 p2 的第一人称视图模型（那是另一个玩家的视角，不应该出现在本地渲染里）
+    if (p2.vm) p2.vm.visible = false;
     renderer.render(scene, p1.cam);
 }
 
@@ -197,10 +199,19 @@ function updateLocalClientCamera(dt, now) {
     p1.mesh.scale.y = p1.height / HEIGHT_STAND;
     // viewmodel
     updateSniperViewmodel(p1, dt, now);
+
+    // ★ 第三人称武器动画：自己 + 对手
+    if (typeof updateThirdPersonWeapon === 'function') {
+        updateThirdPersonWeapon(p1, dt, now);
+        if (typeof p2 !== 'undefined' && p2) {
+            updateThirdPersonWeapon(p2, dt, now);
+        }
+    }
 }
 
 let _lastClientReportTime = 0;
-const CLIENT_REPORT_INTERVAL = 40;
+// ★ 客户端上报间隔 40ms → 20ms
+const CLIENT_REPORT_INTERVAL = 20;
 
 function loop() {
     requestAnimationFrame(loop);

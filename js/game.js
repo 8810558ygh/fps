@@ -1,4 +1,4 @@
-// ===== js/game.js – 核心游戏逻辑（含烟雾弹 + 闪光弹 + 弹痕） =====
+// ===== js/game.js – 核心游戏逻辑（含烟雾弹 + 闪光弹 + 弹痕 + 第三人称动作） =====
 let running = false;
 let matchStart = 0;
 let gameMode = 'range';
@@ -27,7 +27,7 @@ const SMOKE_PROJ_RADIUS = 0.09;
 const SMOKE_PROJ_HALF_H = 0.12;
 
 // ============================================================
-// ★ 弹痕系统
+// 弹痕系统
 // ============================================================
 const bulletHoles = [];
 const MAX_BULLET_HOLES = 80;
@@ -248,9 +248,6 @@ function updateThrownPhysics(s, dt) {
     s.mesh.rotation.y += dt * 3.0;
 }
 
-// ============================================================
-// 通用投掷物模型生成
-// ============================================================
 function createThrownProjectileMesh(kind) {
     const mainMat = kind === 'flash' ? FLASH_MAT.clone() : SMOKE_MAT.clone();
     mainMat.emissiveIntensity = 0.7;
@@ -281,9 +278,6 @@ function createThrownProjectileMesh(kind) {
     return mesh;
 }
 
-// ============================================================
-// 烟雾云生成
-// ============================================================
 function createSmokeCloud(pos, radius, verticalRadius, centerHeight) {
     const group = new THREE.Group();
     group.position.set(pos.x, centerHeight, pos.z);
@@ -340,9 +334,6 @@ function createSmokeCloud(pos, radius, verticalRadius, centerHeight) {
     return group;
 }
 
-// ============================================================
-// 生成投掷物
-// ============================================================
 function spawnSmokeProjectile(pos, vel, fuseMs, now) {
     const mesh = createThrownProjectileMesh('smoke');
     mesh.position.copy(pos);
@@ -368,9 +359,6 @@ function spawnFlashProjectile(pos, vel, fuseMs, now) {
 }
 window.spawnFlashProjectile = spawnFlashProjectile;
 
-// ============================================================
-// 闪光弹爆炸 + 判定
-// ============================================================
 function spawnFlashBurst(pos) {
     const geo = new THREE.SphereGeometry(0.5, 20, 14);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 });
@@ -456,9 +444,6 @@ function detonateFlash(pos, now) {
     }
 }
 
-// ============================================================
-// 更新烟雾弹
-// ============================================================
 function updateSmokes(dt, now) {
     for (let i = activeSmokes.length - 1; i >= 0; i--) {
         const s = activeSmokes[i];
@@ -601,9 +586,6 @@ function updateFlashOverlay(now) {
     }
 }
 
-// ============================================================
-// 主更新
-// ============================================================
 function updateEffects(dt, now) {
     for (let i = tracers.length - 1; i >= 0; i--) {
         const t = tracers[i];
@@ -630,9 +612,6 @@ function updateEffects(dt, now) {
     updateBulletHoles(now);
 }
 
-// ============================================================
-// 抛物线轨迹
-// ============================================================
 function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounces, friction, steps, dt) {
     const pts = [];
     const vel = dir.clone().multiplyScalar(throwSpeed);
@@ -735,9 +714,6 @@ function updateFlashTrajectory(now) {
     updateTrajLine(flashTrajLine, pts);
 }
 
-// ============================================================
-// 投掷动作
-// ============================================================
 function throwSmoke(p, now) {
     if (gameState !== 'combat') return;
     if (!p.isSmoke) return;
@@ -866,9 +842,6 @@ function clearAllFlashes() {
     if (flashTrajLine) flashTrajLine.visible = false;
 }
 
-// ============================================================
-// 通用逻辑
-// ============================================================
 function isOver() { return document.getElementById('endOverlay').style.display === 'flex'; }
 
 function startReload(p, now) {
@@ -967,9 +940,6 @@ function collidePlayers() {
     }
 }
 
-// ============================================================
-// 脚步声
-// ============================================================
 const STRIDE_LENGTH = 2.0;
 const STEP_MAX_AUDIBLE = 22;
 
@@ -1012,10 +982,6 @@ function updateFootsteps(p, dt, now) {
     }
 }
 
-// ============================================================
-// 近战
-// ★ 修复：背刺判定点积方向反了（应为 > 0.3，正面/背面）
-// ============================================================
 function isBackAttack(attacker, victim) {
     if (!victim || !victim.mesh) return false;
     const toVictim = new THREE.Vector3().subVectors(victim.pos, attacker.pos);
@@ -1026,7 +992,6 @@ function isBackAttack(attacker, victim) {
     victimDir.y = 0;
     if (victimDir.lengthSq() < 1e-6) return false;
     victimDir.normalize();
-    // 攻击者在受害者背后 → toVictim 与 victimDir 同向 → 点积 > 0
     return toVictim.dot(victimDir) > 0.3;
 }
 
@@ -1048,10 +1013,8 @@ function tryMelee(p, now, isHeavy) {
 
     sMelee(isHeavy);
 
-    // 联机客户端：只播视觉，命中由房主判定
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) return;
 
-    // 房主 / 离线：完整判定
     const origin = p.cam.getWorldPosition(_v1).clone();
     const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
     const targets = getShotTargets();
@@ -1081,9 +1044,6 @@ function tryMelee(p, now, isHeavy) {
     }
 }
 
-// ============================================================
-// 射击
-// ============================================================
 function tryFire(p, now) {
     if (gameState !== 'combat') return;
     if (p.isMelee || p.isSmoke || p.isFlash) return;
@@ -1119,28 +1079,20 @@ function tryFire(p, now) {
     p.muzzle.intensity = 2.2;
     if (p.id === 1) p.vmMuzzle.intensity = 2.2;
 
-    // 联机客户端：只做本地视觉（曳光/枪火），伤害由房主判定
+    // 联机客户端：只做本地曳光视觉，弹痕、伤害、房主的开火效果全部由房主广播
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) {
         const origin = p.cam.getWorldPosition(_v1).clone();
         const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion).clone();
 
-        // 本地弹痕（打在墙上）
         const localTargets = getShotTargets();
         const rcLocal = new THREE.Raycaster(origin.clone(), dir.clone(), 0, 150);
         const hitsLocal = rcLocal.intersectObjects(localTargets, false);
         let end = origin.clone().add(dir.clone().multiplyScalar(100));
-        if (hitsLocal.length > 0) {
-            const h = hitsLocal[0];
-            end = h.point;
-            if (!h.object.userData.part) {
-                spawnBulletHole(h.point, getHitWorldNormal(h));
-            }
-        }
+        if (hitsLocal.length > 0) end = hitsLocal[0].point;
         spawnTracer(muzzleWorld(p, _v1), end);
         return;
     }
 
-    // 房主 / 离线：完整命中判定
     const origin = p.cam.getWorldPosition(_v1).clone();
     const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
     const pellets = w.pellets || 1;
@@ -1148,6 +1100,8 @@ function tryFire(p, now) {
     const targets = getShotTargets();
     const o = other(p);
     if (now >= o.deadUntil) targets.push(o.body, o.head);
+
+    const isOnlineHost = (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost);
 
     for (let i = 0; i < pellets; i++) {
         const randDir = dir.clone();
@@ -1180,16 +1134,32 @@ function tryFire(p, now) {
                 damage(o, dmg, p);
             } else {
                 spawnSparks(h.point, 0xffd28a);
-                spawnBulletHole(h.point, getHitWorldNormal(h));
+                const n = getHitWorldNormal(h);
+                spawnBulletHole(h.point, n);
+                if (isOnlineHost) {
+                    NET_broadcast({
+                        type: 'bulletHole',
+                        x: h.point.x, y: h.point.y, z: h.point.z,
+                        nx: n.x, ny: n.y, nz: n.z
+                    });
+                }
             }
         }
-        if (i === 0) spawnTracer(muzzleWorld(p, _v1), end);
+        if (i === 0) {
+            const mw = muzzleWorld(p, _v1);
+            spawnTracer(mw, end);
+            if (isOnlineHost) {
+                NET_broadcast({
+                    type: 'shootEvent',
+                    weapon: w.key,
+                    sx: mw.x, sy: mw.y, sz: mw.z,
+                    ex: end.x, ey: end.y, ez: end.z
+                });
+            }
+        }
     }
 }
 
-// ============================================================
-// 伤害 / 击杀 / 重置 / 回合
-// ============================================================
 function damage(victim, dmg, from) {
     if (gameState !== 'combat') return;
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) return;
@@ -1384,10 +1354,6 @@ function resetMatch() {
     if (typeof checkOrientation === 'function') checkOrientation();
 }
 
-// ============================================================
-// 视图模型动画
-// ★ 近战分支重做：轻击 = 左右挥砍；重击 = 反手刺
-// ============================================================
 function updateSniperViewmodel(p, dt, now) {
     if (!p.vm || p.vm.children.length === 0) return;
     const vm = p.vm.children[0];
@@ -1396,105 +1362,47 @@ function updateSniperViewmodel(p, dt, now) {
 
     if (p.isMelee && p.meleeEnd > now) {
         const fireMs = p.meleeIsHeavy ? MELEE.heavyFireMs : MELEE.lightFireMs;
-        const progress = 1 - (p.meleeEnd - now) / fireMs; // 0 → 1
+        const progress = 1 - (p.meleeEnd - now) / fireMs;
         const bp = vm.userData.basePos;
         const br = vm.userData.baseRot;
 
         if (p.meleeIsHeavy) {
-            // ---------- 重击：反手刺 ----------
             let phase, t;
             if (progress < 0.35) { phase = 'wind';   t = progress / 0.35; }
             else if (progress < 0.55) { phase = 'thrust'; t = (progress - 0.35) / 0.20; }
             else { phase = 'recover'; t = (progress - 0.55) / 0.45; }
-
             if (phase === 'wind') {
-                // 反手收刀：向右后上方拉起，刀身横置
                 const e = t * t;
-                vm.position.set(
-                    bp.x + e * 0.16,
-                    bp.y + e * 0.12,
-                    bp.z + e * 0.18
-                );
-                vm.rotation.set(
-                    br.x + e * 0.10,
-                    br.y - e * 0.60,
-                    br.z + e * 0.55
-                );
+                vm.position.set(bp.x + e * 0.16, bp.y + e * 0.12, bp.z + e * 0.18);
+                vm.rotation.set(br.x + e * 0.10, br.y - e * 0.60, br.z + e * 0.55);
             } else if (phase === 'thrust') {
-                // 向前快速刺出
                 const e = 1 - Math.pow(1 - t, 2.5);
-                vm.position.set(
-                    bp.x + 0.16 - e * 0.22,
-                    bp.y + 0.12 - e * 0.18,
-                    bp.z + 0.18 - e * 0.88
-                );
-                vm.rotation.set(
-                    br.x + 0.10 - e * 0.08,
-                    br.y - 0.60 + e * 0.75,
-                    br.z + 0.55 - e * 0.70
-                );
+                vm.position.set(bp.x + 0.16 - e * 0.22, bp.y + 0.12 - e * 0.18, bp.z + 0.18 - e * 0.88);
+                vm.rotation.set(br.x + 0.10 - e * 0.08, br.y - 0.60 + e * 0.75, br.z + 0.55 - e * 0.70);
             } else {
-                // 收回原位
                 const e = 1 - t;
-                vm.position.set(
-                    bp.x - 0.06 * e,
-                    bp.y - 0.06 * e,
-                    bp.z - 0.70 * e
-                );
-                vm.rotation.set(
-                    br.x + 0.02 * e,
-                    br.y + 0.15 * e,
-                    br.z - 0.15 * e
-                );
+                vm.position.set(bp.x - 0.06 * e, bp.y - 0.06 * e, bp.z - 0.70 * e);
+                vm.rotation.set(br.x + 0.02 * e, br.y + 0.15 * e, br.z - 0.15 * e);
             }
             return;
         }
 
-        // ---------- 轻击：左右挥砍 ----------
         let phase, t;
         if (progress < 0.25) { phase = 'wind';   t = progress / 0.25; }
         else if (progress < 0.55) { phase = 'swing';  t = (progress - 0.25) / 0.30; }
         else { phase = 'recover'; t = (progress - 0.55) / 0.45; }
-
         if (phase === 'wind') {
-            // 起势：向右后方拉刀
             const e = t * t;
-            vm.position.set(
-                bp.x + e * 0.22,
-                bp.y + e * 0.10,
-                bp.z + e * 0.10
-            );
-            vm.rotation.set(
-                br.x + e * 0.18,
-                br.y - e * 0.45,
-                br.z + e * 0.45
-            );
+            vm.position.set(bp.x + e * 0.22, bp.y + e * 0.10, bp.z + e * 0.10);
+            vm.rotation.set(br.x + e * 0.18, br.y - e * 0.45, br.z + e * 0.45);
         } else if (phase === 'swing') {
-            // 挥出：从右向左横砍
             const e = 1 - Math.pow(1 - t, 2.2);
-            vm.position.set(
-                bp.x + 0.22 - e * 0.72,
-                bp.y + 0.10 - e * 0.20,
-                bp.z + 0.10 - e * 0.28
-            );
-            vm.rotation.set(
-                br.x + 0.18 - e * 0.22,
-                br.y - 0.45 + e * 1.55,
-                br.z + 0.45 - e * 1.15
-            );
+            vm.position.set(bp.x + 0.22 - e * 0.72, bp.y + 0.10 - e * 0.20, bp.z + 0.10 - e * 0.28);
+            vm.rotation.set(br.x + 0.18 - e * 0.22, br.y - 0.45 + e * 1.55, br.z + 0.45 - e * 1.15);
         } else {
-            // 收回：从左侧回到原位
             const e = 1 - t;
-            vm.position.set(
-                bp.x - 0.50 * e,
-                bp.y - 0.10 * e,
-                bp.z - 0.18 * e
-            );
-            vm.rotation.set(
-                br.x - 0.04 * e,
-                br.y + 1.10 * e,
-                br.z - 0.70 * e
-            );
+            vm.position.set(bp.x - 0.50 * e, bp.y - 0.10 * e, bp.z - 0.18 * e);
+            vm.rotation.set(br.x - 0.04 * e, br.y + 1.10 * e, br.z - 0.70 * e);
         }
         return;
     }
@@ -1520,6 +1428,99 @@ function updateSniperViewmodel(p, dt, now) {
     vm.rotation.y += (vm.userData.baseRot.y - vm.rotation.y) * k;
     vm.rotation.z += (vm.userData.baseRot.z - vm.rotation.z) * k;
 }
+
+// ============================================================
+// ★ 新增：第三人称武器朝向 + 挥刀/换弹/拉栓动画
+//   驱动 p.gunHolder（第三方模型手持武器），
+//   让双方摄像机都能看到角色的枪械动作。
+// ============================================================
+function updateThirdPersonWeapon(p, dt, now) {
+    if (!p.gunHolder) return;
+    const gh = p.gunHolder;
+
+    if (!gh.userData.basePos) {
+        gh.userData.basePos = gh.position.clone();
+        gh.userData.baseRot = gh.rotation.clone();
+    }
+    const bp = gh.userData.basePos;
+    const br = gh.userData.baseRot;
+
+    const k = Math.min(1, dt * 14);
+
+    // 优先级 1：近战挥刀
+    if (p.isMelee && p.meleeEnd > now) {
+        const fireMs = p.meleeIsHeavy ? MELEE.heavyFireMs : MELEE.lightFireMs;
+        const t = 1 - (p.meleeEnd - now) / fireMs;
+
+        if (p.meleeIsHeavy) {
+            let phase, tt;
+            if (t < 0.35) { phase = 'wind'; tt = t / 0.35; }
+            else if (t < 0.55) { phase = 'thrust'; tt = (t - 0.35) / 0.20; }
+            else { phase = 'recover'; tt = (t - 0.55) / 0.45; }
+            if (phase === 'wind') {
+                const e = tt * tt;
+                gh.position.set(bp.x + e * 0.10, bp.y + e * 0.15, bp.z + e * 0.20);
+                gh.rotation.set(br.x - e * 0.30, br.y - e * 0.60, br.z + e * 0.50);
+            } else if (phase === 'thrust') {
+                const e = 1 - Math.pow(1 - tt, 2.5);
+                gh.position.set(bp.x + 0.10 - e * 0.05, bp.y + 0.15 - e * 0.20, bp.z + 0.20 - e * 0.95);
+                gh.rotation.set(br.x - 0.30 + e * 0.20, br.y - 0.60 + e * 0.70, br.z + 0.50 - e * 0.60);
+            } else {
+                const e = 1 - tt;
+                gh.position.set(bp.x + 0.05 * e, bp.y - 0.05 * e, bp.z - 0.75 * e);
+                gh.rotation.set(br.x - 0.10 * e, br.y + 0.10 * e, br.z - 0.10 * e);
+            }
+        } else {
+            let phase, tt;
+            if (t < 0.25) { phase = 'wind'; tt = t / 0.25; }
+            else if (t < 0.55) { phase = 'swing'; tt = (t - 0.25) / 0.30; }
+            else { phase = 'recover'; tt = (t - 0.55) / 0.45; }
+            if (phase === 'wind') {
+                const e = tt * tt;
+                gh.position.set(bp.x + e * 0.20, bp.y + e * 0.08, bp.z + e * 0.10);
+                gh.rotation.set(br.x - e * 0.20, br.y - e * 0.30, br.z + e * 0.30);
+            } else if (phase === 'swing') {
+                const e = 1 - Math.pow(1 - tt, 2.2);
+                gh.position.set(bp.x + 0.20 - e * 0.65, bp.y + 0.08 - e * 0.15, bp.z + 0.10 - e * 0.25);
+                gh.rotation.set(br.x - 0.20 + e * 0.30, br.y - 0.30 + e * 1.20, br.z + 0.30 - e * 1.00);
+            } else {
+                const e = 1 - tt;
+                gh.position.set(bp.x - 0.45 * e, bp.y - 0.07 * e, bp.z - 0.15 * e);
+                gh.rotation.set(br.x + 0.10 * e, br.y + 0.90 * e, br.z - 0.70 * e);
+            }
+        }
+        return;
+    }
+
+    // 优先级 2：换弹
+    if (p.reloadEnd > now && !p.isMelee && !p.isSmoke && !p.isFlash) {
+        const w = p.weapon;
+        const total = w.reloadMs || 2000;
+        const t = 1 - (p.reloadEnd - now) / total;
+        const sink = Math.sin(Math.min(1, t * 1.2) * Math.PI) * 0.18;
+        const wobble = Math.sin(t * Math.PI * 6) * 0.05;
+        gh.position.set(bp.x + wobble * 0.4, bp.y - sink, bp.z + sink * 0.5);
+        gh.rotation.set(br.x + sink * 1.2, br.y + wobble * 1.5, br.z + sink * 0.6);
+        return;
+    }
+
+    // 优先级 3：拉栓
+    if (p.boltEnd > now && p.weapon && p.weapon.boltMs) {
+        const total = p.weapon.boltMs;
+        const t = 1 - (p.boltEnd - now) / total;
+        const pull = Math.sin(t * Math.PI);
+        gh.position.set(bp.x, bp.y - pull * 0.06, bp.z + pull * 0.18);
+        gh.rotation.set(br.x + pull * 0.35, br.y + pull * 0.15, br.z);
+        return;
+    }
+
+    // 默认：回到原位，并把俯仰（pitch）应用到枪管
+    gh.position.lerp(bp, k);
+    gh.rotation.x += (br.x + p.pitch - gh.rotation.x) * k;
+    gh.rotation.y += (br.y - gh.rotation.y) * k;
+    gh.rotation.z += (br.z - gh.rotation.z) * k;
+}
+window.updateThirdPersonWeapon = updateThirdPersonWeapon;
 
 function updatePlayer(p, dt, now) {
     if (now < p.deadUntil) {
@@ -1605,6 +1606,9 @@ function updatePlayer(p, dt, now) {
     p.mesh.position.copy(p.pos);
     p.mesh.rotation.y = p.yaw;
     p.mesh.scale.y = p.height / HEIGHT_STAND;
+
+    // ★ 第三人称武器动画（挥刀/换弹/拉栓/俯仰）
+    updateThirdPersonWeapon(p, dt, now);
 
     updateSniperViewmodel(p, dt, now);
 }

@@ -313,6 +313,22 @@
                 if (!NET.isHost) handleDamageEvent(data); break;
             case 'shootEvent':
                 if (!NET.isHost) handleShootEvent(data); break;
+            case 'bulletHole':
+                if (!NET.isHost && typeof spawnBulletHole === 'function') {
+                    spawnBulletHole(
+                        new THREE.Vector3(data.x, data.y, data.z),
+                        new THREE.Vector3(data.nx, data.ny, data.nz)
+                    );
+                }
+                break;
+            case 'spark':
+                if (!NET.isHost && typeof spawnSparks === 'function') {
+                    spawnSparks(
+                        new THREE.Vector3(data.x, data.y, data.z),
+                        data.color || 0xffd28a
+                    );
+                }
+                break;
             case 'smokeThrow':
                 if (NET.isHost) handleSmokeThrow(fromId, data); break;
             case 'smokeSpawn':
@@ -604,7 +620,8 @@
 
     function startHostBroadcast() {
         if (hostBroadcastTimer) clearInterval(hostBroadcastTimer);
-        hostBroadcastTimer = setInterval(hostBroadcastTick, 40);
+        // ★ 广播间隔 40ms → 20ms
+        hostBroadcastTimer = setInterval(hostBroadcastTick, 20);
     }
     function stopHostBroadcast() {
         if (hostBroadcastTimer) { clearInterval(hostBroadcastTimer); hostBroadcastTimer = null; }
@@ -627,6 +644,7 @@
             isMelee: !!p.isMelee,
             isSmoke: !!p.isSmoke,
             isFlash: !!p.isFlash,
+            meleeIsHeavy: !!p.meleeIsHeavy,
             smokeCharges: p.smokeCharges || 0,
             flashCharges: p.flashCharges || 0,
             reloadRemain: Math.max(0, p.reloadEnd - now),
@@ -699,6 +717,7 @@
         }
         if (data.melee) {
             if (!p2.isMelee) setWeapon(p2, 'knife');
+            p2.meleeIsHeavy = !!data.meleeHeavy;
             tryMelee(p2, performance.now(), !!data.meleeHeavy);
         }
 
@@ -719,12 +738,11 @@
 
             const now = performance.now();
 
+            // ===== 自己 =====
             if (typeof p1 !== 'undefined' && p1) {
                 const targetKey = myData.isMelee ? 'knife' : (myData.isSmoke ? 'smoke' : (myData.isFlash ? 'flash' : myData.weapon));
                 const currentKey = p1.isMelee ? 'knife' : (p1.isSmoke ? 'smoke' : (p1.isFlash ? 'flash' : p1.weaponKey));
-                if (targetKey !== currentKey) {
-                    setWeapon(p1, targetKey);
-                }
+                if (targetKey !== currentKey) setWeapon(p1, targetKey);
 
                 p1.pos.set(myData.x, myData.y, myData.z);
                 p1.hp = myData.hp;
@@ -737,6 +755,7 @@
                 p1.height = myData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
                 p1.eyeH = stanceEye(p1.height);
                 p1.aimStage = myData.aimStage || 0;
+                p1.meleeIsHeavy = !!myData.meleeIsHeavy;
 
                 p1.reloadEnd     = myData.reloadRemain > 0     ? now + myData.reloadRemain     : 0;
                 p1.boltEnd       = myData.boltRemain > 0       ? now + myData.boltRemain       : 0;
@@ -755,6 +774,7 @@
                 }
             }
 
+            // ===== 对手 =====
             if (typeof p2 !== 'undefined' && p2) {
                 p2.pos.set(oppData.x, oppData.y, oppData.z);
                 p2.yaw = oppData.yaw;
@@ -765,10 +785,12 @@
                 p2.height = oppData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
                 p2.aiming = !!oppData.aiming;
                 p2.aimStage = oppData.aimStage || 0;
+                p2.meleeIsHeavy = !!oppData.meleeIsHeavy;
 
                 p2.reloadEnd = oppData.reloadRemain > 0 ? now + oppData.reloadRemain : 0;
                 p2.boltEnd   = oppData.boltRemain > 0   ? now + oppData.boltRemain   : 0;
                 p2.meleeEnd  = oppData.meleeEndRemain > 0 ? now + oppData.meleeEndRemain : 0;
+                p2.meleeRecovery = oppData.meleeRecoveryRemain > 0 ? now + oppData.meleeRecoveryRemain : 0;
 
                 if (oppData.dead) {
                     p2.deadUntil = Infinity;
@@ -832,6 +854,10 @@
         p1.deadUntil = watchData.dead ? Infinity : 0;
         p1.smokeCharges = watchData.smokeCharges || 0;
         p1.flashCharges = watchData.flashCharges || 0;
+        p1.meleeIsHeavy = !!watchData.meleeIsHeavy;
+        p1.reloadEnd = watchData.reloadRemain > 0 ? performance.now() + watchData.reloadRemain : 0;
+        p1.boltEnd = watchData.boltRemain > 0 ? performance.now() + watchData.boltRemain : 0;
+        p1.meleeEnd = watchData.meleeEndRemain > 0 ? performance.now() + watchData.meleeEndRemain : 0;
 
         const wantKey = watchData.isMelee ? 'knife' : (watchData.isSmoke ? 'smoke' : (watchData.isFlash ? 'flash' : watchData.weapon));
         const curKey = p1.isMelee ? 'knife' : (p1.isSmoke ? 'smoke' : (p1.isFlash ? 'flash' : p1.weaponKey));
@@ -883,6 +909,10 @@
         p2.height = otherData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
         p2.mesh.scale.y = p2.height / HEIGHT_STAND;
         p2.mat.color.setHex(otherIsBlue ? 0x3a7bd5 : 0xd54a3a);
+        p2.meleeIsHeavy = !!otherData.meleeIsHeavy;
+        p2.reloadEnd = otherData.reloadRemain > 0 ? performance.now() + otherData.reloadRemain : 0;
+        p2.boltEnd = otherData.boltRemain > 0 ? performance.now() + otherData.boltRemain : 0;
+        p2.meleeEnd = otherData.meleeEndRemain > 0 ? performance.now() + otherData.meleeEndRemain : 0;
 
         const otherKey = otherData.isMelee ? 'knife' : (otherData.isSmoke ? 'smoke' : (otherData.isFlash ? 'flash' : otherData.weapon));
         const p2Key = p2.isMelee ? 'knife' : (p2.isSmoke ? 'smoke' : (p2.isFlash ? 'flash' : p2.weaponKey));
@@ -905,6 +935,12 @@
                 p2.isMelee = false; p2.isSmoke = false; p2.isFlash = false;
                 p2.weaponKey = otherKey; p2.weapon = WEAPONS[otherKey];
             }
+        }
+
+        // ★ 第三人称武器动画（挥刀 / 换弹 / 拉栓 / 俯仰）
+        if (typeof updateThirdPersonWeapon === 'function') {
+            updateThirdPersonWeapon(p1, dt, performance.now());
+            updateThirdPersonWeapon(p2, dt, performance.now());
         }
     }
     window.NET_updateSpectatorView = updateSpectatorView;
@@ -966,7 +1002,19 @@
             }
             return;
         }
-        if (data.from === 'p2' && typeof p2 !== 'undefined' && p2.muzzle) p2.muzzle.intensity = 2.2;
+
+        // 房主开火 → 客户端把枪口焰光 + 曳光加在对手（p2）身上
+        if (typeof p2 !== 'undefined' && p2) {
+            if (p2.muzzle) p2.muzzle.intensity = 2.2;
+            if (typeof spawnTracer === 'function'
+                && data.sx !== undefined && data.ex !== undefined) {
+                spawnTracer(
+                    new THREE.Vector3(data.sx, data.sy, data.sz),
+                    new THREE.Vector3(data.ex, data.ey, data.ez)
+                );
+            }
+        }
+
         switch (data.weapon) {
             case 'sniper': sShootSniper(2); break;
             case 'shotgun': sShootShotgun(2); break;
@@ -1016,7 +1064,6 @@
         }
     }
 
-    // ★ 客户端收到 roundEvent：只在 prep → combat 时关闭结算面板
     function handleRoundEvent(data) {
         const prevState = (typeof gameState !== 'undefined') ? gameState : null;
 
@@ -1024,8 +1071,6 @@
         if (typeof stateEndTime !== 'undefined') stateEndTime = performance.now() + data.remain;
         if (typeof roundNumber !== 'undefined' && data.roundNumber) roundNumber = data.roundNumber;
 
-        // ★ 只在 prep → combat 时关闭结算面板（与房主端 endPrep 行为一致）
-        //   roundEnd → prep 时不关，让报告在下一回合准备阶段继续显示
         if (data.gameState === 'combat' && prevState === 'prep') {
             if (window.closeCombatReport) window.closeCombatReport();
             const panel = document.getElementById('weaponPanel');
