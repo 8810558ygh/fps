@@ -739,7 +739,6 @@ function updateFlashTrajectory(now) {
 // 投掷动作
 // ============================================================
 function throwSmoke(p, now) {
-    if (p.id !== 1) return;
     if (gameState !== 'combat') return;
     if (!p.isSmoke) return;
     if (p.smokeCharges <= 0) return;
@@ -755,11 +754,10 @@ function throwSmoke(p, now) {
     const vel = dir.clone().multiplyScalar(SMOKE.throwSpeed);
     vel.y += SMOKE.throwUpBias * SMOKE.throwSpeed;
 
-    spawnSmokeProjectile(origin, vel, SMOKE.fuseMs, now);
-    if (typeof sSmokeThrow === 'function') sSmokeThrow();
-
     if (gameMode === 'online' && typeof NET !== 'undefined' && NET.roomId) {
         if (NET.isHost) {
+            spawnSmokeProjectile(origin, vel, SMOKE.fuseMs, now);
+            if (typeof sSmokeThrow === 'function') sSmokeThrow();
             if (typeof NET_broadcast === 'function') {
                 NET_broadcast({
                     type: 'smokeSpawn',
@@ -777,14 +775,17 @@ function throwSmoke(p, now) {
                     fuseMs: SMOKE.fuseMs
                 });
             }
+            if (typeof sSmokeThrow === 'function') sSmokeThrow();
         }
+    } else {
+        spawnSmokeProjectile(origin, vel, SMOKE.fuseMs, now);
+        if (typeof sSmokeThrow === 'function') sSmokeThrow();
     }
 
     setWeapon(p, p.primaryWeaponKey || 'rifle');
 }
 
 function throwFlash(p, now) {
-    if (p.id !== 1) return;
     if (gameState !== 'combat') return;
     if (!p.isFlash) return;
     if (p.flashCharges <= 0) return;
@@ -800,11 +801,10 @@ function throwFlash(p, now) {
     const vel = dir.clone().multiplyScalar(FLASH.throwSpeed);
     vel.y += FLASH.throwUpBias * FLASH.throwSpeed;
 
-    spawnFlashProjectile(origin, vel, FLASH.fuseMs, now);
-    if (typeof sFlashThrow === 'function') sFlashThrow();
-
     if (gameMode === 'online' && typeof NET !== 'undefined' && NET.roomId) {
         if (NET.isHost) {
+            spawnFlashProjectile(origin, vel, FLASH.fuseMs, now);
+            if (typeof sFlashThrow === 'function') sFlashThrow();
             if (typeof NET_broadcast === 'function') {
                 NET_broadcast({
                     type: 'flashSpawn',
@@ -822,7 +822,11 @@ function throwFlash(p, now) {
                     fuseMs: FLASH.fuseMs
                 });
             }
+            if (typeof sFlashThrow === 'function') sFlashThrow();
         }
+    } else {
+        spawnFlashProjectile(origin, vel, FLASH.fuseMs, now);
+        if (typeof sFlashThrow === 'function') sFlashThrow();
     }
 
     setWeapon(p, p.primaryWeaponKey || 'rifle');
@@ -868,14 +872,15 @@ function clearAllFlashes() {
 function isOver() { return document.getElementById('endOverlay').style.display === 'flex'; }
 
 function startReload(p, now) {
-    if (p.id !== 1) return;
     if (!running || gameState !== 'combat') return;
     if (p.isMelee || p.isSmoke || p.isFlash) return;
     const w = p.weapon;
     if (now < p.deadUntil || p.reloadEnd > now || p.ammo === w.mag || p.reserve <= 0) return;
     if (now < p.boltEnd) return;
     p.reloadEnd = now + w.reloadMs;
-    p.aimStage = 0; p.aiming = false; mouse.aim = false;
+    p.aimStage = 0; p.aiming = false;
+    if (p.input) p.input.aim = false;
+    if (p.id === 1) mouse.aim = false;
     sReload(p.id);
 }
 
@@ -888,7 +893,8 @@ function toggleAim() {
     const w = p.weapon;
     if (w.key === 'sniper') p.aimStage = (p.aimStage + 1) % 3;
     else p.aimStage = p.aimStage > 0 ? 0 : 1;
-    mouse.aim = p.aimStage > 0;
+    p.input.aim = p.aimStage > 0;
+    mouse.aim = p.input.aim;
 }
 
 function stanceEye(h) { return h <= HEIGHT_CROUCH + 0.01 ? EYE_CROUCH : EYE_STAND; }
@@ -1025,7 +1031,6 @@ function isBackAttack(attacker, victim) {
 }
 
 function tryMelee(p, now, isHeavy) {
-    if (p.id !== 1) return;
     if (gameState !== 'combat') return;
     if (!p.isMelee) return;
     if (now < p.equipEnd || now < p.meleeRecovery || now < p.deadUntil) return;
@@ -1043,13 +1048,10 @@ function tryMelee(p, now, isHeavy) {
 
     sMelee(isHeavy);
 
-    if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) {
-        if (typeof NET_sendShootRequest === 'function') {
-            NET_sendShootRequest(isHeavy ? 'knife_heavy' : 'knife_light');
-        }
-        return;
-    }
+    // 联机客户端：只播视觉，命中由房主判定
+    if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) return;
 
+    // 房主 / 离线：完整判定
     const origin = p.cam.getWorldPosition(_v1).clone();
     const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
     const targets = getShotTargets();
@@ -1070,17 +1072,11 @@ function tryMelee(p, now, isHeavy) {
             p.damageDealt[targetId].body += dmg;
             p.damageDealt[targetId].total += dmg;
             spawnSparks(h.point, 0xff5040);
-            hitmark(p);
+            if (p.id === 1) { hitmark(p); }
             sHit(p.id);
             damage(o, dmg, p);
         } else {
             spawnSparks(h.point, 0xffd28a);
-        }
-    }
-
-    if (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost) {
-        if (typeof NET_broadcast === 'function') {
-            NET_broadcast({ type: 'shootEvent', from: 'p1', weapon: isHeavy ? 'knife_heavy' : 'knife_light' });
         }
     }
 }
@@ -1089,7 +1085,6 @@ function tryMelee(p, now, isHeavy) {
 // 射击
 // ============================================================
 function tryFire(p, now) {
-    if (p.id !== 1) return;
     if (gameState !== 'combat') return;
     if (p.isMelee || p.isSmoke || p.isFlash) return;
 
@@ -1110,7 +1105,9 @@ function tryFire(p, now) {
 
     if (w.key === 'sniper' && w.boltMs) {
         p.boltEnd = now + w.boltMs;
-        p.aimStage = 0; p.aiming = false; mouse.aim = false;
+        p.aimStage = 0; p.aiming = false;
+        if (p.input) p.input.aim = false;
+        if (p.id === 1) mouse.aim = false;
     }
 
     switch (w.key) {
@@ -1120,28 +1117,30 @@ function tryFire(p, now) {
         default:        sShootRifle(p.id);   break;
     }
     p.muzzle.intensity = 2.2;
-    p.vmMuzzle.intensity = 2.2;
+    if (p.id === 1) p.vmMuzzle.intensity = 2.2;
 
+    // 联机客户端：只做本地视觉（曳光/枪火），伤害由房主判定
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) {
-        if (typeof NET_sendShootRequest === 'function') NET_sendShootRequest(w.key);
         const origin = p.cam.getWorldPosition(_v1).clone();
         const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion).clone();
 
+        // 本地弹痕（打在墙上）
         const localTargets = getShotTargets();
         const rcLocal = new THREE.Raycaster(origin.clone(), dir.clone(), 0, 150);
         const hitsLocal = rcLocal.intersectObjects(localTargets, false);
+        let end = origin.clone().add(dir.clone().multiplyScalar(100));
         if (hitsLocal.length > 0) {
-            const hLocal = hitsLocal[0];
-            if (!hLocal.object.userData.part && typeof spawnBulletHole === 'function') {
-                spawnBulletHole(hLocal.point, getHitWorldNormal(hLocal));
+            const h = hitsLocal[0];
+            end = h.point;
+            if (!h.object.userData.part) {
+                spawnBulletHole(h.point, getHitWorldNormal(h));
             }
         }
-
-        const end = origin.clone().add(dir.clone().multiplyScalar(100));
         spawnTracer(muzzleWorld(p, _v1), end);
         return;
     }
 
+    // 房主 / 离线：完整命中判定
     const origin = p.cam.getWorldPosition(_v1).clone();
     const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
     const pellets = w.pellets || 1;
@@ -1176,7 +1175,7 @@ function tryFire(p, now) {
                 else p.damageDealt[targetId].body += dmg;
                 p.damageDealt[targetId].total += dmg;
                 spawnSparks(h.point, 0xff5040);
-                hitmark(p);
+                if (p.id === 1) hitmark(p);
                 sHit(p.id);
                 damage(o, dmg, p);
             } else {
@@ -1523,18 +1522,20 @@ function updateSniperViewmodel(p, dt, now) {
 }
 
 function updatePlayer(p, dt, now) {
-    if (p.id !== 1) return;
     if (now < p.deadUntil) {
-        p.baseVisible = false; p.aiming = false; p.aimStage = 0;
-        centerMsg(p, '回合结束');
+        p.baseVisible = false;
+        p.aiming = false; p.aimStage = 0;
+        if (p.id === 1) centerMsg(p, '回合结束');
         return;
     }
     p.baseVisible = true;
 
-    let msg = '';
-    if (gameState === 'prep') msg = `第 ${roundNumber} 回合 · 准备阶段`;
-    else if (gameState === 'roundEnd') msg = '回合结束';
-    centerMsg(p, msg);
+    if (p.id === 1) {
+        let msg = '';
+        if (gameState === 'prep') msg = `第 ${roundNumber} 回合 · 准备阶段`;
+        else if (gameState === 'roundEnd') msg = '回合结束';
+        centerMsg(p, msg);
+    }
 
     if (p.equipEnd > 0 && now >= p.equipEnd) p.equipEnd = 0;
 
@@ -1547,8 +1548,9 @@ function updatePlayer(p, dt, now) {
         if (p.boltEnd > 0 && now >= p.boltEnd) p.boltEnd = 0;
     }
 
-    const wantAim = p.aimStage > 0;
-    const canAim = !p.isMelee && !p.isSmoke && !p.isFlash && (gameState === 'combat') && (now >= p.boltEnd) && (p.reloadEnd <= now);
+    const wantAim = !!p.input.aim;
+    const canAim = !p.isMelee && !p.isSmoke && !p.isFlash && (gameState === 'combat')
+                   && (now >= p.boltEnd) && (p.reloadEnd <= now);
     p.aiming = wantAim && canAim;
 
     let targetFov = BASE_FOV;
@@ -1561,34 +1563,27 @@ function updatePlayer(p, dt, now) {
         p.cam.updateProjectionMatrix();
     }
 
-    const wantCrouch = !!keys['ShiftLeft'];
-    let targetH = HEIGHT_STAND;
-    if (wantCrouch) targetH = HEIGHT_CROUCH;
+    const wantCrouch = !!p.input.crouch;
+    let targetH = wantCrouch ? HEIGHT_CROUCH : HEIGHT_STAND;
     if (targetH > p.height + 0.001 && !canFit(p, targetH)) targetH = p.height;
     const k = Math.min(1, dt * 12);
     p.height += (targetH - p.height) * k;
     p.eyeH += (stanceEye(targetH) - p.eyeH) * k;
 
-    let f = 0, s = 0, jump = false;
-    if (keys['KeyW']) f += 1;
-    if (keys['KeyS']) f -= 1;
-    if (keys['KeyD']) s += 1;
-    if (keys['KeyA']) s -= 1;
-    jump = !!keys['Space'];
+    const f = p.input.forward;
+    const s = p.input.right;
 
     const wMul = p.isMelee ? MELEE.speedMul : (p.isSmoke ? SMOKE.speedMul : (p.isFlash ? FLASH.speedMul : p.weapon.speedMul));
     let spd = SPEED * wMul;
     if (p.height < HEIGHT_STAND - 0.1) spd = SPEED_CROUCH * wMul;
     if (p.aiming && !p.isMelee && !p.isSmoke && !p.isFlash) spd *= p.weapon.adsSpeedMul;
 
-    const len = Math.hypot(f, s) || 1;
-    f /= len; s /= len;
     const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
     const rx = Math.cos(p.yaw), rz = -Math.sin(p.yaw);
     p.pos.x += (fx * f + rx * s) * spd * dt;
     p.pos.z += (fz * f + rz * s) * spd * dt;
 
-    if (jump && p.onGround) { p.vy = JUMP_V; p.onGround = false; }
+    if (p.input.jump && p.onGround) { p.vy = JUMP_V; p.onGround = false; }
 
     p.prevY = p.pos.y;
     p.vy -= GRAV * dt;
@@ -1597,10 +1592,9 @@ function updatePlayer(p, dt, now) {
     if (p.pos.y <= 0) { p.pos.y = 0; p.vy = 0; p.onGround = true; }
     collidePlayers();
 
-    if (mouse.leftDown) {
+    if (p.input.fire) {
         if (p.isMelee) tryMelee(p, now, false);
-        else if (p.isSmoke) { /* 由 mousedown 处理 */ }
-        else if (p.isFlash) { /* 由 mousedown 处理 */ }
+        else if (p.isSmoke || p.isFlash) { /* 由离散事件处理 */ }
         else tryFire(p, now);
     }
 

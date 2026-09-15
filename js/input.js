@@ -1,6 +1,11 @@
-// ===== js/input.js – 键盘/鼠标/触摸输入（含刀 + 烟雾弹 + 闪光弹） =====
+// ===== js/input.js – 键盘/鼠标/触摸输入（服务器权威版） =====
 const keys = {};
 const mouse = { aim: false, leftDown: false };
+
+function _isOnlineClient() {
+    return typeof gameMode !== 'undefined' && gameMode === 'online'
+        && typeof NET !== 'undefined' && NET.role === 'player' && !NET.isHost;
+}
 
 window.addEventListener('keydown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
@@ -30,11 +35,15 @@ window.addEventListener('keydown', e => {
     }
 
     if (!e.repeat) {
+        const isOC = _isOnlineClient();
+
         // 1：主武器
         if (e.code === 'Digit1' || e.code === 'Numpad1') {
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
                 if (p1.isMelee || p1.isSmoke || p1.isFlash) {
-                    setWeapon(p1, p1.primaryWeaponKey || 'rifle');
+                    const key = p1.primaryWeaponKey || 'rifle';
+                    setWeapon(p1, key);
+                    if (isOC) NET.pendingWeaponSwitch = key;
                 }
             }
             return;
@@ -42,28 +51,36 @@ window.addEventListener('keydown', e => {
         // 2：近战刀
         if (e.code === 'Digit2' || e.code === 'Numpad2') {
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
-                if (!p1.isMelee) setWeapon(p1, 'knife');
+                if (!p1.isMelee) {
+                    setWeapon(p1, 'knife');
+                    if (isOC) NET.pendingWeaponSwitch = 'knife';
+                }
             }
             return;
         }
         // 3：烟雾弹
         if (e.code === 'Digit3' || e.code === 'Numpad3') {
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
-                if (!p1.isSmoke) setWeapon(p1, 'smoke');
-                else setWeapon(p1, p1.primaryWeaponKey || 'rifle');
+                const key = p1.isSmoke ? (p1.primaryWeaponKey || 'rifle') : 'smoke';
+                setWeapon(p1, key);
+                if (isOC) NET.pendingWeaponSwitch = key;
             }
             return;
         }
-        // ★ 4：闪光弹
+        // 4：闪光弹
         if (e.code === 'Digit4' || e.code === 'Numpad4') {
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
-                if (!p1.isFlash) setWeapon(p1, 'flash');
-                else setWeapon(p1, p1.primaryWeaponKey || 'rifle');
+                const key = p1.isFlash ? (p1.primaryWeaponKey || 'rifle') : 'flash';
+                setWeapon(p1, key);
+                if (isOC) NET.pendingWeaponSwitch = key;
             }
             return;
         }
 
-        if (e.code === 'KeyR') startReload(p1, performance.now());
+        if (e.code === 'KeyR') {
+            startReload(p1, performance.now());
+            if (_isOnlineClient()) NET.pendingReload = true;
+        }
 
         if (e.code === 'KeyB') {
             if (running && !isOver() && gameState === 'prep') {
@@ -105,19 +122,30 @@ document.addEventListener('mousedown', e => {
 
     if (e.button === 0) {
         if (typeof p1 !== 'undefined' && p1 && p1.isSmoke) {
-            if (running && !isOver() && gameState === 'combat') throwSmoke(p1, performance.now());
+            if (running && !isOver() && gameState === 'combat') {
+                throwSmoke(p1, performance.now());
+                if (_isOnlineClient()) NET.pendingThrowSmoke = true;
+            }
             e.preventDefault(); return;
         }
         if (typeof p1 !== 'undefined' && p1 && p1.isFlash) {
-            if (running && !isOver() && gameState === 'combat') throwFlash(p1, performance.now());
+            if (running && !isOver() && gameState === 'combat') {
+                throwFlash(p1, performance.now());
+                if (_isOnlineClient()) NET.pendingThrowFlash = true;
+            }
             e.preventDefault(); return;
         }
         mouse.leftDown = true;
     } else if (e.button === 2) {
         e.preventDefault(); e.stopPropagation();
         if (running && !isOver() && gameState === 'combat') {
-            if (typeof p1 !== 'undefined' && p1 && p1.isMelee) tryMelee(p1, performance.now(), true);
-            else if (typeof p1 !== 'undefined' && p1 && (p1.isSmoke || p1.isFlash)) { /* 无右键 */ }
+            if (typeof p1 !== 'undefined' && p1 && p1.isMelee) {
+                tryMelee(p1, performance.now(), true);
+                if (_isOnlineClient()) {
+                    NET.pendingMelee = true;
+                    NET.pendingMeleeHeavy = true;
+                }
+            } else if (typeof p1 !== 'undefined' && p1 && (p1.isSmoke || p1.isFlash)) { /* 无右键 */ }
             else toggleAim();
         }
     } else { e.preventDefault(); e.stopPropagation(); }
@@ -130,7 +158,6 @@ document.addEventListener('mouseup', e => {
     else if (e.button === 2) { e.preventDefault(); e.stopPropagation(); }
 });
 
-// ★ 滚轮：主武器 → 刀 → 烟雾弹 → 闪光弹 → 主武器
 document.addEventListener('wheel', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
@@ -139,10 +166,13 @@ document.addEventListener('wheel', e => {
     if (typeof p1 === 'undefined' || !p1) return;
     if (gameState === 'prep') return;
 
-    if (p1.isMelee)       setWeapon(p1, 'smoke');
-    else if (p1.isSmoke)  setWeapon(p1, 'flash');
-    else if (p1.isFlash)  setWeapon(p1, p1.primaryWeaponKey || 'rifle');
-    else                  setWeapon(p1, 'knife');
+    let newKey;
+    if (p1.isMelee)       newKey = 'smoke';
+    else if (p1.isSmoke)  newKey = 'flash';
+    else if (p1.isFlash)  newKey = p1.primaryWeaponKey || 'rifle';
+    else                  newKey = 'knife';
+    setWeapon(p1, newKey);
+    if (_isOnlineClient()) NET.pendingWeaponSwitch = newKey;
 }, { passive: false });
 
 // ---------- 触摸 ----------
@@ -218,18 +248,23 @@ if (rightEl) {
     rightEl.addEventListener('touchcancel', () => { rightTouchId = null; });
 }
 
-// 开火 / 投掷
 const fireBtn = document.getElementById('btn-fire');
 if (fireBtn) {
     fireBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
         if (typeof p1 !== 'undefined' && p1 && p1.isSmoke) {
-            if (running && !isOver() && gameState === 'combat') throwSmoke(p1, performance.now());
+            if (running && !isOver() && gameState === 'combat') {
+                throwSmoke(p1, performance.now());
+                if (_isOnlineClient()) NET.pendingThrowSmoke = true;
+            }
             return;
         }
         if (typeof p1 !== 'undefined' && p1 && p1.isFlash) {
-            if (running && !isOver() && gameState === 'combat') throwFlash(p1, performance.now());
+            if (running && !isOver() && gameState === 'combat') {
+                throwFlash(p1, performance.now());
+                if (_isOnlineClient()) NET.pendingThrowFlash = true;
+            }
             return;
         }
         mouse.leftDown = true;
@@ -255,8 +290,10 @@ if (aimBtn) {
         e.preventDefault();
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
         if (running && !isOver() && gameState === 'combat') {
-            if (typeof p1 !== 'undefined' && p1 && p1.isMelee) tryMelee(p1, performance.now(), true);
-            else if (typeof p1 !== 'undefined' && p1 && (p1.isSmoke || p1.isFlash)) { /* 无 */ }
+            if (typeof p1 !== 'undefined' && p1 && p1.isMelee) {
+                tryMelee(p1, performance.now(), true);
+                if (_isOnlineClient()) { NET.pendingMelee = true; NET.pendingMeleeHeavy = true; }
+            } else if (typeof p1 !== 'undefined' && p1 && (p1.isSmoke || p1.isFlash)) { /* 无 */ }
             else toggleAim();
         }
     }, { passive: false });
@@ -267,11 +304,13 @@ if (reloadBtn) {
     reloadBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
-        if (running && !isOver() && gameState === 'combat') startReload(p1, performance.now());
+        if (running && !isOver() && gameState === 'combat') {
+            startReload(p1, performance.now());
+            if (_isOnlineClient()) NET.pendingReload = true;
+        }
     }, { passive: false });
 }
 
-// 换武器（移动端）：战斗中循环切换
 const weaponBtn = document.getElementById('btn-weapon');
 if (weaponBtn) {
     weaponBtn.addEventListener('touchstart', (e) => {
@@ -287,10 +326,13 @@ if (weaponBtn) {
             return;
         }
         if (gameState === 'combat') {
-            if (p1.isMelee)      setWeapon(p1, 'smoke');
-            else if (p1.isSmoke) setWeapon(p1, 'flash');
-            else if (p1.isFlash) setWeapon(p1, p1.primaryWeaponKey || 'rifle');
-            else                 setWeapon(p1, 'knife');
+            let newKey;
+            if (p1.isMelee)      newKey = 'smoke';
+            else if (p1.isSmoke) newKey = 'flash';
+            else if (p1.isFlash) newKey = p1.primaryWeaponKey || 'rifle';
+            else                 newKey = 'knife';
+            setWeapon(p1, newKey);
+            if (_isOnlineClient()) NET.pendingWeaponSwitch = newKey;
         }
     }, { passive: false });
 }

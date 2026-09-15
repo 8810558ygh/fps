@@ -1,10 +1,9 @@
-// ===== js/player.js – 玩家构造 + 武器建模（含烟雾弹 + 闪光弹） =====
+// ===== js/player.js – 玩家构造 + 武器建模（服务器权威版） =====
 const DARK_MAT = new THREE.MeshLambertMaterial({ color: 0x2b2f36 });
 const LENS_MAT = new THREE.MeshLambertMaterial({ color: 0x8fe8ff, emissive: 0x35b6d5, emissiveIntensity: 0.7 });
 const SMOKE_MAT = new THREE.MeshLambertMaterial({ color: 0x3a4a3a, emissive: 0x141c14, emissiveIntensity: 0.5 });
 const SMOKE_BAND_MAT = new THREE.MeshLambertMaterial({ color: 0x7ee08a, emissive: 0x2a6a2e, emissiveIntensity: 0.6 });
 const SMOKE_CAP_MAT = new THREE.MeshLambertMaterial({ color: 0x1a1f1a });
-// ★ 闪光弹材质（银白色 + 黄环）
 const FLASH_MAT = new THREE.MeshLambertMaterial({ color: 0xd4d8dc, emissive: 0x606060, emissiveIntensity: 0.55 });
 const FLASH_BAND_MAT = new THREE.MeshLambertMaterial({ color: 0xffe066, emissive: 0x8a6a10, emissiveIntensity: 0.7 });
 const FLASH_CAP_MAT = new THREE.MeshLambertMaterial({ color: 0x2a2e34 });
@@ -73,7 +72,6 @@ function makeWeaponModel(type, mat) {
         pin.position.set(0.11, 0.13, 0); pin.rotation.x = Math.PI / 2;
         g.add(body, capTop, capBot, band, pin);
     } else if (type === 'flash') {
-        // ★ 闪光弹（第三人称）：银白色圆柱 + 黄环
         const body = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.22, 14), FLASH_MAT);
         const capTop = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.03, 14), FLASH_CAP_MAT);
         capTop.position.y = 0.125;
@@ -83,7 +81,7 @@ function makeWeaponModel(type, mat) {
         const pin = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.007, 6, 10), DARK_MAT);
         pin.position.set(0.1, 0.12, 0); pin.rotation.x = Math.PI / 2;
         g.add(body, capTop, capBot, band, pin);
-    } else { // rifle
+    } else {
         const body = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.17, 0.8), DARK_MAT);
         const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.45), DARK_MAT);
         barrel.position.set(0, 0.04, -0.58);
@@ -166,7 +164,6 @@ function makeViewmodel(type, mat) {
         g.position.set(0.32, -0.30, -0.44);
         g.rotation.set(0.15, -0.30, 0.10);
     } else if (type === 'flash') {
-        // ★ 闪光弹（第一人称）
         const body = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.20, 14), FLASH_MAT);
         const capTop = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.028, 14), FLASH_CAP_MAT);
         capTop.position.y = 0.115;
@@ -197,7 +194,6 @@ function makeViewmodel(type, mat) {
     return g;
 }
 
-// ★ 切换武器
 function setWeapon(p, key) {
     if (key === 'knife') {
         p.weaponKey = 'knife'; p.weapon = MELEE;
@@ -208,6 +204,7 @@ function setWeapon(p, key) {
         p.vm.add(makeViewmodel('knife', p.mat));
         p.ammo = 0; p.reserve = 0; p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
+        if (p.input) p.input.aim = false;
         p.equipEnd = performance.now() + MELEE.equipMs;
         p.meleeCombo = 0; p.meleeEnd = 0; p.meleeRecovery = 0;
         p.meleeIsHeavy = false; p.lastMeleeTime = 0;
@@ -223,6 +220,7 @@ function setWeapon(p, key) {
         p.vm.add(makeViewmodel('smoke', p.mat));
         p.ammo = 0; p.reserve = 0; p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
+        if (p.input) p.input.aim = false;
         p.equipEnd = performance.now() + 400;
         return;
     }
@@ -236,6 +234,7 @@ function setWeapon(p, key) {
         p.vm.add(makeViewmodel('flash', p.mat));
         p.ammo = 0; p.reserve = 0; p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
+        if (p.input) p.input.aim = false;
         p.equipEnd = performance.now() + 400;
         return;
     }
@@ -250,6 +249,7 @@ function setWeapon(p, key) {
     p.vm.add(makeViewmodel(key, p.mat));
     p.ammo = w.mag; p.reserve = w.startReserve; p.reloadEnd = 0;
     p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
+    if (p.input) p.input.aim = false;
     p.spinUpProgress = 0; p.lastShotTime = 0;
     p.damageDealt = {};
     p.recoilVertical = 0; p.recoilHorizontal = 0;
@@ -307,15 +307,22 @@ function makePlayer(id, color, spawn, weaponKey) {
         equipEnd: 0,
         meleeCombo: 0, meleeEnd: 0, meleeRecovery: 0,
         meleeIsHeavy: false, lastMeleeTime: 0,
-        // 烟雾弹
         smokeCharges: SMOKE.maxPerRound,
         smokeCooldownEnd: 0,
         lastSmokeThrowAt: 0,
-        // ★ 闪光弹
         flashCharges: FLASH.maxPerRound,
         flashCooldownEnd: 0,
         lastFlashThrowAt: 0,
-        flashUntil: 0
+        flashUntil: 0,
+
+        input: {
+            forward: 0,
+            right: 0,
+            jump: false,
+            crouch: false,
+            fire: false,
+            aim: false
+        }
     };
     setWeapon(p, weaponKey || 'rifle');
     p.equipEnd = 0;

@@ -1,4 +1,4 @@
-// ===== js/online.js – P2P 联机（房主权威 + 观战视角 + 刀 + 烟雾 + 闪光 + 地图同步 + 弹痕） =====
+// ===== js/online.js – P2P 联机（纯服务器权威版） =====
 
 (function () {
     const ICE_SERVERS = [
@@ -17,7 +17,17 @@
         role: null,
         spectatorTarget: 'blue',
         lastHostState: null,
-        hostSeat: null,               // ★ 房主座位（'blue' / 'red'），客户端根据它判断自己属于 host 还是 client
+        hostSeat: null,
+
+        inputSeq: 0,
+        pendingWeaponSwitch: null,
+        pendingReload: false,
+        pendingThrowSmoke: false,
+        pendingThrowFlash: false,
+        pendingMelee: false,
+        pendingMeleeHeavy: false,
+        tick: 0,
+
         remotePlayerState: {
             x: 0, y: 0, z: 0, yaw: 0, pitch: 0,
             hp: 100, armor: 50, score: 0,
@@ -293,8 +303,6 @@
                 break;
             case 'clientInput':
                 if (NET.isHost) handleClientInput(fromId, data); break;
-            case 'shootRequest':
-                if (NET.isHost) handleShootRequest(fromId, data); break;
             case 'hostState':
                 if (!NET.isHost) handleHostState(data); break;
             case 'killEvent':
@@ -341,6 +349,7 @@
         if (typeof spawnSmokeProjectile !== 'function') return;
         const now = performance.now();
         spawnSmokeProjectile(new THREE.Vector3(data.px, data.py, data.pz), new THREE.Vector3(data.vx, data.vy, data.vz), data.fuseMs || SMOKE.fuseMs, now);
+        if (typeof sSmokeThrow === 'function') sSmokeThrow();
         broadcast({ type: 'smokeSpawn', px: data.px, py: data.py, pz: data.pz, vx: data.vx, vy: data.vy, vz: data.vz, fuseMs: data.fuseMs || SMOKE.fuseMs }, fromId);
     }
     function handleSmokeSpawn(data) {
@@ -348,12 +357,14 @@
         if (typeof spawnSmokeProjectile !== 'function') return;
         const now = performance.now();
         spawnSmokeProjectile(new THREE.Vector3(data.px, data.py, data.pz), new THREE.Vector3(data.vx, data.vy, data.vz), data.fuseMs || SMOKE.fuseMs, now);
+        if (typeof sSmokeThrow === 'function') sSmokeThrow();
     }
     function handleFlashThrow(fromId, data) {
         if (!NET.isHost) return;
         if (typeof spawnFlashProjectile !== 'function') return;
         const now = performance.now();
         spawnFlashProjectile(new THREE.Vector3(data.px, data.py, data.pz), new THREE.Vector3(data.vx, data.vy, data.vz), data.fuseMs || FLASH.fuseMs, now);
+        if (typeof sFlashThrow === 'function') sFlashThrow();
         broadcast({ type: 'flashSpawn', px: data.px, py: data.py, pz: data.pz, vx: data.vx, vy: data.vy, vz: data.vz, fuseMs: data.fuseMs || FLASH.fuseMs }, fromId);
     }
     function handleFlashSpawn(data) {
@@ -361,6 +372,7 @@
         if (typeof spawnFlashProjectile !== 'function') return;
         const now = performance.now();
         spawnFlashProjectile(new THREE.Vector3(data.px, data.py, data.pz), new THREE.Vector3(data.vx, data.vy, data.vz), data.fuseMs || FLASH.fuseMs, now);
+        if (typeof sFlashThrow === 'function') sFlashThrow();
     }
 
     function handleJoinRequest(fromId, data) {
@@ -550,7 +562,6 @@
         else if (NET.mySeat === 'blue' || NET.mySeat === 'red') NET.role = 'player';
         else NET.role = 'spectator';
 
-        // ★ 记录房主座位（客户端从 hostState 里也会更新）
         NET.hostSeat = NET.isHost ? NET.mySeat : (NET.hostSeat || 'blue');
 
         const myIsBlue = (NET.mySeat === 'blue');
@@ -562,12 +573,6 @@
                 p1: { x: -21, z: -21, yaw: -3 * Math.PI / 4 },
                 p2: { x: 21, z: 21, yaw: Math.PI / 4 }
             };
-            if (NET.lastHostState && NET.lastHostState.mapId) {
-                const cur = getLocalMapId();
-                if (cur !== NET.lastHostState.mapId) {
-                    console.warn('[online] map mismatch, host:', NET.lastHostState.mapId, 'local:', cur);
-                }
-            }
             if (myIsBlue) {
                 p1.spawn.x = spawns.p1.x; p1.spawn.z = spawns.p1.z; p1.spawn.yaw = spawns.p1.yaw;
             } else {
@@ -605,297 +610,177 @@
         if (hostBroadcastTimer) { clearInterval(hostBroadcastTimer); hostBroadcastTimer = null; }
     }
 
+    function serializePlayer(p) {
+        const now = performance.now();
+        return {
+            x: p.pos.x, y: p.pos.y, z: p.pos.z,
+            yaw: p.yaw, pitch: p.pitch,
+            hp: p.hp, armor: p.armor, score: p.score,
+            weapon: p.isMelee ? 'knife' : (p.isSmoke ? 'smoke' : (p.isFlash ? 'flash' : p.weapon.key)),
+            ammo: p.ammo, reserve: p.reserve,
+            fov: p.cam.fov,
+            crouching: p.height < HEIGHT_STAND - 0.15,
+            dead: p.hp <= 0 || p.deadUntil > now,
+            visible: p.baseVisible,
+            aiming: !!p.aiming,
+            aimStage: p.aimStage || 0,
+            isMelee: !!p.isMelee,
+            isSmoke: !!p.isSmoke,
+            isFlash: !!p.isFlash,
+            smokeCharges: p.smokeCharges || 0,
+            flashCharges: p.flashCharges || 0,
+            reloadRemain: Math.max(0, p.reloadEnd - now),
+            boltRemain: Math.max(0, p.boltEnd - now),
+            equipRemain: Math.max(0, p.equipEnd - now),
+            meleeEndRemain: Math.max(0, p.meleeEnd - now),
+            meleeRecoveryRemain: Math.max(0, p.meleeRecovery - now)
+        };
+    }
+
     function hostBroadcastTick() {
         if (!NET.isHost || !NET.roomId) return;
         if (typeof p1 === 'undefined' || typeof p2 === 'undefined') return;
         const now = performance.now();
         const hostSeat = NET.mySeat;
 
-        const hostData = {
-            x: p1.pos.x, y: p1.pos.y, z: p1.pos.z,
-            yaw: p1.yaw, pitch: p1.pitch,
-            hp: p1.hp, armor: p1.armor, score: p1.score,
-            weapon: p1.isMelee ? 'knife' : (p1.isSmoke ? 'smoke' : (p1.isFlash ? 'flash' : p1.weapon.key)),
-            ammo: p1.ammo, reserve: p1.reserve,
-            fov: p1.cam.fov, aimStage: p1.aimStage || 0,
-            aiming: !!p1.aiming,
-            crouching: p1.height < HEIGHT_STAND - 0.15,
-            dead: p1.hp <= 0, visible: p1.baseVisible,
-            isMelee: !!p1.isMelee, isSmoke: !!p1.isSmoke, isFlash: !!p1.isFlash,
-            smokeCharges: p1.smokeCharges || 0, flashCharges: p1.flashCharges || 0
-        };
-
-        const r = NET.remotePlayerState;
-        const clientData = {
-            x: r.x, y: r.y, z: r.z,
-            yaw: r.yaw, pitch: r.pitch,
-            hp: r.hp, armor: r.armor, score: r.score,
-            weapon: r.isMelee ? 'knife' : (r.isSmoke ? 'smoke' : (r.isFlash ? 'flash' : r.weapon)),
-            ammo: r.ammo || 0, reserve: r.reserve || 0,
-            fov: r.fov || BASE_FOV, aimStage: r.aimStage || 0,
-            aiming: !!r.aiming, crouching: !!r.crouching,
-            dead: !!r.dead, visible: !!r.visible,
-            isMelee: !!r.isMelee, isSmoke: !!r.isSmoke, isFlash: !!r.isFlash,
-            smokeCharges: r.smokeCharges || 0, flashCharges: r.flashCharges || 0
-        };
+        const hostData   = serializePlayer(p1);
+        const clientData = serializePlayer(p2);
 
         const bluePlayer = hostSeat === 'blue' ? hostData : clientData;
         const redPlayer  = hostSeat === 'blue' ? clientData : hostData;
 
         broadcast({
             type: 'hostState',
-            hostSeat, bluePlayer, redPlayer,
+            tick: NET.tick++,
+            timestamp: now,
+            hostSeat,
             mapId: getLocalMapId(),
             roundNumber: (typeof roundNumber !== 'undefined') ? roundNumber : 1,
             gameState: (typeof gameState !== 'undefined') ? gameState : 'idle',
             stateEndTimeRemain: (typeof stateEndTime !== 'undefined') ? Math.max(0, stateEndTime - now) : 0,
-            timestamp: now
+            bluePlayer,
+            redPlayer
         });
     }
 
     function handleClientInput(fromId, data) {
         if (!NET.isHost) return;
-        const r = NET.remotePlayerState;
-        r.x = data.x; r.y = data.y; r.z = data.z;
-        r.yaw = data.yaw; r.pitch = data.pitch;
-        r.hp = data.hp; r.armor = data.armor; r.score = data.score;
-        r.weapon = data.weapon;
-        r.isMelee = !!data.isMelee; r.isSmoke = !!data.isSmoke; r.isFlash = !!data.isFlash;
-        r.smokeCharges = data.smokeCharges || 0; r.flashCharges = data.flashCharges || 0;
-        r.ammo = data.ammo || 0; r.reserve = data.reserve || 0;
-        r.fov = data.fov || BASE_FOV; r.aimStage = data.aimStage || 0;
-        r.aiming = !!data.aiming; r.crouching = !!data.crouching;
-        r.dead = !!data.dead; r.visible = !!data.visible;
-        r.lastUpdate = performance.now();
+        if (typeof p2 === 'undefined' || !p2) return;
 
-        if (typeof p2 !== 'undefined' && p2) {
-            p2.pos.set(r.x, r.y, r.z);
-            p2.yaw = r.yaw; p2.pitch = r.pitch;
-            p2.mesh.position.copy(p2.pos);
-            p2.mesh.rotation.y = r.yaw;
-            p2.hp = r.hp; p2.armor = r.armor; p2.score = r.score;
-            // ★ 房主端：如果客户端上报自己死了，也隐藏 p2
-            if (r.dead) {
-                p2.baseVisible = false;
-                p2.deadUntil = Infinity;
-            } else if (p2.deadUntil <= performance.now()) {
-                p2.baseVisible = r.visible;
-            }
-            p2.height = r.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
-            p2.mesh.scale.y = p2.height / HEIGHT_STAND;
-
-            const targetKey = r.isMelee ? 'knife' : (r.isSmoke ? 'smoke' : (r.isFlash ? 'flash' : r.weapon));
-            const currentKey = p2.isMelee ? 'knife' : (p2.isSmoke ? 'smoke' : (p2.isFlash ? 'flash' : p2.weaponKey));
-            if (targetKey !== currentKey) {
-                while (p2.gunHolder.children.length) p2.gunHolder.remove(p2.gunHolder.children[0]);
-                if (targetKey === 'knife') {
-                    if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel('knife', p2.mat));
-                    p2.isMelee = true; p2.isSmoke = false; p2.isFlash = false;
-                    p2.weaponKey = 'knife'; p2.weapon = MELEE;
-                } else if (targetKey === 'smoke') {
-                    if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel('smoke', p2.mat));
-                    p2.isMelee = false; p2.isSmoke = true; p2.isFlash = false;
-                    p2.weaponKey = 'smoke'; p2.weapon = SMOKE;
-                } else if (targetKey === 'flash') {
-                    if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel('flash', p2.mat));
-                    p2.isMelee = false; p2.isSmoke = false; p2.isFlash = true;
-                    p2.weaponKey = 'flash'; p2.weapon = FLASH;
-                } else if (WEAPONS[targetKey]) {
-                    if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel(targetKey, p2.mat));
-                    p2.isMelee = false; p2.isSmoke = false; p2.isFlash = false;
-                    p2.weaponKey = targetKey; p2.weapon = WEAPONS[targetKey];
-                }
-            }
-        }
-    }
-
-    function handleShootRequest(fromId, data) {
-        if (!NET.isHost) return;
-        if (typeof p2 === 'undefined') return;
-        if (typeof gameState === 'undefined' || gameState !== 'combat') return;
-        const now = performance.now();
-        const r = NET.remotePlayerState;
-        if (r.dead || !r.visible) return;
-
-        if (data.weapon === 'knife_light' || data.weapon === 'knife_heavy') {
-            const isHeavy = data.weapon === 'knife_heavy';
-            const m = MELEE;
-            const fireMs = isHeavy ? m.heavyFireMs : m.lightFireMs;
-            const recovery = isHeavy ? m.heavyRecovery : m.lightRecovery;
-            if (p2.meleeRecovery === undefined) p2.meleeRecovery = 0;
-            if (now < p2.meleeRecovery) return;
-            p2.meleeEnd = now + fireMs;
-            p2.meleeRecovery = now + fireMs + recovery;
-            p2.meleeIsHeavy = isHeavy;
-            if (typeof sMelee === 'function') sMelee(isHeavy);
-            broadcast({ type: 'shootEvent', from: 'p2', weapon: data.weapon });
-
-            const eyeY = r.y + (r.crouching ? EYE_CROUCH : EYE_STAND);
-            const eye = new THREE.Vector3(r.x, eyeY, r.z);
-            const euler = new THREE.Euler(r.pitch || 0, r.yaw, 0, 'YXZ');
-            const dir = new THREE.Vector3(0, 0, -1).applyEuler(euler);
-            const targets = (typeof getShotTargets === 'function')
-                ? getShotTargets()
-                : wallMeshes.concat(crateMeshes);
-            if (now >= p1.deadUntil) targets.push(p1.body, p1.head);
-            const rc = new THREE.Raycaster(eye.clone(), dir.clone(), 0, m.range);
-            const hits = rc.intersectObjects(targets, false);
-            if (hits.length > 0) {
-                const h = hits[0];
-                if (h.object.userData.part) {
-                    // 背刺判定：攻击者在受害者背后 → toVictim 与 victimDir 同向 → 点积 > 0
-                    const toVictim = new THREE.Vector3().subVectors(p1.pos, p2.pos);
-                    toVictim.y = 0;
-                    const victimDir = new THREE.Vector3(0, 0, -1).applyQuaternion(p1.mesh.quaternion);
-                    victimDir.y = 0;
-                    let isBack = false;
-                    if (toVictim.lengthSq() > 1e-6 && victimDir.lengthSq() > 1e-6) {
-                        toVictim.normalize(); victimDir.normalize();
-                        isBack = toVictim.dot(victimDir) > 0.3;
-                    }
-                    let dmg = isHeavy ? m.dmgHeavy : m.dmgLight;
-                    if (isBack) dmg *= m.backMultiplier;
-                    if (!p2.damageDealt[1]) p2.damageDealt[1] = { body: 0, head: 0, total: 0 };
-                    p2.damageDealt[1].body += dmg;
-                    p2.damageDealt[1].total += dmg;
-                    damage(p1, dmg, p2);
-                    spawnSparks(h.point, 0xff5040);
-                } else {
-                    spawnSparks(h.point, 0xffd28a);
-                }
-            }
-            return;
+        if (data.input) {
+            p2.input.forward = data.input.forward || 0;
+            p2.input.right   = data.input.right || 0;
+            p2.input.jump    = !!data.input.jump;
+            p2.input.crouch  = !!data.input.crouch;
+            p2.input.fire    = !!data.input.fire;
+            p2.input.aim     = !!data.input.aim;
         }
 
-        const w = WEAPONS[data.weapon] || p2.weapon;
-        if (p2.nextShot === undefined) p2.nextShot = 0;
-        if (now < p2.nextShot || p2.reloadEnd > now) return;
-        let currentFireMs = w.fireMs;
-        if (w.spinUpMs && w.minFireMs) {
-            const since = now - (p2.lastShotTime || 0);
-            if (since < 200) p2.spinUpProgress = Math.min(1, (p2.spinUpProgress || 0) + since / w.spinUpMs);
-            else p2.spinUpProgress = 0;
-            currentFireMs = Math.max(w.minFireMs, w.fireMs - (w.fireMs - w.minFireMs) * p2.spinUpProgress);
-        }
-        p2.nextShot = now + currentFireMs;
-        p2.lastShotTime = now;
-        switch (w.key) {
-            case 'sniper': sShootSniper(2); break;
-            case 'shotgun': sShootShotgun(2); break;
-            case 'odin': sShootOdin(2); break;
-            default: sShootRifle(2); break;
-        }
-        if (p2.muzzle) p2.muzzle.intensity = 2.2;
-        broadcast({ type: 'shootEvent', from: 'p2', weapon: w.key });
+        p2.yaw = data.yaw;
+        p2.pitch = data.pitch;
+        if (data.aimStage !== undefined) p2.aimStage = data.aimStage;
 
-        const eyeY = r.y + (r.crouching ? EYE_CROUCH : EYE_STAND);
-        const eye = new THREE.Vector3(r.x, eyeY, r.z);
-        const euler = new THREE.Euler(r.pitch || 0, r.yaw, 0, 'YXZ');
-        const baseDir = new THREE.Vector3(0, 0, -1).applyEuler(euler);
-        const pellets = w.pellets || 1;
-        const spread = w.spread || 0;
-        const targets = (typeof getShotTargets === 'function')
-            ? getShotTargets()
-            : wallMeshes.concat(crateMeshes);
-        if (now >= p1.deadUntil) targets.push(p1.body, p1.head);
-
-        for (let i = 0; i < pellets; i++) {
-            const dir = baseDir.clone();
-            if (pellets > 1) {
-                const theta = Math.random() * 2 * Math.PI;
-                const phi = Math.acos(1 - Math.random() * (1 - Math.cos(spread)));
-                const up = new THREE.Vector3(0, 1, 0);
-                const axis = new THREE.Vector3().crossVectors(dir, up).normalize();
-                if (axis.length() < 0.01) axis.set(1, 0, 0);
-                const q1 = new THREE.Quaternion().setFromAxisAngle(axis, phi);
-                const q2 = new THREE.Quaternion().setFromAxisAngle(dir, theta);
-                dir.applyQuaternion(q1).applyQuaternion(q2);
+        if (data.weaponSwitch) {
+            const key = data.weaponSwitch;
+            if (key === 'knife' || key === 'smoke' || key === 'flash' || WEAPONS[key]) {
+                setWeapon(p2, key);
             }
-            const rc = new THREE.Raycaster(eye.clone(), dir.clone(), 0, 150);
-            const hits = rc.intersectObjects(targets, false);
-            let end = eye.clone().add(dir.clone().multiplyScalar(150));
-            if (hits.length) {
-                const h = hits[0];
-                end = h.point;
-                if (h.object.userData.part) {
-                    const dmg = h.object.userData.part === 'head' ? w.dmgHead : w.dmgBody;
-                    if (!p2.damageDealt[1]) p2.damageDealt[1] = { body: 0, head: 0, total: 0 };
-                    if (h.object.userData.part === 'head') p2.damageDealt[1].head += dmg;
-                    else p2.damageDealt[1].body += dmg;
-                    p2.damageDealt[1].total += dmg;
-                    damage(p1, dmg, p2);
-                    spawnSparks(h.point, 0xff5040);
-                } else {
-                    spawnSparks(h.point, 0xffd28a);
-                    if (typeof spawnBulletHole === 'function' && typeof getHitWorldNormal === 'function') {
-                        spawnBulletHole(h.point, getHitWorldNormal(h));
-                    }
-                }
-            }
-            if (i === 0) spawnTracer(eye.clone(), end);
         }
+        if (data.reload) {
+            startReload(p2, performance.now());
+        }
+        if (data.throwSmoke) {
+            if (!p2.isSmoke) setWeapon(p2, 'smoke');
+            throwSmoke(p2, performance.now());
+        }
+        if (data.throwFlash) {
+            if (!p2.isFlash) setWeapon(p2, 'flash');
+            throwFlash(p2, performance.now());
+        }
+        if (data.melee) {
+            if (!p2.isMelee) setWeapon(p2, 'knife');
+            tryMelee(p2, performance.now(), !!data.meleeHeavy);
+        }
+
+        p2.lastRemoteInputAt = performance.now();
     }
 
     function handleHostState(data) {
         if (NET.isHost) return;
         NET.lastHostState = data;
-        // ★ 记录房主座位
         if (data.hostSeat) NET.hostSeat = data.hostSeat;
         if (typeof stateEndTime !== 'undefined') stateEndTime = performance.now() + data.stateEndTimeRemain;
         if (typeof roundNumber !== 'undefined' && data.roundNumber) roundNumber = data.roundNumber;
 
-        const blueData = data.bluePlayer;
-        const redData  = data.redPlayer;
-
         if (NET.role === 'player') {
             const mySeat = NET.mySeat;
-            const myData = mySeat === 'blue' ? blueData : redData;
-            const oppData = mySeat === 'blue' ? redData : blueData;
+            const myData  = mySeat === 'blue' ? data.bluePlayer : data.redPlayer;
+            const oppData = mySeat === 'blue' ? data.redPlayer  : data.bluePlayer;
+
+            const now = performance.now();
 
             if (typeof p1 !== 'undefined' && p1) {
-                const now = performance.now();
-                const localDead = p1.deadUntil > now;
-                const serverDead = !!myData.dead;
-                if (serverDead) {
-                    // 服务器说死了 → 锁定死亡
+                const targetKey = myData.isMelee ? 'knife' : (myData.isSmoke ? 'smoke' : (myData.isFlash ? 'flash' : myData.weapon));
+                const currentKey = p1.isMelee ? 'knife' : (p1.isSmoke ? 'smoke' : (p1.isFlash ? 'flash' : p1.weaponKey));
+                if (targetKey !== currentKey) {
+                    setWeapon(p1, targetKey);
+                }
+
+                p1.pos.set(myData.x, myData.y, myData.z);
+                p1.hp = myData.hp;
+                p1.armor = myData.armor;
+                p1.score = myData.score;
+                p1.ammo = myData.ammo;
+                p1.reserve = myData.reserve;
+                p1.smokeCharges = myData.smokeCharges;
+                p1.flashCharges = myData.flashCharges;
+                p1.height = myData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
+                p1.eyeH = stanceEye(p1.height);
+                p1.aimStage = myData.aimStage || 0;
+
+                p1.reloadEnd     = myData.reloadRemain > 0     ? now + myData.reloadRemain     : 0;
+                p1.boltEnd       = myData.boltRemain > 0       ? now + myData.boltRemain       : 0;
+                p1.equipEnd      = myData.equipRemain > 0      ? now + myData.equipRemain      : 0;
+                p1.meleeEnd      = myData.meleeEndRemain > 0   ? now + myData.meleeEndRemain   : 0;
+                p1.meleeRecovery = myData.meleeRecoveryRemain > 0 ? now + myData.meleeRecoveryRemain : 0;
+
+                if (myData.dead) {
                     p1.deadUntil = Infinity;
-                    p1.hp = 0;
                     p1.baseVisible = false;
                     p1.aiming = false;
-                    p1.aimStage = 0;
-                } else if (!localDead) {
-                    // 本地没死，用服务器状态
-                    p1.hp = myData.hp;
-                    p1.armor = myData.armor;
+                    p1.input.aim = false;
+                } else {
+                    if (p1.deadUntil === Infinity) p1.deadUntil = 0;
+                    p1.baseVisible = true;
                 }
-                // localDead 且 !serverDead：保持本地死亡锁，等服务器跟上
-                p1.score = myData.score;
-                p1.smokeCharges = myData.smokeCharges !== undefined ? myData.smokeCharges : p1.smokeCharges;
-                p1.flashCharges = myData.flashCharges !== undefined ? myData.flashCharges : p1.flashCharges;
             }
+
             if (typeof p2 !== 'undefined' && p2) {
-                const now = performance.now();
-                const localDead = p2.deadUntil > now;
-                const serverDead = !!oppData.dead;
-
-                // 位置始终更新
                 p2.pos.set(oppData.x, oppData.y, oppData.z);
-                p2.yaw = oppData.yaw; p2.pitch = oppData.pitch;
-                p2.mesh.position.copy(p2.pos);
-                p2.mesh.rotation.y = oppData.yaw;
+                p2.yaw = oppData.yaw;
+                p2.pitch = oppData.pitch;
+                p2.hp = oppData.hp;
+                p2.armor = oppData.armor;
+                p2.baseVisible = oppData.visible;
                 p2.height = oppData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
-                p2.mesh.scale.y = p2.height / HEIGHT_STAND;
+                p2.aiming = !!oppData.aiming;
+                p2.aimStage = oppData.aimStage || 0;
 
-                if (serverDead) {
+                p2.reloadEnd = oppData.reloadRemain > 0 ? now + oppData.reloadRemain : 0;
+                p2.boltEnd   = oppData.boltRemain > 0   ? now + oppData.boltRemain   : 0;
+                p2.meleeEnd  = oppData.meleeEndRemain > 0 ? now + oppData.meleeEndRemain : 0;
+
+                if (oppData.dead) {
                     p2.deadUntil = Infinity;
-                    p2.hp = 0;
-                    p2.baseVisible = false;
-                } else if (!localDead) {
-                    p2.hp = oppData.hp;
-                    p2.armor = oppData.armor;
-                    p2.baseVisible = oppData.visible;
+                    p2.mesh.visible = false;
+                } else {
+                    p2.deadUntil = 0;
+                    p2.mesh.visible = true;
                 }
-                // localDead && !serverDead：保持本地死亡锁，不覆盖
+
+                p2.mesh.position.copy(p2.pos);
+                p2.mesh.rotation.y = p2.yaw;
+                p2.mesh.scale.y = p2.height / HEIGHT_STAND;
 
                 const targetKey = oppData.isMelee ? 'knife' : (oppData.isSmoke ? 'smoke' : (oppData.isFlash ? 'flash' : oppData.weapon));
                 const currentKey = p2.isMelee ? 'knife' : (p2.isSmoke ? 'smoke' : (p2.isFlash ? 'flash' : p2.weaponKey));
@@ -921,8 +806,8 @@
                 }
             }
         } else if (NET.role === 'spectator') {
-            NET.spectatorBlueData = blueData;
-            NET.spectatorRedData = redData;
+            NET.spectatorBlueData = data.bluePlayer;
+            NET.spectatorRedData  = data.redPlayer;
         }
     }
 
@@ -1090,36 +975,28 @@
         }
     }
 
-    // ============================================================
-    // ★ 击杀事件：本地立即应用死亡状态，不等 hostState
-    // ============================================================
     function handleKillEvent(data) {
         if (typeof sKill === 'function') sKill(1);
         if (typeof sDeath === 'function') sDeath();
 
-        // 判断我是否参与：用 hostSeat 判断自己属于 host 还是 client 侧
         const hostSeat = NET.hostSeat || 'blue';
         const iAmPlayer = (NET.mySeat === 'blue' || NET.mySeat === 'red');
         const mySide = (NET.mySeat === hostSeat) ? 'host' : 'client';
         const iAmVictim = iAmPlayer && (data.victimSide === mySide);
         const iAmKiller = iAmPlayer && (data.killerSide === mySide);
 
-        // ★ 立即应用死亡/隐藏状态
         if (iAmVictim && typeof p1 !== 'undefined' && p1) {
-            // 我被杀了：锁定死亡，停止操作
             p1.hp = 0;
             p1.deadUntil = Infinity;
             p1.baseVisible = false;
             p1.aiming = false;
-            p1.aimStage = 0;
+            p1.input.aim = false;
         } else if (iAmKiller && typeof p2 !== 'undefined' && p2) {
-            // 我杀了对手：对手立即消失
             p2.hp = 0;
             p2.deadUntil = Infinity;
             p2.baseVisible = false;
             p2.mesh.visible = false;
         } else if (typeof p2 !== 'undefined' && p2) {
-            // 观战或旁观：对手（p2 视角的目标）也应用死亡
             p2.hp = 0;
             p2.deadUntil = Infinity;
             p2.baseVisible = false;
@@ -1139,10 +1016,30 @@
         }
     }
 
+    // ★ 客户端收到 roundEvent：只在 prep → combat 时关闭结算面板
     function handleRoundEvent(data) {
+        const prevState = (typeof gameState !== 'undefined') ? gameState : null;
+
         if (typeof gameState !== 'undefined') gameState = data.gameState;
         if (typeof stateEndTime !== 'undefined') stateEndTime = performance.now() + data.remain;
         if (typeof roundNumber !== 'undefined' && data.roundNumber) roundNumber = data.roundNumber;
+
+        // ★ 只在 prep → combat 时关闭结算面板（与房主端 endPrep 行为一致）
+        //   roundEnd → prep 时不关，让报告在下一回合准备阶段继续显示
+        if (data.gameState === 'combat' && prevState === 'prep') {
+            if (window.closeCombatReport) window.closeCombatReport();
+            const panel = document.getElementById('weaponPanel');
+            if (panel) panel.style.display = 'none';
+            if (typeof isTouchDevice !== 'undefined' && !isTouchDevice
+                && typeof renderer !== 'undefined' && running) {
+                if (typeof isChatOpen === 'function' && isChatOpen()) return;
+                if (NET.role === 'spectator') return;
+                if (document.pointerLockElement !== renderer.domElement) {
+                    renderer.domElement.requestPointerLock();
+                }
+            }
+        }
+
         if (data.reset) {
             if (typeof clearAllSmokes === 'function') clearAllSmokes();
             if (typeof clearAllFlashes === 'function') clearAllFlashes();
@@ -1150,12 +1047,10 @@
             if (typeof p1 !== 'undefined' && p1) p1.flashUntil = 0;
             if (typeof p2 !== 'undefined' && p2) p2.flashUntil = 0;
 
-            // ★ 重置 p1 和 p2，清掉本地的死亡锁，防止下一回合仍隐藏
             if (typeof resetPlayer === 'function') {
                 if (typeof p1 !== 'undefined' && p1) resetPlayer(p1, performance.now());
                 if (typeof p2 !== 'undefined' && p2) resetPlayer(p2, performance.now());
             } else {
-                // 兜底：手动清死亡状态
                 if (typeof p1 !== 'undefined' && p1) { p1.deadUntil = 0; p1.hp = 100; p1.baseVisible = true; }
                 if (typeof p2 !== 'undefined' && p2) { p2.deadUntil = 0; p2.hp = 100; p2.baseVisible = true; }
             }
@@ -1185,30 +1080,41 @@
         if (!NET.isHost) return;
         broadcast({ type: 'roundEvent', gameState: gameStateStr, remain, reset, roundNumber: roundNum });
     };
-    window.NET_sendShootRequest = function (weaponKey) {
-        if (NET.isHost || NET.role !== 'player') return;
-        if (!NET.roomId) return;
-        sendToHost({ type: 'shootRequest', weapon: weaponKey });
-    };
 
     window.NET_sendClientInput = function () {
         if (NET.isHost || NET.role !== 'player') return;
         if (!NET.roomId) return;
         if (typeof p1 === 'undefined' || !p1) return;
+
         sendToHost({
             type: 'clientInput',
-            x: p1.pos.x, y: p1.pos.y, z: p1.pos.z,
-            yaw: p1.yaw, pitch: p1.pitch,
-            hp: p1.hp, armor: p1.armor, score: p1.score,
-            weapon: p1.isMelee ? 'knife' : (p1.isSmoke ? 'smoke' : (p1.isFlash ? 'flash' : p1.weapon.key)),
-            ammo: p1.ammo, reserve: p1.reserve,
-            fov: p1.cam.fov, aimStage: p1.aimStage || 0,
-            aiming: !!p1.aiming,
-            crouching: p1.height < HEIGHT_STAND - 0.15,
-            dead: p1.hp <= 0, visible: p1.baseVisible,
-            isMelee: !!p1.isMelee, isSmoke: !!p1.isSmoke, isFlash: !!p1.isFlash,
-            smokeCharges: p1.smokeCharges || 0, flashCharges: p1.flashCharges || 0
+            seq: NET.inputSeq++,
+            input: {
+                forward: p1.input.forward,
+                right: p1.input.right,
+                jump: p1.input.jump,
+                crouch: p1.input.crouch,
+                fire: p1.input.fire,
+                aim: p1.input.aim
+            },
+            yaw: p1.yaw,
+            pitch: p1.pitch,
+            aimStage: p1.aimStage,
+
+            weaponSwitch: NET.pendingWeaponSwitch,
+            reload: NET.pendingReload,
+            throwSmoke: NET.pendingThrowSmoke,
+            throwFlash: NET.pendingThrowFlash,
+            melee: NET.pendingMelee,
+            meleeHeavy: NET.pendingMeleeHeavy
         });
+
+        NET.pendingWeaponSwitch = null;
+        NET.pendingReload = false;
+        NET.pendingThrowSmoke = false;
+        NET.pendingThrowFlash = false;
+        NET.pendingMelee = false;
+        NET.pendingMeleeHeavy = false;
     };
 
     window.NET_sendChat = function (text) {
@@ -1232,6 +1138,14 @@
         NET.myPeerId = null; NET.started = false; NET.role = null;
         NET.lastHostState = null; NET.ping = 0;
         NET.hostSeat = null;
+        NET.inputSeq = 0;
+        NET.pendingWeaponSwitch = null;
+        NET.pendingReload = false;
+        NET.pendingThrowSmoke = false;
+        NET.pendingThrowFlash = false;
+        NET.pendingMelee = false;
+        NET.pendingMeleeHeavy = false;
+        NET.tick = 0;
         assignedPeers.clear();
         if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
         if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }

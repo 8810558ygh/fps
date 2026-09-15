@@ -1,4 +1,4 @@
-// ===== js/main.js – 主循环与启动（支持地图切换） =====
+// ===== js/main.js – 主循环与启动（服务器权威版） =====
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -15,7 +15,6 @@ if (isTouchDevice) {
 }
 document.body.appendChild(renderer.domElement);
 
-// 全屏 + 横屏锁定
 async function lockLandscape() {
     if (!isTouchDevice) return;
     try {
@@ -46,7 +45,6 @@ document.addEventListener('click', tryLockOnInteract);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && isTouchDevice) lockLandscape(); });
 window.addEventListener('orientationchange', () => { if (isTouchDevice) lockLandscape(); });
 
-// 鼠标
 renderer.domElement.addEventListener('click', () => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
@@ -114,7 +112,6 @@ document.addEventListener('webkitfullscreenchange', () => {
     }
 });
 
-// 武器面板
 document.getElementById('weaponPanel').addEventListener('click', function(e) {
     const btn = e.target.closest('.weapon-btn');
     if (!btn) return;
@@ -124,6 +121,10 @@ document.getElementById('weaponPanel').addEventListener('click', function(e) {
     if (key && WEAPONS[key]) {
         setWeapon(p1, key);
         sPickup(1);
+        if (typeof gameMode !== 'undefined' && gameMode === 'online'
+            && typeof NET !== 'undefined' && NET.role === 'player' && !NET.isHost) {
+            NET.pendingWeaponSwitch = key;
+        }
         document.getElementById('weaponPanel').style.display = 'none';
         if (document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
             if (typeof isChatOpen === 'function' && isChatOpen()) return;
@@ -132,7 +133,6 @@ document.getElementById('weaponPanel').addEventListener('click', function(e) {
     }
 });
 
-// 小地图
 const minimapEl = document.getElementById('minimap');
 let minimapVisible = false;
 function syncMinimapVisibility() {
@@ -144,7 +144,6 @@ function syncMinimapVisibility() {
     }
 }
 
-// 主循环
 const clock = new THREE.Clock();
 
 function render() {
@@ -152,6 +151,52 @@ function render() {
     p2.mesh.visible = p2.baseVisible;
     p1.vm.visible = p1.baseVisible && !(p1.aiming && p1.weapon.scope);
     renderer.render(scene, p1.cam);
+}
+
+function collectLocalInput(p) {
+    if (!p) return;
+    let f = 0, s = 0;
+    if (keys['KeyW']) f += 1;
+    if (keys['KeyS']) f -= 1;
+    if (keys['KeyD']) s += 1;
+    if (keys['KeyA']) s -= 1;
+    const len = Math.hypot(f, s);
+    if (len > 0) { f /= len; s /= len; }
+    p.input.forward = f;
+    p.input.right = s;
+    p.input.jump = !!keys['Space'];
+    p.input.crouch = !!keys['ShiftLeft'];
+    p.input.fire = !!mouse.leftDown;
+}
+
+function updateLocalClientCamera(dt, now) {
+    // 开火视觉
+    if (p1.input.fire && !p1.isMelee && !p1.isSmoke && !p1.isFlash && gameState === 'combat' && now >= p1.deadUntil) {
+        tryFire(p1, now);
+    }
+
+    // FOV
+    let targetFov = BASE_FOV;
+    const canAim = !p1.isMelee && !p1.isSmoke && !p1.isFlash && p1.reloadEnd <= now && now >= p1.boltEnd;
+    p1.aiming = !!p1.input.aim && canAim;
+    if (p1.aiming) {
+        if (p1.weapon.key === 'sniper' && p1.aimStage === 2 && p1.weapon.zoomFov2) targetFov = p1.weapon.zoomFov2;
+        else targetFov = p1.weapon.zoomFov;
+    }
+    if (Math.abs(p1.cam.fov - targetFov) > 0.05) {
+        p1.cam.fov += (targetFov - p1.cam.fov) * Math.min(1, dt * 11);
+        p1.cam.updateProjectionMatrix();
+    }
+    // 相机
+    p1.cam.position.set(p1.pos.x, p1.pos.y + p1.eyeH, p1.pos.z);
+    p1.cam.rotation.y = p1.yaw;
+    p1.cam.rotation.x = p1.pitch;
+    // 网格
+    p1.mesh.position.copy(p1.pos);
+    p1.mesh.rotation.y = p1.yaw;
+    p1.mesh.scale.y = p1.height / HEIGHT_STAND;
+    // viewmodel
+    updateSniperViewmodel(p1, dt, now);
 }
 
 let _lastClientReportTime = 0;
@@ -162,19 +207,34 @@ function loop() {
     const dt = Math.min(clock.getDelta(), 0.05);
     const now = performance.now();
 
-    const isAuthority = (gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost);
-    const isSpectator = (gameMode === 'online' && typeof NET !== 'undefined' && NET.role === 'spectator');
+    const isHost      = (gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost);
+    const isClient    = (gameMode === 'online' && typeof NET !== 'undefined'
+                         && NET.role === 'player' && !NET.isHost);
+    const isSpectator = (gameMode === 'online' && typeof NET !== 'undefined'
+                         && NET.role === 'spectator');
 
     if (running) {
-        if (isAuthority) {
+        if (isHost) {
+            collectLocalInput(p1);
+            updatePlayer(p1, dt, now);
+
+            if (gameMode === 'online' && NET.isHost) {
+                updatePlayer(p2, dt, now);
+            }
+
             if (gameState === 'prep' && now >= stateEndTime) endPrep(now);
             else if (gameState === 'roundEnd' && now >= stateEndTime) startRound(now);
-        }
+        } else if (isClient) {
+            collectLocalInput(p1);
 
-        if (isSpectator) {
+            if (now - _lastClientReportTime >= CLIENT_REPORT_INTERVAL) {
+                _lastClientReportTime = now;
+                if (typeof NET_sendClientInput === 'function') NET_sendClientInput();
+            }
+
+            updateLocalClientCamera(dt, now);
+        } else if (isSpectator) {
             if (typeof NET_updateSpectatorView === 'function') NET_updateSpectatorView(dt);
-        } else {
-            updatePlayer(p1, dt, now);
         }
 
         if (gameMode === 'ai' && typeof aiUpdate === 'function') {
@@ -184,24 +244,14 @@ function loop() {
         }
 
         if (!isSpectator) {
-            if (gameMode !== 'online') {
+            if (isHost) {
                 updateFootsteps(p1, dt, now);
-                if (gameMode === 'ai') updateFootsteps(p2, dt, now);
-            } else if (typeof NET !== 'undefined' && NET.isHost) {
-                updateFootsteps(p1, dt, now);
-                updateFootsteps(p2, dt, now);
-            } else if (typeof NET !== 'undefined' && NET.role === 'player') {
+                if (gameMode === 'ai' || (gameMode === 'online' && NET.isHost)) updateFootsteps(p2, dt, now);
+            } else if (isClient) {
                 updateFootsteps(p1, dt, now);
                 updateFootsteps(p2, dt, now);
             }
             if (typeof updateXrayVisibility === 'function') updateXrayVisibility();
-        }
-
-        if (gameMode === 'online' && typeof NET !== 'undefined' && NET.role === 'player') {
-            if (now - _lastClientReportTime >= CLIENT_REPORT_INTERVAL) {
-                _lastClientReportTime = now;
-                if (typeof NET_sendClientInput === 'function') NET_sendClientInput();
-            }
         }
     }
 
@@ -220,7 +270,6 @@ window.addEventListener('resize', () => {
     p1.cam.updateProjectionMatrix();
 });
 
-// 大厅
 function enterGame(mode) {
     audio();
     if (!window.getCurrentMapId() && window.loadMap) {
@@ -264,9 +313,6 @@ document.getElementById('againBtn').addEventListener('click', () => {
 window.GAME_setMode = function (mode) { gameMode = mode; };
 window.GAME_setSpectator = false;
 
-// ============================================================
-// ★ 地图选择 UI
-// ============================================================
 function buildMapSelect() {
     const row = document.getElementById('mapSelectRow');
     if (!row) return;
@@ -274,11 +320,9 @@ function buildMapSelect() {
     const maps = (window.getAvailableMaps && window.getAvailableMaps()) || [];
     row.innerHTML = '';
 
-    // ★ 只有一张地图时，隐藏整个"选择地图"区域
     const container = row.closest('.lobby-map-select');
     if (maps.length <= 1) {
         if (container) container.style.display = 'none';
-        // 单地图时确保地图已加载
         const only = maps[0];
         if (only && window.loadMap) {
             const cur = (window.getCurrentMapId && window.getCurrentMapId()) || null;
@@ -294,10 +338,7 @@ function buildMapSelect() {
         btn.dataset.mapId = m.id;
         btn.textContent = m.name;
         btn.addEventListener('click', () => {
-            if (typeof running !== 'undefined' && running) {
-                // 游戏中不允许切换
-                return;
-            }
+            if (typeof running !== 'undefined' && running) return;
             audio();
             if (window.loadMap && window.loadMap(m.id)) {
                 row.querySelectorAll('.map-btn').forEach(b => {
@@ -308,14 +349,12 @@ function buildMapSelect() {
         row.appendChild(btn);
     });
 
-    // 默认选中当前地图
     const cur = (window.getCurrentMapId && window.getCurrentMapId()) || 'battlefield';
     row.querySelectorAll('.map-btn').forEach(b => {
         b.classList.toggle('active', b.dataset.mapId === cur);
     });
 }
 
-// 启动：加载默认地图 + 初始化地图选择 UI
 (function init() {
     if (window.loadMap) window.loadMap('battlefield');
     buildMapSelect();
