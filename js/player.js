@@ -195,6 +195,29 @@ function makeViewmodel(type, mat) {
 }
 
 function setWeapon(p, key) {
+    // ★ 引信还在手上时切枪：
+    //   - 房主 / 单机：把投掷物扔在脚下，引信继续跑
+    //   - 联机客户端：不动，等 hostState 权威同步
+    //   - 投掷出去之后（throwFuseInHand=false）：不受影响，引信独立计时
+    if (p.throwFuseActive && p.throwFuseInHand) {
+        const isClient = (typeof gameMode !== 'undefined'
+            && gameMode === 'online'
+            && typeof NET !== 'undefined'
+            && !NET.isHost);
+        if (!isClient) {
+            const isCombat = (typeof gameState === 'undefined' || gameState === 'combat');
+            if (isCombat && typeof window.dropFuseInPlace === 'function') {
+                window.dropFuseInPlace(p);
+            } else {
+                // 非战斗阶段 / 函数未就绪：直接清除
+                p.throwFuseActive = false;
+                p.throwFuseType = null;
+                p.throwFuseInHand = false;
+            }
+        }
+        // 联机客户端：不做任何处理，等 hostState 同步
+    }
+
     if (key === 'knife') {
         p.weaponKey = 'knife'; p.weapon = MELEE;
         p.isMelee = true; p.isSmoke = false; p.isFlash = false;
@@ -314,6 +337,12 @@ function makePlayer(id, color, spawn, weaponKey) {
         flashCooldownEnd: 0,
         lastFlashThrowAt: 0,
         flashUntil: 0,
+        // ★ 投掷引信状态（按下 LMB 拔保险，5 秒后自动生效；投出去引信继续跑）
+        throwFuseActive: false,
+        throwFuseType: null,
+        throwFuseStart: 0,
+        throwFuseEnd: 0,
+        throwFuseInHand: false,
 
         input: {
             forward: 0,

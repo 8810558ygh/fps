@@ -212,6 +212,44 @@ canvas {
     border-radius: 8px;
 }
 
+/* ---------- ★ 投掷倒计时（顶部时间显示下方） ---------- */
+.throw-countdown {
+    position: fixed;
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 11;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 14px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    font-size: 15px;
+    color: #fff;
+    text-shadow: 0 1px 4px #000;
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.5);
+}
+.throw-cd-icon {
+    font-size: 15px;
+    line-height: 1;
+}
+.throw-cd-label {
+    color: #cfe0f0;
+    letter-spacing: 1px;
+}
+.throw-cd-time {
+    color: #ffd24a;
+    font-weight: 700;
+    font-family: Consolas, "Courier New", monospace;
+    min-width: 44px;
+    text-align: right;
+}
+
 .bottom {
     position: absolute;
     left: 24px;
@@ -553,6 +591,16 @@ table.ctrl td.k {
         left: 10px;
         border-radius: 8px;
     }
+
+    /* ★ 移动端投掷倒计时适配 */
+    .throw-countdown {
+        top: 38px;
+        font-size: 13px;
+        padding: 3px 10px;
+        gap: 6px;
+    }
+    .throw-cd-icon  { font-size: 13px; }
+    .throw-cd-time  { min-width: 38px; }
 
     .overlay h1 { font-size: 30px; letter-spacing: 2px; }
     table.ctrl th, table.ctrl td { padding: 4px 10px; font-size: 13px; }

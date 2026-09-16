@@ -7,6 +7,28 @@ function _isOnlineClient() {
         && typeof NET !== 'undefined' && NET.role === 'player' && !NET.isHost;
 }
 
+// ★ 投掷请求辅助：联机客户端把请求发给房主；房主/单机直接本地执行
+function _requestFuseStart(type) {
+    if (_isOnlineClient()) {
+        if (typeof NET !== 'undefined') NET.pendingFuseStart = type;
+    } else {
+        if (typeof startThrowFuse === 'function' && typeof p1 !== 'undefined' && p1) {
+            startThrowFuse(p1, type);
+        }
+    }
+}
+function _requestFuseRelease() {
+    if (_isOnlineClient()) {
+        if (typeof NET !== 'undefined') NET.pendingFuseRelease = true;
+    } else {
+        if (typeof p1 !== 'undefined' && p1
+            && p1.throwFuseActive && p1.throwFuseInHand
+            && typeof releaseThrowFuse === 'function') {
+            releaseThrowFuse(p1);
+        }
+    }
+}
+
 window.addEventListener('keydown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
@@ -37,7 +59,6 @@ window.addEventListener('keydown', e => {
     if (!e.repeat) {
         const isOC = _isOnlineClient();
 
-        // 1：主武器
         if (e.code === 'Digit1' || e.code === 'Numpad1') {
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
                 if (p1.isMelee || p1.isSmoke || p1.isFlash) {
@@ -48,7 +69,6 @@ window.addEventListener('keydown', e => {
             }
             return;
         }
-        // 2：近战刀
         if (e.code === 'Digit2' || e.code === 'Numpad2') {
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
                 if (!p1.isMelee) {
@@ -58,7 +78,6 @@ window.addEventListener('keydown', e => {
             }
             return;
         }
-        // 3：烟雾弹
         if (e.code === 'Digit3' || e.code === 'Numpad3') {
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
                 const key = p1.isSmoke ? (p1.primaryWeaponKey || 'rifle') : 'smoke';
@@ -67,7 +86,6 @@ window.addEventListener('keydown', e => {
             }
             return;
         }
-        // 4：闪光弹
         if (e.code === 'Digit4' || e.code === 'Numpad4') {
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
                 const key = p1.isFlash ? (p1.primaryWeaponKey || 'rifle') : 'flash';
@@ -121,17 +139,16 @@ document.addEventListener('mousedown', e => {
     }
 
     if (e.button === 0) {
+        // ★ 烟雾/闪光：按下左键 = 请求拔保险（房主权威处理）
         if (typeof p1 !== 'undefined' && p1 && p1.isSmoke) {
             if (running && !isOver() && gameState === 'combat') {
-                throwSmoke(p1, performance.now());
-                if (_isOnlineClient()) NET.pendingThrowSmoke = true;
+                _requestFuseStart('smoke');
             }
             e.preventDefault(); return;
         }
         if (typeof p1 !== 'undefined' && p1 && p1.isFlash) {
             if (running && !isOver() && gameState === 'combat') {
-                throwFlash(p1, performance.now());
-                if (_isOnlineClient()) NET.pendingThrowFlash = true;
+                _requestFuseStart('flash');
             }
             e.preventDefault(); return;
         }
@@ -154,7 +171,11 @@ document.addEventListener('mousedown', e => {
 document.addEventListener('mouseup', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     if (typeof NET !== 'undefined' && NET.role === 'spectator') { e.preventDefault(); e.stopPropagation(); return; }
-    if (e.button === 0) mouse.leftDown = false;
+    if (e.button === 0) {
+        mouse.leftDown = false;
+        // ★ 松开左键 = 请求释放（房主权威判断是否有效）
+        _requestFuseRelease();
+    }
     else if (e.button === 2) { e.preventDefault(); e.stopPropagation(); }
 });
 
@@ -253,24 +274,32 @@ if (fireBtn) {
     fireBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
         if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        // ★ 烟雾/闪光：按下 = 请求拔保险
         if (typeof p1 !== 'undefined' && p1 && p1.isSmoke) {
             if (running && !isOver() && gameState === 'combat') {
-                throwSmoke(p1, performance.now());
-                if (_isOnlineClient()) NET.pendingThrowSmoke = true;
+                _requestFuseStart('smoke');
             }
             return;
         }
         if (typeof p1 !== 'undefined' && p1 && p1.isFlash) {
             if (running && !isOver() && gameState === 'combat') {
-                throwFlash(p1, performance.now());
-                if (_isOnlineClient()) NET.pendingThrowFlash = true;
+                _requestFuseStart('flash');
             }
             return;
         }
         mouse.leftDown = true;
     }, { passive: false });
-    fireBtn.addEventListener('touchend', (e) => { e.preventDefault(); mouse.leftDown = false; }, { passive: false });
-    fireBtn.addEventListener('touchcancel', () => { mouse.leftDown = false; });
+    fireBtn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        mouse.leftDown = false;
+        _requestFuseRelease();
+    }, { passive: false });
+    fireBtn.addEventListener('touchcancel', () => {
+        mouse.leftDown = false;
+        if (typeof p1 !== 'undefined' && p1 && p1.throwFuseActive && typeof cancelThrowFuse === 'function') {
+            cancelThrowFuse(p1);
+        }
+    });
 }
 
 const jumpBtn = document.getElementById('btn-jump');

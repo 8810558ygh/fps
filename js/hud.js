@@ -1,4 +1,4 @@
-// ===== js/hud.js – HUD更新与回合结算报告（含刀 + 烟雾 + 闪光） =====
+// ===== js/hud.js – HUD更新与回合结算报告（含刀 + 烟雾 + 闪光 + 引信倒计时） =====
 function q(s) { return document.querySelector(s); }
 
 const H = {
@@ -186,12 +186,12 @@ function updateHUD(now) {
         const charge = p.smokeCharges || 0;
         const color = charge > 0 ? '#7ee08a' : '#5a6a7a';
         h.ammo.innerHTML = `<span style="color:${color};font-size:18px;letter-spacing:2px;">💨 烟雾 ×${charge}</span>`;
-        h.wtag.textContent = '烟雾弹' + (charge > 0 ? ' · 左键投掷' : '（已用完）');
+        h.wtag.textContent = '烟雾弹' + (charge > 0 ? ' · 左键拔保险' : '（已用完）');
     } else if (p.isFlash) {
         const charge = p.flashCharges || 0;
         const color = charge > 0 ? '#ffe066' : '#5a6a7a';
         h.ammo.innerHTML = `<span style="color:${color};font-size:18px;letter-spacing:2px;">⚡ 闪光 ×${charge}</span>`;
-        h.wtag.textContent = '闪光弹' + (charge > 0 ? ' · 左键投掷' : '（已用完）');
+        h.wtag.textContent = '闪光弹' + (charge > 0 ? ' · 左键拔保险' : '（已用完）');
     } else {
         let ammoText = p.ammo;
         if (p.reloadEnd > now) {
@@ -206,6 +206,28 @@ function updateHUD(now) {
         if (p.smokeCharges > 0 && gameState === 'combat') tips.push(`💨${p.smokeCharges}`);
         if (p.flashCharges > 0 && gameState === 'combat') tips.push(`⚡${p.flashCharges}`);
         if (tips.length) h.wtag.textContent += '  ·  ' + tips.join(' ');
+    }
+
+    // ★ 投掷引信倒计时（顶部时间显示下方）
+    const cdEl = document.getElementById('throwCountdown');
+    if (cdEl) {
+        if (running && gameState === 'combat' && p.throwFuseActive && p.throwFuseType) {
+            const remain = Math.max(0, p.throwFuseEnd - now);
+
+            const iconEl  = document.getElementById('throwCountdownIcon');
+            const labelEl = document.getElementById('throwCountdownLabel');
+            const timeEl  = document.getElementById('throwCountdownTime');
+
+            if (iconEl)  iconEl.textContent  = (p.throwFuseType === 'smoke') ? '💨' : '⚡';
+            if (labelEl) labelEl.textContent = (p.throwFuseType === 'smoke') ? '烟雾倒计时' : '闪光倒计时';
+            if (timeEl) {
+                timeEl.textContent = (remain / 1000).toFixed(1) + 's';
+                timeEl.style.color = remain > 0 ? '#ffd24a' : '#7ee08a';
+            }
+            cdEl.style.display = 'flex';
+        } else {
+            cdEl.style.display = 'none';
+        }
     }
 
     const scoped = running && gameState === 'combat' && !p.isMelee && !p.isSmoke && !p.isFlash

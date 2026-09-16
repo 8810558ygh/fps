@@ -27,6 +27,16 @@ const SMOKE_PROJ_RADIUS = 0.09;
 const SMOKE_PROJ_HALF_H = 0.12;
 
 // ============================================================
+// ★ 联机客户端判断（用于引信/投掷的服务器权威分流）
+// ============================================================
+function isOnlineClientPlayer() {
+    return typeof gameMode !== 'undefined' && gameMode === 'online'
+        && typeof NET !== 'undefined'
+        && NET.role === 'player'
+        && !NET.isHost;
+}
+
+// ============================================================
 // 弹痕系统
 // ============================================================
 const bulletHoles = [];
@@ -586,6 +596,215 @@ function updateFlashOverlay(now) {
     }
 }
 
+// ============================================================
+// ★ 投掷引信系统（服务器权威）
+//   房主 / 单机：
+//     - startThrowFuse / releaseThrowFuse 直接本地执行
+//     - updateThrowFuse 每帧检查，到期自动引爆
+//   联机客户端：
+//     - 按左键/松手只发请求（NET.pendingFuseStart / NET.pendingFuseRelease）
+//     - 引信状态、弹药、投掷物全部通过 hostState / smokeSpawn / flashSpawn 同步
+// ============================================================
+function startThrowFuse(p, type) {
+    if (!p) return;
+    if (p.throwFuseActive) return;
+    if (gameState !== 'combat') return;
+    if (typeof running !== 'undefined' && !running) return;
+    if (typeof isOver === 'function' && isOver()) return;
+
+    const now = performance.now();
+    if (now < p.deadUntil || now < p.equipEnd) return;
+
+    if (type === 'smoke') {
+        if (!p.isSmoke) return;
+        if (p.smokeCharges <= 0) return;
+        if (now < p.smokeCooldownEnd) return;
+        p.smokeCharges--;
+        p.smokeCooldownEnd = now + SMOKE.cooldownMs;
+        p.lastSmokeThrowAt = now;
+    } else if (type === 'flash') {
+        if (!p.isFlash) return;
+        if (p.flashCharges <= 0) return;
+        if (now < p.flashCooldownEnd) return;
+        p.flashCharges--;
+        p.flashCooldownEnd = now + FLASH.cooldownMs;
+        p.lastFlashThrowAt = now;
+    } else {
+        return;
+    }
+
+    const cfg = type === 'smoke' ? SMOKE : FLASH;
+    p.throwFuseActive = true;
+    p.throwFuseType = type;
+    p.throwFuseStart = now;
+    p.throwFuseEnd = now + cfg.fuseMs;
+    p.throwFuseInHand = true;
+
+    if (type === 'smoke' && typeof sSmokeThrow === 'function') sSmokeThrow();
+    else if (type === 'flash' && typeof sFlashThrow === 'function') sFlashThrow();
+}
+window.startThrowFuse = startThrowFuse;
+
+function releaseThrowFuse(p) {
+    if (!p || !p.throwFuseActive || !p.throwFuseInHand) return null;
+    const type = p.throwFuseType;
+    const now = performance.now();
+    const remainMs = Math.max(0, p.throwFuseEnd - now);
+
+    if (gameState !== 'combat') return null;
+
+    let thrown = null;
+    if (type === 'smoke') {
+        if (!p.isSmoke) return null;
+        p.throwFuseInHand = false;
+        throwSmoke(p, now, remainMs);
+        thrown = 'smoke';
+    } else if (type === 'flash') {
+        if (!p.isFlash) return null;
+        p.throwFuseInHand = false;
+        throwFlash(p, now, remainMs);
+        thrown = 'flash';
+    }
+    return thrown;
+}
+window.releaseThrowFuse = releaseThrowFuse;
+
+function cancelThrowFuse(p) {
+    if (!p) return;
+    p.throwFuseActive = false;
+    p.throwFuseType = null;
+    p.throwFuseInHand = false;
+}
+window.cancelThrowFuse = cancelThrowFuse;
+
+// ★ 单玩家引信更新（房主对 p1 和 p2 都调用）
+function updateThrowFuseForPlayer(p, now) {
+    if (!p || !p.throwFuseActive) return;
+
+    if (gameState !== 'combat' || isOver() || !running || now < p.deadUntil) {
+        cancelThrowFuse(p);
+        return;
+    }
+    if (p.throwFuseInHand) {
+        if (p.throwFuseType === 'smoke' && !p.isSmoke) { cancelThrowFuse(p); return; }
+        if (p.throwFuseType === 'flash' && !p.isFlash) { cancelThrowFuse(p); return; }
+    }
+
+    if (now >= p.throwFuseEnd) {
+        const type = p.throwFuseType;
+        const inHand = p.throwFuseInHand;
+
+        p.throwFuseActive = false;
+        p.throwFuseType = null;
+        p.throwFuseInHand = false;
+
+        if (inHand) {
+            detonateInHand(p, type, now);
+            const backKey = p.primaryWeaponKey || 'rifle';
+            setWeapon(p, backKey);
+        }
+    }
+}
+
+// ★ 每帧入口
+function updateThrowFuse(now) {
+    if (typeof p1 === 'undefined' || !p1) return;
+
+    if (isOnlineClientPlayer()) return;
+
+    updateThrowFuseForPlayer(p1, now);
+
+    if (gameMode === 'online'
+        && typeof NET !== 'undefined'
+        && NET.isHost
+        && typeof p2 !== 'undefined' && p2) {
+        updateThrowFuseForPlayer(p2, now);
+    }
+}
+window.updateThrowFuse = updateThrowFuse;
+
+// ★ 切枪时把引信扔在脚下：只清 throwFuseInHand，引信继续跑
+function dropFuseInPlace(p) {
+    if (!p || !p.throwFuseActive || !p.throwFuseInHand) return;
+    const type = p.throwFuseType;
+    if (!type) return;
+    const now = performance.now();
+    const remainMs = Math.max(0, p.throwFuseEnd - now);
+
+    p.throwFuseInHand = false;
+
+    const origin = new THREE.Vector3(p.pos.x, p.pos.y + 1.0, p.pos.z);
+    const vel = new THREE.Vector3(0, 0, 0);
+
+    if (type === 'smoke') {
+        spawnSmokeProjectile(origin, vel, remainMs, now);
+        if (typeof sSmokeThrow === 'function') sSmokeThrow();
+        if (gameMode === 'online'
+            && typeof NET !== 'undefined'
+            && NET.isHost
+            && typeof NET_broadcast === 'function') {
+            NET_broadcast({
+                type: 'smokeSpawn',
+                px: origin.x, py: origin.y, pz: origin.z,
+                vx: 0, vy: 0, vz: 0,
+                fuseMs: remainMs
+            });
+        }
+    } else if (type === 'flash') {
+        spawnFlashProjectile(origin, vel, remainMs, now);
+        if (typeof sFlashThrow === 'function') sFlashThrow();
+        if (gameMode === 'online'
+            && typeof NET !== 'undefined'
+            && NET.isHost
+            && typeof NET_broadcast === 'function') {
+            NET_broadcast({
+                type: 'flashSpawn',
+                px: origin.x, py: origin.y, pz: origin.z,
+                vx: 0, vy: 0, vz: 0,
+                fuseMs: remainMs
+            });
+        }
+    }
+}
+window.dropFuseInPlace = dropFuseInPlace;
+
+// 在手中引爆（引信 5 秒到时仍在手里）——立即爆
+function detonateInHand(p, type, now) {
+    const origin = new THREE.Vector3(p.pos.x, p.pos.y + 1.0, p.pos.z);
+    const vel = new THREE.Vector3(0, 0, 0);
+
+    if (type === 'smoke') {
+        spawnSmokeProjectile(origin, vel, 0, now);
+        if (typeof sSmokeThrow === 'function') sSmokeThrow();
+        if (gameMode === 'online'
+            && typeof NET !== 'undefined'
+            && NET.isHost
+            && typeof NET_broadcast === 'function') {
+            NET_broadcast({
+                type: 'smokeSpawn',
+                px: origin.x, py: origin.y, pz: origin.z,
+                vx: 0, vy: 0, vz: 0,
+                fuseMs: 0
+            });
+        }
+    } else if (type === 'flash') {
+        spawnFlashProjectile(origin, vel, 0, now);
+        if (typeof sFlashThrow === 'function') sFlashThrow();
+        if (gameMode === 'online'
+            && typeof NET !== 'undefined'
+            && NET.isHost
+            && typeof NET_broadcast === 'function') {
+            NET_broadcast({
+                type: 'flashSpawn',
+                px: origin.x, py: origin.y, pz: origin.z,
+                vx: 0, vy: 0, vz: 0,
+                fuseMs: 0
+            });
+        }
+    }
+}
+window.detonateInHand = detonateInHand;
+
 function updateEffects(dt, now) {
     for (let i = tracers.length - 1; i >= 0; i--) {
         const t = tracers[i];
@@ -610,6 +829,7 @@ function updateEffects(dt, now) {
     updateSmokeTrajectory(now);
     updateFlashTrajectory(now);
     updateBulletHoles(now);
+    updateThrowFuse(now);
 }
 
 function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounces, friction, steps, dt) {
@@ -676,17 +896,24 @@ function updateTrajLine(line, pts) {
     line.visible = true;
 }
 
+// ★ 只要投掷物还在手上就显示轨迹线：
+//   - 弹量 > 0（还没拔保险）
+//   - 或引信激活且仍在手里（已拔保险但还没扔出去）
 function updateSmokeTrajectory(now) {
-    const show = typeof p1 !== 'undefined' && p1
-        && p1.isSmoke && p1.smokeCharges > 0
+    const p = (typeof p1 !== 'undefined') ? p1 : null;
+    const inHand = p && p.isSmoke
+        && (p.smokeCharges > 0
+            || (p.throwFuseActive && p.throwFuseType === 'smoke' && p.throwFuseInHand));
+
+    const show = inHand
         && running && gameState === 'combat'
-        && !isOver() && now >= p1.deadUntil;
+        && !isOver() && now >= p.deadUntil;
 
     if (!show) { if (smokeTrajLine) smokeTrajLine.visible = false; return; }
     if (!smokeTrajLine) smokeTrajLine = ensureTrajLine(null, 0x7ee08a);
 
-    const origin = p1.cam.getWorldPosition(new THREE.Vector3()).clone();
-    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(p1.cam.quaternion);
+    const origin = p.cam.getWorldPosition(new THREE.Vector3()).clone();
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(p.cam.quaternion);
     const pts = simulateThrowTrajectory(
         origin, dir, SMOKE.throwSpeed, SMOKE.throwUpBias,
         SMOKE.gravity, SMOKE.bounces, SMOKE.friction,
@@ -696,16 +923,20 @@ function updateSmokeTrajectory(now) {
 }
 
 function updateFlashTrajectory(now) {
-    const show = typeof p1 !== 'undefined' && p1
-        && p1.isFlash && p1.flashCharges > 0
+    const p = (typeof p1 !== 'undefined') ? p1 : null;
+    const inHand = p && p.isFlash
+        && (p.flashCharges > 0
+            || (p.throwFuseActive && p.throwFuseType === 'flash' && p.throwFuseInHand));
+
+    const show = inHand
         && running && gameState === 'combat'
-        && !isOver() && now >= p1.deadUntil;
+        && !isOver() && now >= p.deadUntil;
 
     if (!show) { if (flashTrajLine) flashTrajLine.visible = false; return; }
     if (!flashTrajLine) flashTrajLine = ensureTrajLine(null, 0xffe066);
 
-    const origin = p1.cam.getWorldPosition(new THREE.Vector3()).clone();
-    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(p1.cam.quaternion);
+    const origin = p.cam.getWorldPosition(new THREE.Vector3()).clone();
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(p.cam.quaternion);
     const pts = simulateThrowTrajectory(
         origin, dir, FLASH.throwSpeed, FLASH.throwUpBias,
         FLASH.gravity, FLASH.bounces, FLASH.friction,
@@ -714,95 +945,62 @@ function updateFlashTrajectory(now) {
     updateTrajLine(flashTrajLine, pts);
 }
 
-function throwSmoke(p, now) {
+// ★ 只由房主/单机调用：本地生成投掷物，联机时广播给所有客户端
+function throwSmoke(p, now, fuseMs) {
     if (gameState !== 'combat') return;
     if (!p.isSmoke) return;
-    if (p.smokeCharges <= 0) return;
-    if (now < p.smokeCooldownEnd) return;
     if (now < p.deadUntil || now < p.equipEnd) return;
 
-    p.smokeCharges--;
-    p.smokeCooldownEnd = now + SMOKE.cooldownMs;
-    p.lastSmokeThrowAt = now;
+    const effectiveFuseMs = (fuseMs !== undefined && fuseMs !== null) ? fuseMs : SMOKE.fuseMs;
 
     const origin = p.cam.getWorldPosition(new THREE.Vector3()).clone();
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(p.cam.quaternion);
     const vel = dir.clone().multiplyScalar(SMOKE.throwSpeed);
     vel.y += SMOKE.throwUpBias * SMOKE.throwSpeed;
 
-    if (gameMode === 'online' && typeof NET !== 'undefined' && NET.roomId) {
-        if (NET.isHost) {
-            spawnSmokeProjectile(origin, vel, SMOKE.fuseMs, now);
-            if (typeof sSmokeThrow === 'function') sSmokeThrow();
-            if (typeof NET_broadcast === 'function') {
-                NET_broadcast({
-                    type: 'smokeSpawn',
-                    px: origin.x, py: origin.y, pz: origin.z,
-                    vx: vel.x, vy: vel.y, vz: vel.z,
-                    fuseMs: SMOKE.fuseMs
-                });
-            }
-        } else if (NET.role === 'player') {
-            if (typeof NET_sendToHost === 'function') {
-                NET_sendToHost({
-                    type: 'smokeThrow',
-                    px: origin.x, py: origin.y, pz: origin.z,
-                    vx: vel.x, vy: vel.y, vz: vel.z,
-                    fuseMs: SMOKE.fuseMs
-                });
-            }
-            if (typeof sSmokeThrow === 'function') sSmokeThrow();
-        }
-    } else {
-        spawnSmokeProjectile(origin, vel, SMOKE.fuseMs, now);
-        if (typeof sSmokeThrow === 'function') sSmokeThrow();
+    spawnSmokeProjectile(origin, vel, effectiveFuseMs, now);
+    if (typeof sSmokeThrow === 'function') sSmokeThrow();
+
+    if (gameMode === 'online'
+        && typeof NET !== 'undefined'
+        && NET.isHost
+        && typeof NET_broadcast === 'function') {
+        NET_broadcast({
+            type: 'smokeSpawn',
+            px: origin.x, py: origin.y, pz: origin.z,
+            vx: vel.x, vy: vel.y, vz: vel.z,
+            fuseMs: effectiveFuseMs
+        });
     }
 
     setWeapon(p, p.primaryWeaponKey || 'rifle');
 }
 
-function throwFlash(p, now) {
+function throwFlash(p, now, fuseMs) {
     if (gameState !== 'combat') return;
     if (!p.isFlash) return;
-    if (p.flashCharges <= 0) return;
-    if (now < p.flashCooldownEnd) return;
     if (now < p.deadUntil || now < p.equipEnd) return;
 
-    p.flashCharges--;
-    p.flashCooldownEnd = now + FLASH.cooldownMs;
-    p.lastFlashThrowAt = now;
+    const effectiveFuseMs = (fuseMs !== undefined && fuseMs !== null) ? fuseMs : FLASH.fuseMs;
 
     const origin = p.cam.getWorldPosition(new THREE.Vector3()).clone();
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(p.cam.quaternion);
     const vel = dir.clone().multiplyScalar(FLASH.throwSpeed);
     vel.y += FLASH.throwUpBias * FLASH.throwSpeed;
 
-    if (gameMode === 'online' && typeof NET !== 'undefined' && NET.roomId) {
-        if (NET.isHost) {
-            spawnFlashProjectile(origin, vel, FLASH.fuseMs, now);
-            if (typeof sFlashThrow === 'function') sFlashThrow();
-            if (typeof NET_broadcast === 'function') {
-                NET_broadcast({
-                    type: 'flashSpawn',
-                    px: origin.x, py: origin.y, pz: origin.z,
-                    vx: vel.x, vy: vel.y, vz: vel.z,
-                    fuseMs: FLASH.fuseMs
-                });
-            }
-        } else if (NET.role === 'player') {
-            if (typeof NET_sendToHost === 'function') {
-                NET_sendToHost({
-                    type: 'flashThrow',
-                    px: origin.x, py: origin.y, pz: origin.z,
-                    vx: vel.x, vy: vel.y, vz: vel.z,
-                    fuseMs: FLASH.fuseMs
-                });
-            }
-            if (typeof sFlashThrow === 'function') sFlashThrow();
-        }
-    } else {
-        spawnFlashProjectile(origin, vel, FLASH.fuseMs, now);
-        if (typeof sFlashThrow === 'function') sFlashThrow();
+    spawnFlashProjectile(origin, vel, effectiveFuseMs, now);
+    if (typeof sFlashThrow === 'function') sFlashThrow();
+
+    if (gameMode === 'online'
+        && typeof NET !== 'undefined'
+        && NET.isHost
+        && typeof NET_broadcast === 'function') {
+        NET_broadcast({
+            type: 'flashSpawn',
+            px: origin.x, py: origin.y, pz: origin.z,
+            vx: vel.x, vy: vel.y, vz: vel.z,
+            fuseMs: effectiveFuseMs
+        });
     }
 
     setWeapon(p, p.primaryWeaponKey || 'rifle');
@@ -1079,7 +1277,6 @@ function tryFire(p, now) {
     p.muzzle.intensity = 2.2;
     if (p.id === 1) p.vmMuzzle.intensity = 2.2;
 
-    // 联机客户端：只做本地曳光视觉，弹痕、伤害、房主的开火效果全部由房主广播
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) {
         const origin = p.cam.getWorldPosition(_v1).clone();
         const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion).clone();
@@ -1254,6 +1451,11 @@ function resetPlayer(p, now) {
     p.flashCooldownEnd = 0;
     p.lastFlashThrowAt = 0;
     p.flashUntil = 0;
+    p.throwFuseActive = false;
+    p.throwFuseType = null;
+    p.throwFuseStart = 0;
+    p.throwFuseEnd = 0;
+    p.throwFuseInHand = false;
 
     if (p.vm && p.vm.children.length > 0) {
         const vm = p.vm.children[0];
@@ -1430,9 +1632,7 @@ function updateSniperViewmodel(p, dt, now) {
 }
 
 // ============================================================
-// ★ 新增：第三人称武器朝向 + 挥刀/换弹/拉栓动画
-//   驱动 p.gunHolder（第三方模型手持武器），
-//   让双方摄像机都能看到角色的枪械动作。
+// ★ 第三人称武器朝向 + 挥刀/换弹/拉栓动画
 // ============================================================
 function updateThirdPersonWeapon(p, dt, now) {
     if (!p.gunHolder) return;
@@ -1447,7 +1647,6 @@ function updateThirdPersonWeapon(p, dt, now) {
 
     const k = Math.min(1, dt * 14);
 
-    // 优先级 1：近战挥刀
     if (p.isMelee && p.meleeEnd > now) {
         const fireMs = p.meleeIsHeavy ? MELEE.heavyFireMs : MELEE.lightFireMs;
         const t = 1 - (p.meleeEnd - now) / fireMs;
@@ -1492,7 +1691,6 @@ function updateThirdPersonWeapon(p, dt, now) {
         return;
     }
 
-    // 优先级 2：换弹
     if (p.reloadEnd > now && !p.isMelee && !p.isSmoke && !p.isFlash) {
         const w = p.weapon;
         const total = w.reloadMs || 2000;
@@ -1504,7 +1702,6 @@ function updateThirdPersonWeapon(p, dt, now) {
         return;
     }
 
-    // 优先级 3：拉栓
     if (p.boltEnd > now && p.weapon && p.weapon.boltMs) {
         const total = p.weapon.boltMs;
         const t = 1 - (p.boltEnd - now) / total;
@@ -1514,7 +1711,6 @@ function updateThirdPersonWeapon(p, dt, now) {
         return;
     }
 
-    // 默认：回到原位，并把俯仰（pitch）应用到枪管
     gh.position.lerp(bp, k);
     gh.rotation.x += (br.x + p.pitch - gh.rotation.x) * k;
     gh.rotation.y += (br.y - gh.rotation.y) * k;
@@ -1595,7 +1791,7 @@ function updatePlayer(p, dt, now) {
 
     if (p.input.fire) {
         if (p.isMelee) tryMelee(p, now, false);
-        else if (p.isSmoke || p.isFlash) { /* 由离散事件处理 */ }
+        else if (p.isSmoke || p.isFlash) { /* 由引信系统处理 */ }
         else tryFire(p, now);
     }
 
@@ -1607,9 +1803,7 @@ function updatePlayer(p, dt, now) {
     p.mesh.rotation.y = p.yaw;
     p.mesh.scale.y = p.height / HEIGHT_STAND;
 
-    // ★ 第三人称武器动画（挥刀/换弹/拉栓/俯仰）
     updateThirdPersonWeapon(p, dt, now);
-
     updateSniperViewmodel(p, dt, now);
 }
 

@@ -22,8 +22,9 @@
         inputSeq: 0,
         pendingWeaponSwitch: null,
         pendingReload: false,
-        pendingThrowSmoke: false,
-        pendingThrowFlash: false,
+        // ★ 投掷引信请求（客户端 → 房主；不再是本地的）
+        pendingFuseStart: null,
+        pendingFuseRelease: false,
         pendingMelee: false,
         pendingMeleeHeavy: false,
         tick: 0,
@@ -329,12 +330,8 @@
                     );
                 }
                 break;
-            case 'smokeThrow':
-                if (NET.isHost) handleSmokeThrow(fromId, data); break;
             case 'smokeSpawn':
                 if (!NET.isHost) handleSmokeSpawn(data); break;
-            case 'flashThrow':
-                if (NET.isHost) handleFlashThrow(fromId, data); break;
             case 'flashSpawn':
                 if (!NET.isHost) handleFlashSpawn(data); break;
             case 'flashEvent':
@@ -360,34 +357,29 @@
         }
     }
 
-    function handleSmokeThrow(fromId, data) {
-        if (!NET.isHost) return;
-        if (typeof spawnSmokeProjectile !== 'function') return;
-        const now = performance.now();
-        spawnSmokeProjectile(new THREE.Vector3(data.px, data.py, data.pz), new THREE.Vector3(data.vx, data.vy, data.vz), data.fuseMs || SMOKE.fuseMs, now);
-        if (typeof sSmokeThrow === 'function') sSmokeThrow();
-        broadcast({ type: 'smokeSpawn', px: data.px, py: data.py, pz: data.pz, vx: data.vx, vy: data.vy, vz: data.vz, fuseMs: data.fuseMs || SMOKE.fuseMs }, fromId);
-    }
+    // ★ 客户端收到房主广播的投掷物生成事件（房主权威 spawn，客户端本地也生成一份镜像）
     function handleSmokeSpawn(data) {
         if (NET.isHost) return;
         if (typeof spawnSmokeProjectile !== 'function') return;
         const now = performance.now();
-        spawnSmokeProjectile(new THREE.Vector3(data.px, data.py, data.pz), new THREE.Vector3(data.vx, data.vy, data.vz), data.fuseMs || SMOKE.fuseMs, now);
+        spawnSmokeProjectile(
+            new THREE.Vector3(data.px, data.py, data.pz),
+            new THREE.Vector3(data.vx, data.vy, data.vz),
+            data.fuseMs !== undefined ? data.fuseMs : SMOKE.fuseMs,
+            now
+        );
         if (typeof sSmokeThrow === 'function') sSmokeThrow();
-    }
-    function handleFlashThrow(fromId, data) {
-        if (!NET.isHost) return;
-        if (typeof spawnFlashProjectile !== 'function') return;
-        const now = performance.now();
-        spawnFlashProjectile(new THREE.Vector3(data.px, data.py, data.pz), new THREE.Vector3(data.vx, data.vy, data.vz), data.fuseMs || FLASH.fuseMs, now);
-        if (typeof sFlashThrow === 'function') sFlashThrow();
-        broadcast({ type: 'flashSpawn', px: data.px, py: data.py, pz: data.pz, vx: data.vx, vy: data.vy, vz: data.vz, fuseMs: data.fuseMs || FLASH.fuseMs }, fromId);
     }
     function handleFlashSpawn(data) {
         if (NET.isHost) return;
         if (typeof spawnFlashProjectile !== 'function') return;
         const now = performance.now();
-        spawnFlashProjectile(new THREE.Vector3(data.px, data.py, data.pz), new THREE.Vector3(data.vx, data.vy, data.vz), data.fuseMs || FLASH.fuseMs, now);
+        spawnFlashProjectile(
+            new THREE.Vector3(data.px, data.py, data.pz),
+            new THREE.Vector3(data.vx, data.vy, data.vz),
+            data.fuseMs !== undefined ? data.fuseMs : FLASH.fuseMs,
+            now
+        );
         if (typeof sFlashThrow === 'function') sFlashThrow();
     }
 
@@ -584,15 +576,24 @@
         if (typeof p1 !== 'undefined' && p1) p1.mat.color.setHex(myIsBlue ? 0x3a7bd5 : 0xd54a3a);
         if (typeof p2 !== 'undefined' && p2) p2.mat.color.setHex(myIsBlue ? 0xd54a3a : 0x3a7bd5);
 
-        if (NET.role !== 'spectator' && typeof p1 !== 'undefined' && p1 && p1.spawn) {
+        if (NET.role !== 'spectator') {
             const spawns = window.currentMapSpawns || {
                 p1: { x: -21, z: -21, yaw: -3 * Math.PI / 4 },
                 p2: { x: 21, z: 21, yaw: Math.PI / 4 }
             };
-            if (myIsBlue) {
-                p1.spawn.x = spawns.p1.x; p1.spawn.z = spawns.p1.z; p1.spawn.yaw = spawns.p1.yaw;
-            } else {
-                p1.spawn.x = spawns.p2.x; p1.spawn.z = spawns.p2.z; p1.spawn.yaw = spawns.p2.yaw;
+
+            const mySpawn  = myIsBlue ? spawns.p1 : spawns.p2;
+            const oppSpawn = myIsBlue ? spawns.p2 : spawns.p1;
+
+            if (typeof p1 !== 'undefined' && p1 && p1.spawn) {
+                p1.spawn.x = mySpawn.x;
+                p1.spawn.z = mySpawn.z;
+                p1.spawn.yaw = mySpawn.yaw;
+            }
+            if (typeof p2 !== 'undefined' && p2 && p2.spawn) {
+                p2.spawn.x = oppSpawn.x;
+                p2.spawn.z = oppSpawn.z;
+                p2.spawn.yaw = oppSpawn.yaw;
             }
         }
 
@@ -620,7 +621,6 @@
 
     function startHostBroadcast() {
         if (hostBroadcastTimer) clearInterval(hostBroadcastTimer);
-        // ★ 广播间隔 40ms → 20ms
         hostBroadcastTimer = setInterval(hostBroadcastTick, 20);
     }
     function stopHostBroadcast() {
@@ -651,7 +651,12 @@
             boltRemain: Math.max(0, p.boltEnd - now),
             equipRemain: Math.max(0, p.equipEnd - now),
             meleeEndRemain: Math.max(0, p.meleeEnd - now),
-            meleeRecoveryRemain: Math.max(0, p.meleeRecovery - now)
+            meleeRecoveryRemain: Math.max(0, p.meleeRecovery - now),
+            // ★ 引信状态（客户端 UI 完全靠这几个字段同步）
+            throwFuseActive: !!p.throwFuseActive,
+            throwFuseType: p.throwFuseType || null,
+            throwFuseEndRemain: p.throwFuseActive ? Math.max(0, p.throwFuseEnd - now) : 0,
+            throwFuseInHand: !!p.throwFuseInHand
         };
     }
 
@@ -681,6 +686,7 @@
         });
     }
 
+    // ★ 客户端输入：房主权威处理玩家 p2（客户端的分身）
     function handleClientInput(fromId, data) {
         if (!NET.isHost) return;
         if (typeof p2 === 'undefined' || !p2) return;
@@ -707,14 +713,24 @@
         if (data.reload) {
             startReload(p2, performance.now());
         }
-        if (data.throwSmoke) {
-            if (!p2.isSmoke) setWeapon(p2, 'smoke');
-            throwSmoke(p2, performance.now());
+
+        // ★ 投掷引信请求（服务器权威）
+        if (data.fuseStart) {
+            const key = data.fuseStart;
+            if (key === 'smoke') {
+                if (!p2.isSmoke) setWeapon(p2, 'smoke');
+                startThrowFuse(p2, 'smoke');
+            } else if (key === 'flash') {
+                if (!p2.isFlash) setWeapon(p2, 'flash');
+                startThrowFuse(p2, 'flash');
+            }
         }
-        if (data.throwFlash) {
-            if (!p2.isFlash) setWeapon(p2, 'flash');
-            throwFlash(p2, performance.now());
+        if (data.fuseRelease) {
+            if (p2.throwFuseActive && p2.throwFuseInHand) {
+                releaseThrowFuse(p2);
+            }
         }
+
         if (data.melee) {
             if (!p2.isMelee) setWeapon(p2, 'knife');
             p2.meleeIsHeavy = !!data.meleeHeavy;
@@ -771,6 +787,16 @@
                 } else {
                     if (p1.deadUntil === Infinity) p1.deadUntil = 0;
                     p1.baseVisible = true;
+                }
+
+                // ★ 引信状态同步（放在武器同步之后，覆盖 setWeapon 的清除行为）
+                p1.throwFuseActive = !!myData.throwFuseActive;
+                p1.throwFuseType = myData.throwFuseType || null;
+                p1.throwFuseInHand = !!myData.throwFuseInHand;
+                if (myData.throwFuseActive && myData.throwFuseEndRemain > 0) {
+                    p1.throwFuseEnd = now + myData.throwFuseEndRemain;
+                } else {
+                    p1.throwFuseEnd = 0;
                 }
             }
 
@@ -937,7 +963,6 @@
             }
         }
 
-        // ★ 第三人称武器动画（挥刀 / 换弹 / 拉栓 / 俯仰）
         if (typeof updateThirdPersonWeapon === 'function') {
             updateThirdPersonWeapon(p1, dt, performance.now());
             updateThirdPersonWeapon(p2, dt, performance.now());
@@ -1003,7 +1028,6 @@
             return;
         }
 
-        // 房主开火 → 客户端把枪口焰光 + 曳光加在对手（p2）身上
         if (typeof p2 !== 'undefined' && p2) {
             if (p2.muzzle) p2.muzzle.intensity = 2.2;
             if (typeof spawnTracer === 'function'
@@ -1126,6 +1150,7 @@
         broadcast({ type: 'roundEvent', gameState: gameStateStr, remain, reset, roundNumber: roundNum });
     };
 
+    // ★ 客户端输入上报：带上引信请求
     window.NET_sendClientInput = function () {
         if (NET.isHost || NET.role !== 'player') return;
         if (!NET.roomId) return;
@@ -1148,16 +1173,17 @@
 
             weaponSwitch: NET.pendingWeaponSwitch,
             reload: NET.pendingReload,
-            throwSmoke: NET.pendingThrowSmoke,
-            throwFlash: NET.pendingThrowFlash,
+            // ★ 投掷引信请求（房主权威处理）
+            fuseStart: NET.pendingFuseStart,
+            fuseRelease: NET.pendingFuseRelease,
             melee: NET.pendingMelee,
             meleeHeavy: NET.pendingMeleeHeavy
         });
 
         NET.pendingWeaponSwitch = null;
         NET.pendingReload = false;
-        NET.pendingThrowSmoke = false;
-        NET.pendingThrowFlash = false;
+        NET.pendingFuseStart = null;
+        NET.pendingFuseRelease = false;
         NET.pendingMelee = false;
         NET.pendingMeleeHeavy = false;
     };
@@ -1186,8 +1212,8 @@
         NET.inputSeq = 0;
         NET.pendingWeaponSwitch = null;
         NET.pendingReload = false;
-        NET.pendingThrowSmoke = false;
-        NET.pendingThrowFlash = false;
+        NET.pendingFuseStart = null;
+        NET.pendingFuseRelease = false;
         NET.pendingMelee = false;
         NET.pendingMeleeHeavy = false;
         NET.tick = 0;
