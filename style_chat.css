@@ -1,0 +1,95 @@
+/* ============================================================
+   style_chat.css – 聊天框与系统消息
+   ============================================================ */
+#chatBox {
+    position: fixed;
+    left: 24px;
+    bottom: 100px;
+    width: 380px;
+    max-width: 60vw;
+    z-index: 30;
+    pointer-events: none;
+    display: none;
+}
+body.in-game #chatBox { display: block; }
+
+#chatMessages {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+    max-height: 200px;
+    overflow: hidden;
+    justify-content: flex-end;
+}
+.chat-msg {
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.4;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    border-left: 3px solid #6db3ff;
+    animation: chatMsgIn 0.2s ease-out;
+    max-width: 100%;
+    word-break: break-word;
+    pointer-events: none;
+}
+.chat-msg.enemy {
+    border-left-color: #ff7a6d;
+    background: rgba(60, 20, 20, 0.6);
+}
+.chat-msg.self { background: rgba(20, 40, 60, 0.6); }
+.chat-msg .chat-name { font-weight: 700; margin-right: 6px; }
+.chat-msg.self .chat-name { color: #6db3ff; }
+.chat-msg.enemy .chat-name { color: #ff7a6d; }
+
+@keyframes chatMsgIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+#chatInput {
+    display: none;
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid #5a7a9a;
+    background: rgba(13, 19, 30, 0.94);
+    color: #fff;
+    font-size: 15px;
+    font-family: inherit;
+    outline: none;
+    pointer-events: auto;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+#chatInput::placeholder { color: #6a7a8a; }
+#chatInput:focus {
+    border-color: #ffd24a;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6), 0 0 0 2px rgba(255, 210, 74, 0.2);
+}
+
+@media (pointer: coarse) {
+    #chatBox {
+        left: 12px;
+        bottom: 200px;
+        width: 300px;
+        max-width: 60vw;
+    }
+    .chat-msg { font-size: 12px; padding: 4px 10px; }
+    #chatInput { font-size: 13px; padding: 8px 12px; }
+}
+
+/* ============================================================
+   系统消息
+   ============================================================ */
+.chat-msg.system {
+    background: linear-gradient(90deg, rgba(80, 60, 10, 0.75), rgba(60, 40, 10, 0.6));
+    border-left-color: #ffd24a;
+    color: #ffe9a8;
+    font-weight: 600;
+    box-shadow: 0 0 12px rgba(255, 210, 74, 0.25);
+}
+.chat-msg.system .chat-name { color: #ffd24a; }

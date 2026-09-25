@@ -223,6 +223,9 @@ function clearMap() {
         });
         currentMapGroup = null;
     }
+     if (window.groundMesh) window.groundMesh.visible = true;
+         window.terrainHeightFn = null;
+
     wallMeshes.length = 0;
     crateMeshes.length = 0;
     colliders.length = 0;
@@ -243,13 +246,20 @@ function loadMap(mapId) {
     currentMapGroup = new THREE.Group();
     scene.add(currentMapGroup);
 
-    def.build(currentMapGroup);
+       def.build(currentMapGroup);
+
+    // ★ 隐藏/显示默认草地（沙漠等自带地形的图需要隐藏）
+    if (window.groundMesh) {
+        window.groundMesh.visible = !def.hideGround;
+    }
 
     // 环境氛围
     if (def.ambience) {
         const a = def.ambience;
         if (a.background !== undefined) scene.background = new THREE.Color(a.background);
-        if (a.fog !== undefined) {
+        if (a.fogExp2 !== undefined) {
+            scene.fog = new THREE.FogExp2(a.fogExp2, a.fogDensity || 0.0026);
+        } else if (a.fog !== undefined) {
             scene.fog = new THREE.Fog(a.fog, a.fogNear || 50, a.fogFar || 120);
         }
     }
@@ -269,6 +279,8 @@ function loadMap(mapId) {
         p2.spawn.z = window.currentMapSpawns.p2.z;
         p2.spawn.yaw = window.currentMapSpawns.p2.yaw;
     }
+      // ★ 设置当前地图的地形高度函数（沙漠等起伏地图用）
+    window.terrainHeightFn = def.terrainHeightFn || null;
 
     // 小地图重绘
     if (typeof window.refreshMinimap === 'function') window.refreshMinimap();

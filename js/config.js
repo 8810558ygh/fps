@@ -76,9 +76,10 @@ const WEAPONS = {
     sniper: {
         key: 'sniper', name: '冥驹',
         dmgBody: 150, dmgHead: 255,
-        fireMs: 1667, mag: 5, reserveMax: 10, startReserve: 10, reloadMs: 3700,
+        fireMs: 850,                  // ★ A 方案：与 boltMs 一致，拉栓完即可开火
+        mag: 5, reserveMax: 10, startReserve: 10, reloadMs: 3700,
         zoomFov: 14, zoomFov2: 6,
-        scope: true, boltMs: 850,
+        scope: true, boltMs: 850,     // 拉栓动画时长
         speedMul: 0.72, adsSpeedMul: 0.72
     },
     shotgun: {

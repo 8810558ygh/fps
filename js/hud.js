@@ -1,4 +1,4 @@
-// ===== js/hud.js – HUD更新与回合结算报告（含刀 + 烟雾 + 闪光 + 引信倒计时） =====
+// ===== js/hud.js – HUD更新与回合结算报告（含刀 + 烟雾 + 闪光 + 引信倒计时 + ADS准星） =====
 function q(s) { return document.querySelector(s); }
 
 const H = {
@@ -152,12 +152,22 @@ function feed(p, html) {
 
 function centerMsg(p, text) { if (p.id === 1) H[1].center.textContent = text; }
 
+// ============================================================
+// ★ 受伤红闪：加 requestAnimationFrame 去重
+//   霰弹枪 12 颗弹丸同帧命中时，只闪一次
+// ============================================================
+let _dmgFlashRaf = 0;
 function dmgFlash(p) {
     if (p.id !== 1) return;
+    if (_dmgFlashRaf) return;           // 同帧已在闪烁，跳过
     const f = H[1].flash;
     f.style.transition = 'none';
     f.style.opacity = 1;
-    requestAnimationFrame(() => { f.style.transition = 'opacity .4s'; f.style.opacity = 0; });
+    _dmgFlashRaf = requestAnimationFrame(() => {
+        _dmgFlashRaf = 0;
+        f.style.transition = 'opacity .4s';
+        f.style.opacity = 0;
+    });
 }
 
 function hitmark(p) {
@@ -201,14 +211,13 @@ function updateHUD(now) {
         h.ammo.innerHTML = ammoText + ` <span class="rsv">/ ${p.reserve}</span>`;
         h.wtag.textContent = p.weapon.name;
 
-        // 小提示：剩余投掷物
         const tips = [];
         if (p.smokeCharges > 0 && gameState === 'combat') tips.push(`💨${p.smokeCharges}`);
         if (p.flashCharges > 0 && gameState === 'combat') tips.push(`⚡${p.flashCharges}`);
         if (tips.length) h.wtag.textContent += '  ·  ' + tips.join(' ');
     }
 
-    // ★ 投掷引信倒计时（顶部时间显示下方）
+    // 投掷引信倒计时
     const cdEl = document.getElementById('throwCountdown');
     if (cdEl) {
         if (running && gameState === 'combat' && p.throwFuseActive && p.throwFuseType) {
@@ -249,4 +258,24 @@ function updateHUD(now) {
 
     if (h.hint) h.hint.style.display =
         (running && gameState === 'prep' && document.pointerLockElement !== renderer.domElement && !isOver()) ? 'block' : 'none';
+
+    // ============================================================
+    // ★ ADS 状态：隐藏大十字准星，显示倍镜中心红点
+    // ============================================================
+        const isRedDotADS = running && gameState === 'combat'
+        && p1.aiming
+        && p1.weapon && (p1.weapon.key === 'rifle' || p1.weapon.key === 'odin')
+        && !p1.isMelee && !p1.isSmoke && !p1.isFlash
+        && now >= p1.deadUntil;
+
+    const crossEl = document.querySelector('#hud1 .cross');
+    if (crossEl) {
+        crossEl.style.transition = 'opacity 0.12s';
+        crossEl.style.opacity = isRedDotADS ? '0' : '1';
+    }
+
+    const adsRet = document.getElementById('adsReticle');
+    if (adsRet) {
+        adsRet.style.display = isRedDotADS ? 'block' : 'none';
+    }
 }

@@ -148,7 +148,6 @@ function aiFire(now) {
 
     const pellets = w.pellets || 1;
     const spread = w.spread || 0;
-    // ★ 使用含地面的目标列表
     const targets = (typeof getShotTargets === 'function')
         ? getShotTargets()
         : wallMeshes.concat(crateMeshes);
@@ -183,7 +182,6 @@ function aiFire(now) {
                 sHit(p2.id);
             } else {
                 spawnSparks(h.point, 0xffd28a);
-                // ★ AI 环境命中：留下弹痕
                 if (typeof spawnBulletHole === 'function' && typeof getHitWorldNormal === 'function') {
                     spawnBulletHole(h.point, getHitWorldNormal(h));
                 }
@@ -331,6 +329,12 @@ function aiUpdate(dt, now) {
     collideWorld(p2);
     if (p2.pos.y <= 0) {
         p2.pos.y = 0;
+        p2.vy = 0;
+        p2.onGround = true;
+    }
+    const _gh2 = terrainGroundAt(p2.pos.x, p2.pos.z);
+    if (p2.pos.y < _gh2) {
+        p2.pos.y = _gh2;
         p2.vy = 0;
         p2.onGround = true;
     }

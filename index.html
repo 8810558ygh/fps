@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>双雄对决 - 回合对战</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style_online.css">
+    <link rel="stylesheet" href="style_chat.css">
     <base target="_blank">
     <style>
         html, body {
@@ -32,6 +34,27 @@
         }
         .hp-armor .hp-val { color: #7ee08a; }
         .hp-armor .armor-val { color: #6db3ff; }
+
+        /* ============================================================
+           ★ 倍镜中心准星（ADS 时显示在屏幕正中央，只保留红点）
+           ============================================================ */
+        #adsReticle {
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            width: 8px;
+            height: 8px;
+            margin: -4px 0 0 -4px;
+            z-index: 14;
+            display: none;
+            pointer-events: none;
+            border-radius: 50%;
+            background: #ff2418;
+            box-shadow:
+                0 0 3px #ff2418,
+                0 0 6px rgba(255, 36, 24, 0.9),
+                0 0 12px rgba(255, 36, 24, 0.55);
+        }
     </style>
 </head>
 <body>
@@ -135,7 +158,6 @@
     <canvas id="minimap" style="display:none;"></canvas>
     <div id="timer" class="timer">5:00</div>
 
-    <!-- ★ 新增：投掷倒计时（位于顶部时间显示下方） -->
     <div id="throwCountdown" class="throw-countdown">
         <span class="throw-cd-icon" id="throwCountdownIcon">💨</span>
         <span class="throw-cd-label" id="throwCountdownLabel">烟雾倒计时</span>
@@ -159,6 +181,9 @@
         </div>
         <div class="wtag"></div>
     </div>
+
+    <!-- ★ 倍镜中心准星（红点） -->
+    <div id="adsReticle"></div>
 
     <div id="opponentInfo">
         <span class="op-dot"></span>
@@ -222,13 +247,31 @@
     <script src="js/textures.js"></script>
     <script src="js/scene.js"></script>
     <script src="js/map_battlefield.js"></script>
+    <script src="js/map_desert.js"></script>
+
+    <script src="js/weapon_rifle_hd.js"></script>
+    <script src="js/weapon_sniper_hd.js"></script>
+    <script src="js/weapon_shotgun_hd.js"></script>
+    <script src="js/weapon_odin_hd.js"></script>
+    <script src="js/player_model.js"></script>
     <script src="js/player.js"></script>
+
+    <script src="js/game_state.js"></script>
+    <script src="js/game_effects.js"></script>
+    <script src="js/game_projectiles.js"></script>
+    <script src="js/game_combat.js"></script>
     <script src="js/game.js"></script>
+
     <script src="js/ai.js"></script>
     <script src="js/hud.js"></script>
     <script src="js/chat.js"></script>
-    <script src="js/online.js"></script>
+
+    <script src="js/online_core.js"></script>
+    <script src="js/online_game.js"></script>
+    <script src="js/online_ui.js"></script>
+
     <script src="js/input.js"></script>
+    <script src="js/input_touch.js"></script>
     <script src="js/minimap.js"></script>
     <script src="js/main.js"></script>
 

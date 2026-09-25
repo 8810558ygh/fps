@@ -1,4 +1,4 @@
-// ===== js/main.js – 主循环与启动（服务器权威版） =====
+// ===== js/main.js – 主循环与启动（服务器权威版 + 瞄准镜画中画 · 优化版） =====
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -146,12 +146,143 @@ function syncMinimapVisibility() {
 
 const clock = new THREE.Clock();
 
+// ============================================================
+// ★ 瞄准镜画中画渲染（PiP）— 优化版 + 换枪修复
+//
+// 关键优化：
+//   1. 节流：镜内画面每 2 帧更新一次
+//   2. 关阴影：PiP 渲染期间临时关闭 shadowMap.autoUpdate
+//   3. 状态切换：只在进入/退出 ADS 时切材质
+//   4. FOV：只在初始化时设一次
+//   5. RT：降到 256（桌面）/ 192（移动）
+//
+// ★ 修复：换枪后 lensF 引用变化 → 直接对比引用，不用 .parent 判断
+// ============================================================
+let _scopeCam = null;
+let _scopeRT  = null;
+let _scopeMat = null;
+
+let _pipCachedLensF = null;
+let _pipCachedLensB = null;
+let _pipOrigMatF = null;
+let _pipOrigMatB = null;
+let _pipActive = false;
+let _pipFrameCounter = 0;
+
+const PIP_UPDATE_EVERY_N_FRAMES = 2;
+const PIP_RT_SIZE_DESKTOP = 256;
+const PIP_RT_SIZE_MOBILE  = 192;
+
+function ensureScopeResources() {
+    if (_scopeCam) return;
+
+    const scopeFov = isTouchDevice ? 14 : 10;
+    _scopeCam = new THREE.PerspectiveCamera(scopeFov, 1, 0.02, 250);
+    _scopeCam.rotation.order = 'YXZ';
+    _scopeCam.updateProjectionMatrix();
+
+    const rtSize = isTouchDevice ? PIP_RT_SIZE_MOBILE : PIP_RT_SIZE_DESKTOP;
+    _scopeRT = new THREE.WebGLRenderTarget(rtSize, rtSize, {
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        format: THREE.RGBAFormat,
+        depthBuffer: true,
+        stencilBuffer: false,
+        generateMipmaps: false
+    });
+
+    _scopeMat = new THREE.MeshBasicMaterial({
+        map: _scopeRT.texture,
+        toneMapped: false,
+        depthWrite: true,
+        depthTest: true
+    });
+}
+
+function updateScopePip() {
+    if (typeof p1 === 'undefined' || !p1 || !p1.vm || p1.vm.children.length === 0) return;
+    const vmGun = p1.vm.children[0];
+    if (!vmGun || !vmGun.userData) return;
+    const lensF = vmGun.userData.lensMeshF;
+    const lensB = vmGun.userData.lensMeshB;
+    if (!lensF) return;
+
+    // ★★★ 修复：换枪后 lensF 是全新对象，直接对比引用
+    //  换枪时 setWeapon() 会 remove 旧 vm 并 add 新 vm
+    //  新 vm 的 userData.lensMeshF 是新的 mesh
+    //  只要引用不同就刷新缓存，并强制重新应用 ADS 状态
+    if (lensF !== _pipCachedLensF) {
+        _pipCachedLensF = lensF;
+        _pipCachedLensB = lensB || null;
+        _pipOrigMatF = lensF.material;
+        _pipOrigMatB = lensB ? lensB.material : null;
+        _pipActive = false; // 强制下一帧重新应用状态
+    }
+
+    const now = performance.now();
+        const isADS = running && gameState === 'combat'
+        && p1.aiming
+        && p1.weapon && (p1.weapon.key === 'rifle' || p1.weapon.key === 'odin')
+        && !p1.isMelee && !p1.isSmoke && !p1.isFlash
+        && p1.hp > 0 && now >= p1.deadUntil;
+
+    // ---- 状态切换：只在进入/退出 ADS 时换材质 ----
+    if (isADS !== _pipActive) {
+        _pipActive = isADS;
+        if (isADS) {
+            ensureScopeResources();
+            _pipCachedLensF.material = _scopeMat;
+            if (_pipCachedLensB) _pipCachedLensB.material = _scopeMat;
+            // 进入 ADS 立即渲染一次，避免第一帧显示旧内容
+            _pipFrameCounter = PIP_UPDATE_EVERY_N_FRAMES;
+        } else {
+            _pipCachedLensF.material = _pipOrigMatF;
+            if (_pipCachedLensB) _pipCachedLensB.material = _pipOrigMatB;
+            return;
+        }
+    }
+
+    if (!_pipActive) return;
+
+    // ---- 节流：每 N 帧才渲染一次 PiP ----
+    _pipFrameCounter++;
+    if (_pipFrameCounter < PIP_UPDATE_EVERY_N_FRAMES) return;
+    _pipFrameCounter = 0;
+
+    // ---- 复制主相机位置/朝向（FOV 已在初始化时设好）----
+    _scopeCam.position.copy(p1.cam.position);
+    _scopeCam.quaternion.copy(p1.cam.quaternion);
+
+    // ---- 隐藏 vm + 临时关阴影自动更新 ----
+    const vmWasVisible = p1.vm.visible;
+    p1.vm.visible = false;
+
+    const shadowPrevAuto = renderer.shadowMap.autoUpdate;
+    const shadowPrevNeeds = renderer.shadowMap.needsUpdate;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = false;
+
+    const prevRT = renderer.getRenderTarget();
+    renderer.setRenderTarget(_scopeRT);
+    renderer.clear();
+    renderer.render(scene, _scopeCam);
+    renderer.setRenderTarget(prevRT);
+
+    renderer.shadowMap.autoUpdate = shadowPrevAuto;
+    renderer.shadowMap.needsUpdate = shadowPrevNeeds;
+
+    p1.vm.visible = vmWasVisible;
+}
+
 function render() {
     p1.mesh.visible = false;
     p2.mesh.visible = p2.baseVisible;
     p1.vm.visible = p1.baseVisible && !(p1.aiming && p1.weapon.scope);
-    // ★ 隐藏 p2 的第一人称视图模型（那是另一个玩家的视角，不应该出现在本地渲染里）
     if (p2.vm) p2.vm.visible = false;
+
+    // ★ PiP 渲染（内部会临时隐藏 vm 再恢复；节流在函数内部）
+    updateScopePip();
+
     renderer.render(scene, p1.cam);
 }
 
@@ -172,12 +303,10 @@ function collectLocalInput(p) {
 }
 
 function updateLocalClientCamera(dt, now) {
-    // 开火视觉
     if (p1.input.fire && !p1.isMelee && !p1.isSmoke && !p1.isFlash && gameState === 'combat' && now >= p1.deadUntil) {
         tryFire(p1, now);
     }
 
-    // FOV
     let targetFov = BASE_FOV;
     const canAim = !p1.isMelee && !p1.isSmoke && !p1.isFlash && p1.reloadEnd <= now && now >= p1.boltEnd;
     p1.aiming = !!p1.input.aim && canAim;
@@ -189,18 +318,14 @@ function updateLocalClientCamera(dt, now) {
         p1.cam.fov += (targetFov - p1.cam.fov) * Math.min(1, dt * 11);
         p1.cam.updateProjectionMatrix();
     }
-    // 相机
     p1.cam.position.set(p1.pos.x, p1.pos.y + p1.eyeH, p1.pos.z);
     p1.cam.rotation.y = p1.yaw;
     p1.cam.rotation.x = p1.pitch;
-    // 网格
     p1.mesh.position.copy(p1.pos);
     p1.mesh.rotation.y = p1.yaw;
     p1.mesh.scale.y = p1.height / HEIGHT_STAND;
-    // viewmodel
     updateSniperViewmodel(p1, dt, now);
 
-    // ★ 第三人称武器动画：自己 + 对手
     if (typeof updateThirdPersonWeapon === 'function') {
         updateThirdPersonWeapon(p1, dt, now);
         if (typeof p2 !== 'undefined' && p2) {
@@ -210,7 +335,6 @@ function updateLocalClientCamera(dt, now) {
 }
 
 let _lastClientReportTime = 0;
-// ★ 客户端上报间隔 40ms → 20ms
 const CLIENT_REPORT_INTERVAL = 20;
 
 function loop() {
