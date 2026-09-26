@@ -185,6 +185,9 @@
     <!-- ★ 倍镜中心准星（红点） -->
     <div id="adsReticle"></div>
 
+    <!-- ★ 实时帧率显示（右上角） -->
+    <div id="fpsCounter">-- FPS</div>
+
     <div id="opponentInfo">
         <span class="op-dot"></span>
         <span class="op-label">对手</span>
@@ -239,6 +242,19 @@
         </div>
     </div>
 
+     <!-- ★ 加载页面（进度条 + 百分比 + 联机玩家列表） -->
+    <div id="loadingOverlay" style="display:none;">
+        <div class="loading-panel">
+            <div class="loading-title">正在载入</div>
+            <div class="loading-bar-wrap">
+                <div class="loading-bar" id="loadingBar"></div>
+            </div>
+            <div class="loading-percent" id="loadingPercent">0%</div>
+            <div class="loading-status" id="loadingStatus">准备中...</div>
+            <div class="loading-players" id="loadingPlayers" style="display:none;"></div>
+        </div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
@@ -253,6 +269,7 @@
     <script src="js/weapon_sniper_hd.js"></script>
     <script src="js/weapon_shotgun_hd.js"></script>
     <script src="js/weapon_odin_hd.js"></script>
+    <script src="js/weapon_knife_hd.js"></script>
     <script src="js/player_model.js"></script>
     <script src="js/player.js"></script>
 
@@ -273,6 +290,7 @@
     <script src="js/input.js"></script>
     <script src="js/input_touch.js"></script>
     <script src="js/minimap.js"></script>
+    <script src="js/loading.js"></script>
     <script src="js/main.js"></script>
 
 </body>

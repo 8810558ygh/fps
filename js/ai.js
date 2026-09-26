@@ -70,19 +70,22 @@ function aiCanSeePlayer(now) {
         return false;
     }
 
+    // ★ A3：复用 _rcOrigin / _rcTarget / _rcDir / _ray
     const eyeY = p2.pos.y + p2.eyeH;
-    const eye = new THREE.Vector3(p2.pos.x, eyeY, p2.pos.z);
+    _rcOrigin.set(p2.pos.x, eyeY, p2.pos.z);
     const targetY = p1.pos.y + p1.eyeH * 0.85;
-    const target = new THREE.Vector3(p1.pos.x, targetY, p1.pos.z);
+    _rcTarget.set(p1.pos.x, targetY, p1.pos.z);
 
-    const dir = target.clone().sub(eye);
-    const dist = dir.length();
+    _rcDir.copy(_rcTarget).sub(_rcOrigin);
+    const dist = _rcDir.length();
     if (dist < 0.5) { ai.lastVisibilityResult = true; return true; }
-    dir.normalize();
+    _rcDir.normalize();
 
-    const ray = new THREE.Raycaster(eye, dir, 0, dist);
+    _ray.set(_rcOrigin, _rcDir);
+    _ray.near = 0;
+    _ray.far = dist;
     const targets = wallMeshes.concat(crateMeshes);
-    const hits = ray.intersectObjects(targets, false);
+    const hits = _ray.intersectObjects(targets, false);
 
     if (hits.length > 0 && hits[0].distance < dist - 0.3) {
         ai.lastVisibilityResult = false;
@@ -148,29 +151,33 @@ function aiFire(now) {
 
     const pellets = w.pellets || 1;
     const spread = w.spread || 0;
-    const targets = (typeof getShotTargets === 'function')
-        ? getShotTargets()
-        : wallMeshes.concat(crateMeshes);
+
+    // ★ A4：使用帧内可修改副本，避免 concat 每次分配
+    const targets = prepareShotTargets();
     if (now >= p1.deadUntil) targets.push(p1.body, p1.head);
 
     for (let i = 0; i < pellets; i++) {
-        const randDir = _aiDir.clone();
+        // ★ A3：复用临时向量
+        _rcRandDir.copy(_aiDir);
         if (pellets > 1) {
             const theta = Math.random() * 2 * Math.PI;
             const phi = Math.acos(1 - Math.random() * (1 - Math.cos(spread)));
-            const up = new THREE.Vector3(0, 1, 0);
-            const axis = new THREE.Vector3().crossVectors(_aiDir, up).normalize();
-            if (axis.length() < 0.01) axis.set(1, 0, 0);
-            const q1 = new THREE.Quaternion().setFromAxisAngle(axis, phi);
-            const q2 = new THREE.Quaternion().setFromAxisAngle(_aiDir, theta);
-            randDir.applyQuaternion(q1).applyQuaternion(q2);
+            _rcAxis.crossVectors(_aiDir, _rcUp).normalize();
+            if (_rcAxis.length() < 0.01) _rcAxis.set(1, 0, 0);
+            _rcQ1.setFromAxisAngle(_rcAxis, phi);
+            _rcQ2.setFromAxisAngle(_aiDir, theta);
+            _rcRandDir.applyQuaternion(_rcQ1).applyQuaternion(_rcQ2);
         }
-        const rc = new THREE.Raycaster(_aiEye.clone(), randDir.clone(), 0, 150);
-        const hits = rc.intersectObjects(targets, false);
-        let end = _aiEye.clone().add(randDir.clone().multiplyScalar(150));
+
+        _ray.set(_aiEye, _rcRandDir);
+        _ray.near = 0;
+        _ray.far = 150;
+        const hits = _ray.intersectObjects(targets, false);
+
+        _rcEnd.copy(_aiEye).addScaledVector(_rcRandDir, 150);
         if (hits.length) {
             const h = hits[0];
-            end = h.point;
+            _rcEnd.copy(h.point);
             if (h.object.userData.part) {
                 const dmg = h.object.userData.part === 'head' ? w.dmgHead : w.dmgBody;
                 if (!p2.damageDealt[1]) p2.damageDealt[1] = { body: 0, head: 0, total: 0 };
@@ -187,7 +194,7 @@ function aiFire(now) {
                 }
             }
         }
-        if (i === 0) spawnTracer(_aiEye.clone(), end);
+        if (i === 0) spawnTracer(_aiEye.clone(), _rcEnd);
     }
 }
 

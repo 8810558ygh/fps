@@ -38,7 +38,14 @@ function handleFullSync(data) {
     syncMapToHost(data.mapId);
 
     renderRoomUI(); updateOpponentInfo();
-    if (NET.started) enterOnlineGame();
+        // ★ 已开局：走加载流程（loading.js 提供）
+    if (NET.started) {
+        if (typeof window.beginOnlineLoading === 'function') {
+            window.beginOnlineLoading(data.mapId || getLocalMapId(), false);
+        } else {
+            enterOnlineGame();
+        }
+    }
 }
 
 function applySeatUpdate(seats, membersArr) {

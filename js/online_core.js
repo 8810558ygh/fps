@@ -294,11 +294,16 @@ function handleRoomMessage(fromId, data) {
             if (NET.isHost) handleSeatRequest(fromId, data.targetSeat); break;
         case 'seatUpdate':
             applySeatUpdate(data.seats, data.members); updateOpponentInfo(); break;
-        case 'gameStart':
+                case 'gameStart':
             if (!NET.started) {
                 NET.started = true;
                 syncMapToHost(data.mapId);
-                enterOnlineGame();
+                // ★ 进入加载流程（loading.js 提供），加载完成后自动进入游戏
+                if (typeof window.beginOnlineLoading === 'function') {
+                    window.beginOnlineLoading(data.mapId, false);
+                } else {
+                    enterOnlineGame();
+                }
             }
             break;
         case 'clientInput':
@@ -338,6 +343,24 @@ function handleRoomMessage(fromId, data) {
                 p1.flashUntil = performance.now() + (data.durationMs || FLASH.flashDurationMs);
             }
             break;
+
+            // ★ 加载流程消息（loading.js 提供处理函数）
+        case 'loadingProgress':
+            if (typeof window.handleClientLoadingProgress === 'function') {
+                window.handleClientLoadingProgress(fromId, data.progress);
+            }
+            break;
+        case 'loadingStatus':
+            if (typeof window.handleLoadingStatus === 'function') {
+                window.handleLoadingStatus(data.state);
+            }
+            break;
+        case 'loadingComplete':
+            if (typeof window.handleLoadingComplete === 'function') {
+                window.handleLoadingComplete();
+            }
+            break;
+            
         case 'chat':
             if (window.addChatMessage) addChatMessage(fromId === NET.myPeerId ? 1 : 2, data.text); break;
         case 'ping':

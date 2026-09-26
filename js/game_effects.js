@@ -1,9 +1,60 @@
 // ===== js/game_effects.js – 弹痕、曳光弹、火花、投掷轨迹、闪光指示器 =====
 
-// ===== 特效池 =====
-const tracers = [];
+// ============================================================
+// ★ B1：曳光弹对象池
+//   原实现每发子弹都 new BufferGeometry + Line + 克隆材质，
+//   奥丁连射时一秒内几十次分配。改为预分配固定数量的 Line 循环复用。
+// ============================================================
+const TRACER_POOL_SIZE = 32;
+const TRACER_LIFETIME_MS = 90;
+const _tracerPool = [];
+let _tracerPoolIdx = 0;
+
+function _initTracerPool() {
+    for (let i = 0; i < TRACER_POOL_SIZE; i++) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+        const mat = new THREE.LineBasicMaterial({ color: 0xffe28a, transparent: true, opacity: 1 });
+        const line = new THREE.Line(geo, mat);
+        line.frustumCulled = false;
+        line.visible = false;
+        line.renderOrder = 3;
+        scene.add(line);
+        _tracerPool.push({ line, geo, mat, until: 0 });
+    }
+}
+_initTracerPool();
+
+function spawnTracer(from, to) {
+    const t = _tracerPool[_tracerPoolIdx];
+    _tracerPoolIdx = (_tracerPoolIdx + 1) % TRACER_POOL_SIZE;
+
+    const arr = t.geo.attributes.position.array;
+    arr[0] = from.x; arr[1] = from.y; arr[2] = from.z;
+    arr[3] = to.x;   arr[4] = to.y;   arr[5] = to.z;
+    t.geo.attributes.position.needsUpdate = true;
+
+    t.mat.opacity = 1;
+    t.line.visible = true;
+    t.until = performance.now() + TRACER_LIFETIME_MS;
+}
+
+function updateTracers(now) {
+    for (let i = 0; i < TRACER_POOL_SIZE; i++) {
+        const t = _tracerPool[i];
+        if (!t.line.visible) continue;
+        const remain = t.until - now;
+        if (remain <= 0) {
+            t.line.visible = false;
+            continue;
+        }
+        t.mat.opacity = Math.max(0, remain / TRACER_LIFETIME_MS);
+    }
+}
+window.updateTracers = updateTracers;
+
+// ===== 火花 =====
 const sparks = [];
-const tracerMat = new THREE.LineBasicMaterial({ color: 0xffe28a, transparent: true });
 const sparkGeo = new THREE.BoxGeometry(0.07, 0.07, 0.07);
 
 // ============================================================
@@ -189,18 +240,41 @@ function clearAllBulletHoles() {
 }
 window.clearAllBulletHoles = clearAllBulletHoles;
 
+// ============================================================
+// ★ 性能优化（A4）：getShotTargets 缓存
+// ============================================================
+const _shotTargetsBase = [];
+const _shotTargetsWork = [];
+let _shotTargetsDirty = true;
+
+function markShotTargetsDirty() { _shotTargetsDirty = true; }
+window.markShotTargetsDirty = markShotTargetsDirty;
+
 function getShotTargets() {
-    const t = wallMeshes.concat(crateMeshes);
-    if (typeof window.groundMesh !== 'undefined' && window.groundMesh) {
-        t.push(window.groundMesh);
+    if (_shotTargetsDirty) {
+        _shotTargetsBase.length = 0;
+        for (let i = 0; i < wallMeshes.length; i++) _shotTargetsBase.push(wallMeshes[i]);
+        for (let i = 0; i < crateMeshes.length; i++) _shotTargetsBase.push(crateMeshes[i]);
+        if (typeof window.groundMesh !== 'undefined' && window.groundMesh) {
+            _shotTargetsBase.push(window.groundMesh);
+        }
+        _shotTargetsDirty = false;
     }
-    return t;
+    return _shotTargetsBase;
 }
 window.getShotTargets = getShotTargets;
 
+// 返回一个可修改的副本（复用同一个数组对象，不产生新分配）
+function prepareShotTargets() {
+    _shotTargetsWork.length = 0;
+    const base = getShotTargets();
+    for (let i = 0; i < base.length; i++) _shotTargetsWork.push(base[i]);
+    return _shotTargetsWork;
+}
+window.prepareShotTargets = prepareShotTargets;
+
 // ===== 枪口世界坐标（优先使用视图模型里的 muzzlePoint 锚点） =====
 function muzzleWorld(p, out) {
-    // ★ 优先从视图模型里取 muzzle 锚点（支持每把武器自己的枪口位置）
     if (p && p.vm && p.vm.children.length > 0) {
         const vmGun = p.vm.children[0];
         const mp = vmGun.getObjectByName('muzzlePoint');
@@ -208,21 +282,11 @@ function muzzleWorld(p, out) {
             return mp.getWorldPosition(out);
         }
     }
-    // 回退：没有锚点时走老逻辑（供未升级的武器使用）
     return out.set(0.28, -0.2, -1.25).applyMatrix4(p.cam.matrixWorld);
-}
-
-// ===== 曳光弹 =====
-function spawnTracer(from, to) {
-    const geo = new THREE.BufferGeometry().setFromPoints([from.clone(), to.clone()]);
-    const line = new THREE.Line(geo, tracerMat.clone());
-    scene.add(line);
-    tracers.push({ line, until: performance.now() + 90 });
 }
 
 // ===== 火花（材质共享 + 帧预算） =====
 function spawnSparks(point, color) {
-    // ★ 帧预算：霰弹枪 12 颗弹丸同帧命中时，最多触发 3 次 spawnSparks
     _tickFxBudget();
     if (_fxSparkCount >= FX_SPARK_PER_FRAME) return;
     _fxSparkCount++;
@@ -379,7 +443,6 @@ function updateFlashIndicators(now) {
 
             p.flashIndicator.visible = true;
 
-            // 呼吸脉动
             const pulse = 1 + Math.sin(now * 0.012) * 0.12;
             p.flashIndicator.scale.setScalar(pulse);
 
@@ -387,7 +450,6 @@ function updateFlashIndicators(now) {
             const halo   = p.flashIndicator.userData.halo;
             const light  = p.flashIndicator.userData.light;
 
-            // 越接近结束越暗
             if (sphere) sphere.material.opacity = 0.85 * t;
             if (halo)   halo.material.opacity   = 0.45 * t;
             if (light)  light.intensity = 5.0 * t;

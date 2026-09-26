@@ -1,11 +1,9 @@
 // ===== js/game.js – 回合管理、特效循环、比赛管理 =====
 
 function updateEffects(dt, now) {
-    for (let i = tracers.length - 1; i >= 0; i--) {
-        const t = tracers[i];
-        t.line.material.opacity = Math.max(0, (t.until - now) / 90);
-        if (now > t.until) { scene.remove(t.line); t.line.geometry.dispose(); tracers.splice(i, 1); }
-    }
+    // ★ B1：曳光弹改为对象池，不再遍历 / dispose
+    if (typeof updateTracers === 'function') updateTracers(now);
+
     for (let i = sparks.length - 1; i >= 0; i--) {
         const s = sparks[i];
         s.life -= dt;
@@ -152,6 +150,10 @@ function endMatch(winner) {
         `<span class="${winner.id===1?'b':'r'}">${winner.id===1?'蓝色':'红色'}</span>玩家获胜！` : '平局！';
     document.getElementById('endScore').textContent = `${p1.score} : ${p2.score}`;
     el.style.display = 'flex';
+
+    // ★ A2：同步 isOver 标志位
+    if (typeof setOver === 'function') setOver(true);
+
     sWin();
 
     document.body.classList.remove('in-game');
@@ -177,6 +179,10 @@ function resetMatch() {
     clearAllBulletHoles();
     if (flashOverlayEl) flashOverlayEl.style.opacity = '0';
     document.getElementById('endOverlay').style.display = 'none';
+
+    // ★ A2：同步 isOver 标志位
+    if (typeof setOver === 'function') setOver(false);
+
     document.getElementById('weaponPanel').style.display = 'none';
     running = true;
     startRound(now);

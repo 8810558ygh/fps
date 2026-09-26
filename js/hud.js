@@ -18,6 +18,37 @@ const H = {
     }
 };
 
+// ============================================================
+// ★ 性能优化（A1）：缓存 updateHUD 里高频访问的 DOM 节点
+// ============================================================
+const _timerEl   = q('#timer');
+const _cdEl      = document.getElementById('throwCountdown');
+const _cdIconEl  = document.getElementById('throwCountdownIcon');
+const _cdLabelEl = document.getElementById('throwCountdownLabel');
+const _cdTimeEl  = document.getElementById('throwCountdownTime');
+const _crossEl   = q('#hud1 .cross');
+const _adsRetEl  = document.getElementById('adsReticle');
+
+// ============================================================
+// ★ 性能优化（B4）：HUD 只在变化时写 DOM
+//   updateHUD 每帧被调用，但绝大多数值在一帧内不会变化。
+//   缓存上次写入的值，只有变化才触发 DOM 写入 / 样式重算。
+// ============================================================
+const _hudState = {
+    score: -1,
+    hp: -1,
+    armor: -1,
+    armorColor: '',
+    ammoHtml: '',
+    wtagText: '',
+    scopeDisplay: '',
+    timerText: '',
+    timerColor: '',
+    crossOpacity: '',
+    adsRetDisplay: '',
+    cdDisplay: '',
+};
+
 let combatReportEl = null;
 let reportTimeout = null;
 
@@ -178,81 +209,130 @@ function hitmark(p) {
     el.classList.add('pop');
 }
 
+// ============================================================
+// ★ B4：只在值变化时写 DOM
+// ============================================================
+function _setText(el, val, cacheKey) {
+    if (!el) return;
+    if (_hudState[cacheKey] === val) return;
+    el.textContent = val;
+    _hudState[cacheKey] = val;
+}
+
+function _setHtml(el, val, cacheKey) {
+    if (!el) return;
+    if (_hudState[cacheKey] === val) return;
+    el.innerHTML = val;
+    _hudState[cacheKey] = val;
+}
+
+function _setStyle(el, prop, val, cacheKey) {
+    if (!el) return;
+    if (_hudState[cacheKey] === val) return;
+    el.style[prop] = val;
+    _hudState[cacheKey] = val;
+}
+
 function updateHUD(now) {
     const p = p1;
     const h = H[1];
     if (!h) return;
-    h.score.textContent = p.score;
-    h.hpText.textContent = Math.max(0, Math.round(p.hp));
 
+    // 分数
+    _setText(h.score, String(p.score), 'score');
+
+    // HP
+    const hpVal = Math.max(0, Math.round(p.hp));
+    if (hpVal !== _hudState.hp) {
+        h.hpText.textContent = hpVal;
+        _hudState.hp = hpVal;
+    }
+
+    // 护甲
     const armorVal = Math.max(0, Math.round(p.armor));
-    h.armorText.textContent = armorVal;
-    if (h.armorWrap) h.armorWrap.style.color = armorVal > 0 ? '#6db3ff' : '#5a6a7a';
+    if (armorVal !== _hudState.armor) {
+        h.armorText.textContent = armorVal;
+        _hudState.armor = armorVal;
+    }
+    const armorColor = armorVal > 0 ? '#6db3ff' : '#5a6a7a';
+    if (armorColor !== _hudState.armorColor) {
+        if (h.armorWrap) h.armorWrap.style.color = armorColor;
+        _hudState.armorColor = armorColor;
+    }
 
+    // 弹药 / 武器名
+    let ammoHtml = '';
+    let wtagText = '';
     if (p.isMelee) {
-        h.ammo.innerHTML = `<span style="color:#ffd24a;font-size:20px;letter-spacing:2px;">⚔ 近战</span>`;
-        h.wtag.textContent = p.weapon.name + (p.meleeIsHeavy ? ' · 重击' : '');
+        ammoHtml = `<span style="color:#ffd24a;font-size:20px;letter-spacing:2px;">⚔ 近战</span>`;
+        wtagText = p.weapon.name + (p.meleeIsHeavy ? ' · 重击' : '');
     } else if (p.isSmoke) {
         const charge = p.smokeCharges || 0;
         const color = charge > 0 ? '#7ee08a' : '#5a6a7a';
-        h.ammo.innerHTML = `<span style="color:${color};font-size:18px;letter-spacing:2px;">💨 烟雾 ×${charge}</span>`;
-        h.wtag.textContent = '烟雾弹' + (charge > 0 ? ' · 左键拔保险' : '（已用完）');
+        ammoHtml = `<span style="color:${color};font-size:18px;letter-spacing:2px;">💨 烟雾 ×${charge}</span>`;
+        wtagText = '烟雾弹' + (charge > 0 ? ' · 左键拔保险' : '（已用完）');
     } else if (p.isFlash) {
         const charge = p.flashCharges || 0;
         const color = charge > 0 ? '#ffe066' : '#5a6a7a';
-        h.ammo.innerHTML = `<span style="color:${color};font-size:18px;letter-spacing:2px;">⚡ 闪光 ×${charge}</span>`;
-        h.wtag.textContent = '闪光弹' + (charge > 0 ? ' · 左键拔保险' : '（已用完）');
+        ammoHtml = `<span style="color:${color};font-size:18px;letter-spacing:2px;">⚡ 闪光 ×${charge}</span>`;
+        wtagText = '闪光弹' + (charge > 0 ? ' · 左键拔保险' : '（已用完）');
     } else {
         let ammoText = p.ammo;
         if (p.reloadEnd > now) {
             const remain = (p.reloadEnd - now) / 1000;
             ammoText = `换弹中 ${remain.toFixed(1)}s`;
         }
-        h.ammo.innerHTML = ammoText + ` <span class="rsv">/ ${p.reserve}</span>`;
-        h.wtag.textContent = p.weapon.name;
+        ammoHtml = ammoText + ` <span class="rsv">/ ${p.reserve}</span>`;
+        wtagText = p.weapon.name;
 
         const tips = [];
         if (p.smokeCharges > 0 && gameState === 'combat') tips.push(`💨${p.smokeCharges}`);
         if (p.flashCharges > 0 && gameState === 'combat') tips.push(`⚡${p.flashCharges}`);
-        if (tips.length) h.wtag.textContent += '  ·  ' + tips.join(' ');
+        if (tips.length) wtagText += '  ·  ' + tips.join(' ');
     }
+    _setHtml(h.ammo, ammoHtml, 'ammoHtml');
+    _setText(h.wtag, wtagText, 'wtagText');
 
-    // 投掷引信倒计时
-    const cdEl = document.getElementById('throwCountdown');
-    if (cdEl) {
+    // 投掷引信倒计时（★ A1：使用缓存节点；★ B4：display 状态变化才写）
+    if (_cdEl) {
         if (running && gameState === 'combat' && p.throwFuseActive && p.throwFuseType) {
             const remain = Math.max(0, p.throwFuseEnd - now);
 
-            const iconEl  = document.getElementById('throwCountdownIcon');
-            const labelEl = document.getElementById('throwCountdownLabel');
-            const timeEl  = document.getElementById('throwCountdownTime');
-
-            if (iconEl)  iconEl.textContent  = (p.throwFuseType === 'smoke') ? '💨' : '⚡';
-            if (labelEl) labelEl.textContent = (p.throwFuseType === 'smoke') ? '烟雾倒计时' : '闪光倒计时';
-            if (timeEl) {
-                timeEl.textContent = (remain / 1000).toFixed(1) + 's';
-                timeEl.style.color = remain > 0 ? '#ffd24a' : '#7ee08a';
+            if (_cdIconEl)  _cdIconEl.textContent  = (p.throwFuseType === 'smoke') ? '💨' : '⚡';
+            if (_cdLabelEl) _cdLabelEl.textContent = (p.throwFuseType === 'smoke') ? '烟雾倒计时' : '闪光倒计时';
+            if (_cdTimeEl) {
+                _cdTimeEl.textContent = (remain / 1000).toFixed(1) + 's';
+                _cdTimeEl.style.color = remain > 0 ? '#ffd24a' : '#7ee08a';
             }
-            cdEl.style.display = 'flex';
-        } else {
-            cdEl.style.display = 'none';
+            if (_hudState.cdDisplay !== 'flex') {
+                _cdEl.style.display = 'flex';
+                _hudState.cdDisplay = 'flex';
+            }
+        } else if (_hudState.cdDisplay !== 'none') {
+            _cdEl.style.display = 'none';
+            _hudState.cdDisplay = 'none';
         }
     }
 
+    // 倍镜遮罩
     const scoped = running && gameState === 'combat' && !p.isMelee && !p.isSmoke && !p.isFlash
         && p.aiming && p.weapon.scope && now >= p.deadUntil;
-    h.scope.style.display = scoped ? 'block' : 'none';
+    const scopeDisplay = scoped ? 'block' : 'none';
+    if (_hudState.scopeDisplay !== scopeDisplay) {
+        h.scope.style.display = scopeDisplay;
+        _hudState.scopeDisplay = scopeDisplay;
+    }
 
-    const timerEl = q('#timer');
+    // 计时器
     if (running && gameState === 'prep') {
         const remain = Math.max(0, (stateEndTime - now) / 1000);
-        timerEl.textContent = `准备 ${remain.toFixed(1)}s`;
-        timerEl.style.color = '#ffd24a';
+        _setText(_timerEl, `准备 ${remain.toFixed(1)}s`, 'timerText');
+        _setStyle(_timerEl, 'color', '#ffd24a', 'timerColor');
     } else {
         const left = Math.max(0, MATCH_MS - (now - matchStart));
         const mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);
-        timerEl.textContent = `${mm}:${String(ss).padStart(2, '0')}`;
-        timerEl.style.color = '#fff';
+        _setText(_timerEl, `${mm}:${String(ss).padStart(2, '0')}`, 'timerText');
+        _setStyle(_timerEl, 'color', '#fff', 'timerColor');
         if (running && left <= 0) endMatch(p1.score === p2.score ? null : (p1.score > p2.score ? p1 : p2));
     }
 
@@ -262,20 +342,24 @@ function updateHUD(now) {
     // ============================================================
     // ★ ADS 状态：隐藏大十字准星，显示倍镜中心红点
     // ============================================================
-        const isRedDotADS = running && gameState === 'combat'
+    const isRedDotADS = running && gameState === 'combat'
         && p1.aiming
         && p1.weapon && (p1.weapon.key === 'rifle' || p1.weapon.key === 'odin')
         && !p1.isMelee && !p1.isSmoke && !p1.isFlash
         && now >= p1.deadUntil;
 
-    const crossEl = document.querySelector('#hud1 .cross');
-    if (crossEl) {
-        crossEl.style.transition = 'opacity 0.12s';
-        crossEl.style.opacity = isRedDotADS ? '0' : '1';
+    const crossOpacity = isRedDotADS ? '0' : '1';
+    if (_hudState.crossOpacity !== crossOpacity) {
+        if (_crossEl) {
+            _crossEl.style.transition = 'opacity 0.12s';
+            _crossEl.style.opacity = crossOpacity;
+        }
+        _hudState.crossOpacity = crossOpacity;
     }
 
-    const adsRet = document.getElementById('adsReticle');
-    if (adsRet) {
-        adsRet.style.display = isRedDotADS ? 'block' : 'none';
+    const adsRetDisplay = isRedDotADS ? 'block' : 'none';
+    if (_hudState.adsRetDisplay !== adsRetDisplay) {
+        if (_adsRetEl) _adsRetEl.style.display = adsRetDisplay;
+        _hudState.adsRetDisplay = adsRetDisplay;
     }
 }

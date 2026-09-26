@@ -53,10 +53,10 @@ const desertClamp  = (v, a, b) => Math.min(b, Math.max(a, v));
 /* ---------- 沙丘高度场 ---------- */
 const DESERT_WIND = new THREE.Vector2(1.0, 0.35).normalize();
 
-const DESERT_MAP_HALF = 160;         // 地形视觉半宽
-const DESERT_ARENA_R  = 32;          // 竞技场核心半径
-const DESERT_BLEND_W  = 60;          // 从竞技场过渡到全高度沙丘的宽度
-const DESERT_ARENA_SCALE = 0.12;     // 竞技场内高度缩放（12% -> 让玩家能玩又能看到起伏）
+const DESERT_MAP_HALF = 160;
+const DESERT_ARENA_R  = 32;
+const DESERT_BLEND_W  = 60;
+const DESERT_ARENA_SCALE = 0.12;
 
 function desertRidged(u, v, oct, freq, stretch){
   let sum = 0, amp = 1, norm = 0, f = freq;
@@ -79,21 +79,19 @@ function desertHeight(x, z){
   h += desertNoise2(x * 0.011, z * 0.011) * 13.0;
   h += desertNoise2(x * 0.028, z * 0.028) * 3.5;
 
-  // ★ 竞技场内缩放高度（不再拍平！）
   const dist = Math.max(Math.abs(x), Math.abs(z));
   let scale = 1.0;
   if (dist < DESERT_ARENA_R) {
     scale = DESERT_ARENA_SCALE;
   } else if (dist < DESERT_ARENA_R + DESERT_BLEND_W) {
     const t = (dist - DESERT_ARENA_R) / DESERT_BLEND_W;
-    // 平滑过渡
     const s = t * t * (3 - 2 * t);
     scale = DESERT_ARENA_SCALE + s * (1 - DESERT_ARENA_SCALE);
   }
   return h * scale;
 }
 
-/* ---------- 沙地纹理（原 HTML 逻辑） ---------- */
+/* ---------- 沙地纹理 ---------- */
 function createDesertSandTextures(size = 512){
   const H = new Float32Array(size * size);
   const rnd = desertMulberry32(777);
@@ -158,7 +156,7 @@ function createDesertSandTextures(size = 512){
   return { texCol, texNor };
 }
 
-/* ---------- 干草贴图（原 HTML 逻辑） ---------- */
+/* ---------- 干草贴图 ---------- */
 function createDesertGrassTexture(size = 256){
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -185,37 +183,18 @@ function createDesertGrassTexture(size = 256){
   return tex;
 }
 
-/* ---------- 岩石几何（原 HTML 逻辑） ---------- */
-function createDesertRockGeometry(radius, seed){
-  const g = new THREE.IcosahedronGeometry(radius, 2);
-  const p = g.attributes.position;
-  const v = new THREE.Vector3();
-
-  for (let i = 0; i < p.count; i++){
-    v.fromBufferAttribute(p, i);
-    const n1 = desertNoise2(v.x * 0.06 + seed, v.z * 0.06 + seed * 0.7);
-    const n2 = desertNoise2(v.x * 0.22 + seed * 2.1, v.y * 0.22);
-    const d = 1 + n1 * 0.42 + n2 * 0.16;
-    v.multiplyScalar(d);
-    v.y *= 0.72;
-    p.setXYZ(i, v.x, v.y, v.z);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
-/* ---------- 干草风摆时间（独立 rAF） ---------- */
+/* ---------- 干草风摆时间 ---------- */
+// ★ C1：不再单独跑 rAF 循环。
+//   时钟对象保留（grassMat.onBeforeCompile 引用它），
+//   但 value 由 main.js 的 loop() 每帧同步一次。
+//   好处：少一个独立 rAF 调度、与主循环帧对齐、避免双份性能开销。
 const desertGrassTime = { value: 0 };
-(function tickDesertGrassTime(){
-  desertGrassTime.value = performance.now() / 1000;
-  requestAnimationFrame(tickDesertGrassTime);
-})();
 
 /* ---------- 注册地图 ---------- */
 registerMap('desert', {
   name: '沙漠',
   hideGround: true,
-  terrainHeightFn: desertHeight,        // ★ 让游戏物理知道地形高度
+  terrainHeightFn: desertHeight,
   ambience: {
     background: 0xc19a68,
     fogExp2:    0xc19a68,
@@ -228,7 +207,7 @@ registerMap('desert', {
   build() {
     // -------- 1. 沙丘地形 --------
     const TERRAIN_SIZE = DESERT_MAP_HALF * 2;
-    const TERRAIN_SEG  = 400;
+    const TERRAIN_SEG  = 320;
 
     const { texCol, texNor } = createDesertSandTextures(512);
     const REPEAT = 32;
@@ -331,37 +310,7 @@ registerMap('desert', {
     skyMesh.frustumCulled = false;
     currentMapGroup.add(skyMesh);
 
-    // -------- 3. 岩石 --------
-    const rockMaterial = new THREE.MeshStandardMaterial({
-      color: 0x9a7f60,
-      roughness: 0.92,
-      metalness: 0.0,
-      flatShading: true
-    });
-
-    {
-      const rockCount = 60;
-      const rnd = desertMulberry32(31337);
-
-      for (let i = 0; i < rockCount; i++){
-        const r = 30 + Math.sqrt(rnd()) * 240;
-        const a = rnd() * Math.PI * 2;
-        const x = Math.cos(a) * r;
-        const z = Math.sin(a) * r;
-
-        const size = 0.8 + Math.pow(rnd(), 2.2) * 5.5;
-        const rockGeo = createDesertRockGeometry(size, rnd() * 100);
-        const rock = new THREE.Mesh(rockGeo, rockMaterial);
-
-        rock.position.set(x, desertHeight(x, z) - size * 0.35, z);
-        rock.rotation.set(rnd() * 0.6 - 0.3, rnd() * Math.PI * 2, rnd() * 0.6 - 0.3);
-        rock.castShadow = true;
-        rock.receiveShadow = true;
-        currentMapGroup.add(rock);
-      }
-    }
-
-    // -------- 4. 干草 --------
+    // -------- 3. 干草 --------
     const grassMat = new THREE.MeshStandardMaterial({
       map: createDesertGrassTexture(256),
       alphaTest: 0.42,
@@ -395,7 +344,7 @@ registerMap('desert', {
       const g2 = g1.clone();
       g2.rotateY(Math.PI / 2);
 
-      const COUNT = 900;
+      const COUNT = 700;
       const grass1 = new THREE.InstancedMesh(g1, grassMat, COUNT);
       const grass2 = new THREE.InstancedMesh(g2, grassMat, COUNT);
       grass1.castShadow = grass2.castShadow = true;

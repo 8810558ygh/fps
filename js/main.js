@@ -15,6 +15,24 @@ if (isTouchDevice) {
 }
 document.body.appendChild(renderer.domElement);
 
+// ============================================================
+// ★ B3：阴影节流更新
+// ============================================================
+const SHADOW_UPDATE_INTERVAL = 3;
+let _shadowFrameCounter = 0;
+
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
+
+window.requestShadowUpdate = function () {
+    renderer.shadowMap.needsUpdate = true;
+};
+
+// ============================================================
+// ★ C3：路灯距离剔除阈值
+// ============================================================
+const LAMP_CULL_DIST_SQ = 22 * 22;
+
 async function lockLandscape() {
     if (!isTouchDevice) return;
     try {
@@ -147,16 +165,48 @@ function syncMinimapVisibility() {
 const clock = new THREE.Clock();
 
 // ============================================================
-// ★ 瞄准镜画中画渲染（PiP）— 优化版 + 换枪修复
-//
-// 关键优化：
-//   1. 节流：镜内画面每 2 帧更新一次
-//   2. 关阴影：PiP 渲染期间临时关闭 shadowMap.autoUpdate
-//   3. 状态切换：只在进入/退出 ADS 时切材质
-//   4. FOV：只在初始化时设一次
-//   5. RT：降到 256（桌面）/ 192（移动）
-//
-// ★ 修复：换枪后 lensF 引用变化 → 直接对比引用，不用 .parent 判断
+// ★ 实时帧率计数器
+// ============================================================
+const _fpsEl = document.getElementById('fpsCounter');
+const _fpsState = {
+    frames: 0,
+    lastUpdate: performance.now(),
+    lastText: ''
+};
+const FPS_UPDATE_INTERVAL = 500;
+
+function updateFpsCounter(now) {
+    if (!_fpsEl) return;
+
+    _fpsState.frames++;
+
+    const elapsed = now - _fpsState.lastUpdate;
+    if (elapsed < FPS_UPDATE_INTERVAL) return;
+
+    const fps     = Math.round(_fpsState.frames * 1000 / elapsed);
+    const frameMs = (elapsed / _fpsState.frames).toFixed(2);
+    const calls   = (renderer.info && renderer.info.render)
+                  ? renderer.info.render.calls : 0;
+
+    _fpsState.frames = 0;
+    _fpsState.lastUpdate = now;
+
+    let cls = '';
+    if (fps < 30) cls = 'bad';
+    else if (fps < 55) cls = 'warn';
+
+    const html =
+        `<span class="fps-value ${cls}">${fps} FPS</span><br>` +
+        `<span class="fps-sub">${frameMs} ms · ${calls} calls</span>`;
+
+    if (html !== _fpsState.lastText) {
+        _fpsEl.innerHTML = html;
+        _fpsState.lastText = html;
+    }
+}
+
+// ============================================================
+// ★ 瞄准镜画中画渲染（PiP）
 // ============================================================
 let _scopeCam = null;
 let _scopeRT  = null;
@@ -207,16 +257,12 @@ function updateScopePip() {
     const lensB = vmGun.userData.lensMeshB;
     if (!lensF) return;
 
-    // ★★★ 修复：换枪后 lensF 是全新对象，直接对比引用
-    //  换枪时 setWeapon() 会 remove 旧 vm 并 add 新 vm
-    //  新 vm 的 userData.lensMeshF 是新的 mesh
-    //  只要引用不同就刷新缓存，并强制重新应用 ADS 状态
     if (lensF !== _pipCachedLensF) {
         _pipCachedLensF = lensF;
         _pipCachedLensB = lensB || null;
         _pipOrigMatF = lensF.material;
         _pipOrigMatB = lensB ? lensB.material : null;
-        _pipActive = false; // 强制下一帧重新应用状态
+        _pipActive = false;
     }
 
     const now = performance.now();
@@ -226,14 +272,12 @@ function updateScopePip() {
         && !p1.isMelee && !p1.isSmoke && !p1.isFlash
         && p1.hp > 0 && now >= p1.deadUntil;
 
-    // ---- 状态切换：只在进入/退出 ADS 时换材质 ----
     if (isADS !== _pipActive) {
         _pipActive = isADS;
         if (isADS) {
             ensureScopeResources();
             _pipCachedLensF.material = _scopeMat;
             if (_pipCachedLensB) _pipCachedLensB.material = _scopeMat;
-            // 进入 ADS 立即渲染一次，避免第一帧显示旧内容
             _pipFrameCounter = PIP_UPDATE_EVERY_N_FRAMES;
         } else {
             _pipCachedLensF.material = _pipOrigMatF;
@@ -244,16 +288,13 @@ function updateScopePip() {
 
     if (!_pipActive) return;
 
-    // ---- 节流：每 N 帧才渲染一次 PiP ----
     _pipFrameCounter++;
     if (_pipFrameCounter < PIP_UPDATE_EVERY_N_FRAMES) return;
     _pipFrameCounter = 0;
 
-    // ---- 复制主相机位置/朝向（FOV 已在初始化时设好）----
     _scopeCam.position.copy(p1.cam.position);
     _scopeCam.quaternion.copy(p1.cam.quaternion);
 
-    // ---- 隐藏 vm + 临时关阴影自动更新 ----
     const vmWasVisible = p1.vm.visible;
     p1.vm.visible = false;
 
@@ -280,7 +321,12 @@ function render() {
     p1.vm.visible = p1.baseVisible && !(p1.aiming && p1.weapon.scope);
     if (p2.vm) p2.vm.visible = false;
 
-    // ★ PiP 渲染（内部会临时隐藏 vm 再恢复；节流在函数内部）
+    _shadowFrameCounter++;
+    if (_shadowFrameCounter >= SHADOW_UPDATE_INTERVAL) {
+        _shadowFrameCounter = 0;
+        renderer.shadowMap.needsUpdate = true;
+    }
+
     updateScopePip();
 
     renderer.render(scene, p1.cam);
@@ -342,6 +388,8 @@ function loop() {
     const dt = Math.min(clock.getDelta(), 0.05);
     const now = performance.now();
 
+    if (typeof desertGrassTime !== 'undefined') desertGrassTime.value = now / 1000;
+
     const isHost      = (gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost);
     const isClient    = (gameMode === 'online' && typeof NET !== 'undefined'
                          && NET.role === 'player' && !NET.isHost);
@@ -388,6 +436,17 @@ function loop() {
             }
             if (typeof updateXrayVisibility === 'function') updateXrayVisibility();
         }
+
+        if (window.lampLights && window.lampLights.length > 0) {
+            const camPos = p1.cam.position;
+            const lights = window.lampLights;
+            for (let i = 0; i < lights.length; i++) {
+                const L = lights[i];
+                const dx = L.position.x - camPos.x;
+                const dz = L.position.z - camPos.z;
+                L.visible = (dx * dx + dz * dz) < LAMP_CULL_DIST_SQ;
+            }
+        }
     }
 
     updateEffects(dt, now);
@@ -396,6 +455,8 @@ function loop() {
     if (minimapVisible && typeof updateMinimap === 'function') updateMinimap();
 
     render();
+
+    updateFpsCounter(performance.now());
 }
 loop();
 
@@ -418,6 +479,7 @@ function enterGame(mode) {
 }
 window.enterGame = enterGame;
 
+// ★ 按钮事件保留原样 —— loading.js 会用 cloneNode 覆盖它们
 document.getElementById('lobbyRangeBtn').addEventListener('click', () => enterGame('range'));
 document.getElementById('lobbyAiBtn').addEventListener('click', () => enterGame('ai'));
 
@@ -493,4 +555,5 @@ function buildMapSelect() {
 (function init() {
     if (window.loadMap) window.loadMap('battlefield');
     buildMapSelect();
+    // 武器预热交给 loading.js 完成
 })();

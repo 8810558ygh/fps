@@ -1,5 +1,23 @@
 // ===== js/game_combat.js – 射击、伤害、击杀、玩家更新、第三人称动画 =====
 
+// ============================================================
+// ★ 性能优化（A3）：复用 Raycaster 与临时向量
+//   原代码每次开火 / 近战 / AI 视线检测都 new 一批临时对象，
+//   奥丁 55ms 一发、霰弹 12 pellet 时会产生大量 GC 压力。
+//   这里模块级复用一组临时对象，供 game_combat.js 与 ai.js 共享。
+// ============================================================
+const _ray        = new THREE.Raycaster();
+const _rcOrigin   = new THREE.Vector3();
+const _rcTarget   = new THREE.Vector3();
+const _rcDir      = new THREE.Vector3();
+const _rcEnd      = new THREE.Vector3();
+const _rcRandDir  = new THREE.Vector3();
+const _rcMuzzle   = new THREE.Vector3();
+const _rcUp       = new THREE.Vector3(0, 1, 0);
+const _rcAxis     = new THREE.Vector3();
+const _rcQ1       = new THREE.Quaternion();
+const _rcQ2       = new THREE.Quaternion();
+
 function tryMelee(p, now, isHeavy) {
     if (gameState !== 'combat') return;
     if (!p.isMelee) return;
@@ -20,14 +38,18 @@ function tryMelee(p, now, isHeavy) {
 
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) return;
 
-    const origin = p.cam.getWorldPosition(_v1).clone();
-    const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
-    const targets = getShotTargets();
+    // ★ A3：复用临时向量与 Raycaster；★ A4：使用帧内可修改副本
+    p.cam.getWorldPosition(_rcOrigin);
+    _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
+
+    const targets = prepareShotTargets();
     const o = other(p);
     if (now >= o.deadUntil) targets.push(o.body, o.head);
 
-    const rc = new THREE.Raycaster(origin.clone(), dir.clone(), 0, m.range);
-    const hits = rc.intersectObjects(targets, false);
+    _ray.set(_rcOrigin, _rcDir);
+    _ray.near = 0;
+    _ray.far = m.range;
+    const hits = _ray.intersectObjects(targets, false);
 
     if (hits.length > 0) {
         const h = hits[0];
@@ -84,47 +106,58 @@ function tryFire(p, now) {
     p.muzzle.intensity = 2.2;
     if (p.id === 1) p.vmMuzzle.intensity = 2.2;
 
+    // ---- 联机客户端：只发射曳光弹 ----
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) {
-        const origin = p.cam.getWorldPosition(_v1).clone();
-        const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion).clone();
+        p.cam.getWorldPosition(_rcOrigin);
+        _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
 
         const localTargets = getShotTargets();
-        const rcLocal = new THREE.Raycaster(origin.clone(), dir.clone(), 0, 150);
-        const hitsLocal = rcLocal.intersectObjects(localTargets, false);
-        let end = origin.clone().add(dir.clone().multiplyScalar(100));
-        if (hitsLocal.length > 0) end = hitsLocal[0].point;
-        spawnTracer(muzzleWorld(p, _v1), end);
+        _ray.set(_rcOrigin, _rcDir);
+        _ray.near = 0;
+        _ray.far = 150;
+        const hitsLocal = _ray.intersectObjects(localTargets, false);
+        _rcEnd.copy(_rcOrigin).addScaledVector(_rcDir, 100);
+        if (hitsLocal.length > 0) _rcEnd.copy(hitsLocal[0].point);
+        spawnTracer(muzzleWorld(p, _rcMuzzle), _rcEnd);
         return;
     }
 
-    const origin = p.cam.getWorldPosition(_v1).clone();
-    const dir = _v2.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
+    // ---- 本地/房主：完整射击逻辑 ----
+    p.cam.getWorldPosition(_rcOrigin);
+    _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
+
     const pellets = w.pellets || 1;
     const spread = w.spread || 0;
-    const targets = getShotTargets();
+
+    // ★ A4：复用帧内数组，避免每次 concat / push
+    const targets = prepareShotTargets();
     const o = other(p);
     if (now >= o.deadUntil) targets.push(o.body, o.head);
 
     const isOnlineHost = (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost);
 
     for (let i = 0; i < pellets; i++) {
-        const randDir = dir.clone();
+        // ★ A3：复用临时向量
+        _rcRandDir.copy(_rcDir);
         if (pellets > 1) {
             const theta = Math.random() * 2 * Math.PI;
             const phi = Math.acos(1 - Math.random() * (1 - Math.cos(spread)));
-            const up = new THREE.Vector3(0, 1, 0);
-            const axis = new THREE.Vector3().crossVectors(dir, up).normalize();
-            if (axis.length() < 0.01) axis.set(1, 0, 0);
-            const quat = new THREE.Quaternion().setFromAxisAngle(axis, phi);
-            const quat2 = new THREE.Quaternion().setFromAxisAngle(dir, theta);
-            randDir.applyQuaternion(quat).applyQuaternion(quat2);
+            _rcAxis.crossVectors(_rcDir, _rcUp).normalize();
+            if (_rcAxis.length() < 0.01) _rcAxis.set(1, 0, 0);
+            _rcQ1.setFromAxisAngle(_rcAxis, phi);
+            _rcQ2.setFromAxisAngle(_rcDir, theta);
+            _rcRandDir.applyQuaternion(_rcQ1).applyQuaternion(_rcQ2);
         }
-        const rc = new THREE.Raycaster(origin.clone(), randDir.clone(), 0, 150);
-        const hits = rc.intersectObjects(targets, false);
-        let end = origin.clone().add(randDir.multiplyScalar(150));
+
+        _ray.set(_rcOrigin, _rcRandDir);
+        _ray.near = 0;
+        _ray.far = 150;
+        const hits = _ray.intersectObjects(targets, false);
+
+        _rcEnd.copy(_rcOrigin).addScaledVector(_rcRandDir, 150);
         if (hits.length) {
             const h = hits[0];
-            end = h.point;
+            _rcEnd.copy(h.point);
             if (h.object.userData.part) {
                 const dmg = h.object.userData.part === 'head' ? w.dmgHead : w.dmgBody;
                 const targetId = o.id;
@@ -150,14 +183,14 @@ function tryFire(p, now) {
             }
         }
         if (i === 0) {
-            const mw = muzzleWorld(p, _v1);
-            spawnTracer(mw, end);
+            const mw = muzzleWorld(p, _rcMuzzle);
+            spawnTracer(mw, _rcEnd);
             if (isOnlineHost) {
                 NET_broadcast({
                     type: 'shootEvent',
                     weapon: w.key,
                     sx: mw.x, sy: mw.y, sz: mw.z,
-                    ex: end.x, ey: end.y, ez: end.z
+                    ex: _rcEnd.x, ey: _rcEnd.y, ez: _rcEnd.z
                 });
             }
         }

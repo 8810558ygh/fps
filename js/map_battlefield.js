@@ -18,13 +18,13 @@ registerMap('battlefield', {
         solid(-(ARENA + 0.5), 0, 1, 4.5, ARENA * 2 + 2, concreteTex);
         solid((ARENA + 0.5), 0, 1, 4.5, ARENA * 2 + 2, concreteTex);
 
-        // ---- 稀疏砖柱 ----
+        // ---- 稀疏砖柱（★ B2：使用共享材质） ----
         [
             [-22, -22], [22, -22], [-22, 22], [22, 22],
             [-22, 0], [22, 0], [0, -22], [0, 22]
         ].forEach(([x, z]) => {
             const p = new THREE.Mesh(new THREE.BoxGeometry(1.2, 5.2, 1.2),
-                new THREE.MeshLambertMaterial({ map: brickTex }));
+                _getStaticMat(brickTex));
             p.position.set(x, 2.6, z);
             p.castShadow = p.receiveShadow = true;
             if (currentMapGroup) currentMapGroup.add(p);
@@ -45,7 +45,7 @@ registerMap('battlefield', {
             function railAt(x, z, w, d) {
                 const h = 0.6;
                 const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
-                    new THREE.MeshLambertMaterial({ map: brickTex }));
+                    _getStaticMat(brickTex));
                 m.position.set(x, H + h / 2, z);
                 m.castShadow = m.receiveShadow = true;
                 if (currentMapGroup) currentMapGroup.add(m);
@@ -91,7 +91,7 @@ registerMap('battlefield', {
             addPlatform(x, z, w, d, h);
         });
 
-        // ---- 木箱 ----
+        // ---- 木箱（★ B2：使用共享材质） ----
         const crateDefs = [
             [-11, 0, 2, 1.4], [11, 0, 2, 1.4],
             [0, -11, 2, 1.4], [0, 11, 2, 1.4],
@@ -102,7 +102,7 @@ registerMap('battlefield', {
         ];
         crateDefs.forEach(([cx, cz, w, h]) => {
             const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, w),
-                new THREE.MeshLambertMaterial({ map: woodTex }));
+                _getStaticMat(woodTex));
             m.position.set(cx, h / 2, cz);
             m.castShadow = m.receiveShadow = true;
             if (currentMapGroup) currentMapGroup.add(m);
@@ -137,7 +137,7 @@ registerMap('battlefield', {
         addLamp(-20, -20);
 
         // ---- 地面杂物 ----
-        const debrisMats = [0x555a52, 0x6b6154, 0x4a4f45].map(c => new THREE.MeshLambertMaterial({ color: c }));
+        const debrisMats = [0x555a52, 0x6b6154, 0x4a4f45].map(c => _getColorMat(c));
         for (let i = 0; i < 40; i++) {
             const s = 0.15 + Math.random() * 0.4;
             const m = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.5, s), debrisMats[i % 3]);

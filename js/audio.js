@@ -144,33 +144,6 @@ function sShootOdin(id) {
     o.stop(t + 0.05);
 }
 
-function sShoot(id) {
-    const ac = audio(), t = ac.currentTime;
-    const src = ac.createBufferSource();
-    src.buffer = noiseBuf;
-    const f = ac.createBiquadFilter();
-    f.type = 'bandpass';
-    f.frequency.value = 1700;
-    f.Q.value = 0.7;
-    const g = ac.createGain();
-    env(g, t, 0.5, 0.14);
-    src.connect(f);
-    f.connect(g);
-    g.connect(masterGain[id]);
-    src.start(t);
-    src.stop(t + 0.15);
-    const o = ac.createOscillator();
-    o.type = 'square';
-    o.frequency.setValueAtTime(170, t);
-    o.frequency.exponentialRampToValueAtTime(55, t + 0.08);
-    const g2 = ac.createGain();
-    env(g2, t, 0.22, 0.09);
-    o.connect(g2);
-    g2.connect(masterGain[id]);
-    o.start(t);
-    o.stop(t + 0.1);
-}
-
 // ★ 近战挥刀音效
 function sMelee(isHeavy) {
     const ac = audio();

@@ -7,6 +7,46 @@ const activeFlashBursts = [];
 const SMOKE_PROJ_RADIUS = 0.09;
 const SMOKE_PROJ_HALF_H = 0.12;
 
+// ============================================================
+// ★ C2：投掷物几何体 / 材质共享
+//
+//   原实现每投一次就 new 一整套几何体 + 克隆两份材质。
+//   投掷物本身数量不多，但一旦连投（回合初期、玩家尝试不同位置）
+//   仍会产生可观的分配。
+//
+//   现在：
+//     · 主体 / 端盖 / 色带几何体全部预建一次，跨投掷共享
+//     · 主材质从 SMOKE_MAT / FLASH_MAT 各克隆一次，改好 emissive 后复用
+//     · 清理时不再 dispose，避免误删共享资源
+// ============================================================
+const _projBodyGeo = new THREE.CylinderGeometry(
+    SMOKE_PROJ_RADIUS, SMOKE_PROJ_RADIUS, SMOKE_PROJ_HALF_H * 2, 14
+);
+const _projCapGeo = new THREE.CylinderGeometry(
+    SMOKE_PROJ_RADIUS + 0.01, SMOKE_PROJ_RADIUS + 0.01, 0.03, 14
+);
+const _projBandGeo = new THREE.CylinderGeometry(
+    SMOKE_PROJ_RADIUS + 0.005, SMOKE_PROJ_RADIUS + 0.005, 0.045, 14
+);
+
+let _projMats = null;
+function _ensureProjectileMaterials() {
+    if (_projMats) return _projMats;
+    const smokeMain = SMOKE_MAT.clone();
+    smokeMain.emissiveIntensity = 0.7;
+    const flashMain = FLASH_MAT.clone();
+    flashMain.emissiveIntensity = 0.7;
+    _projMats = {
+        smokeMain,
+        flashMain,
+        smokeBand: SMOKE_BAND_MAT,
+        flashBand: FLASH_BAND_MAT,
+        smokeCap:  SMOKE_CAP_MAT,
+        flashCap:  FLASH_CAP_MAT,
+    };
+    return _projMats;
+}
+
 // ===== 通用投掷物理 =====
 function updateThrownPhysics(s, dt) {
     s.vel.y -= s.gravity * dt;
@@ -48,36 +88,33 @@ function updateThrownPhysics(s, dt) {
     s.mesh.rotation.y += dt * 3.0;
 }
 
+// ★ C2：共享几何体 / 材质，只 new Mesh 外壳
 function createThrownProjectileMesh(kind) {
-    const mainMat = kind === 'flash' ? FLASH_MAT.clone() : SMOKE_MAT.clone();
-    mainMat.emissiveIntensity = 0.7;
-    const bandMat = kind === 'flash' ? FLASH_BAND_MAT : SMOKE_BAND_MAT;
-    const capMat = kind === 'flash' ? FLASH_CAP_MAT : SMOKE_CAP_MAT;
+    const M = _ensureProjectileMaterials();
+    const isFlash = (kind === 'flash');
 
-    const geo = new THREE.CylinderGeometry(SMOKE_PROJ_RADIUS, SMOKE_PROJ_RADIUS, SMOKE_PROJ_HALF_H * 2, 14);
-    const mesh = new THREE.Mesh(geo, mainMat);
+    const mainMat = isFlash ? M.flashMain : M.smokeMain;
+    const bandMat = isFlash ? M.flashBand : M.smokeBand;
+    const capMat  = isFlash ? M.flashCap  : M.smokeCap;
+
+    const mesh = new THREE.Mesh(_projBodyGeo, mainMat);
     mesh.castShadow = true;
 
-    const capTop = new THREE.Mesh(
-        new THREE.CylinderGeometry(SMOKE_PROJ_RADIUS + 0.01, SMOKE_PROJ_RADIUS + 0.01, 0.03, 14), capMat
-    );
+    const capTop = new THREE.Mesh(_projCapGeo, capMat);
     capTop.position.y = SMOKE_PROJ_HALF_H + 0.015;
     mesh.add(capTop);
 
-    const capBot = new THREE.Mesh(
-        new THREE.CylinderGeometry(SMOKE_PROJ_RADIUS + 0.01, SMOKE_PROJ_RADIUS + 0.01, 0.03, 14), capMat
-    );
+    const capBot = new THREE.Mesh(_projCapGeo, capMat);
     capBot.position.y = -SMOKE_PROJ_HALF_H - 0.015;
     mesh.add(capBot);
 
-    const band = new THREE.Mesh(
-        new THREE.CylinderGeometry(SMOKE_PROJ_RADIUS + 0.005, SMOKE_PROJ_RADIUS + 0.005, 0.045, 14), bandMat
-    );
+    const band = new THREE.Mesh(_projBandGeo, bandMat);
     mesh.add(band);
 
     return mesh;
 }
 
+// ===== 烟雾云（每次展开独立创建，因为需要独立 opacity 淡出） =====
 function createSmokeCloud(pos, radius, verticalRadius, centerHeight) {
     const group = new THREE.Group();
     group.position.set(pos.x, centerHeight, pos.z);
@@ -253,9 +290,7 @@ function updateSmokes(dt, now) {
 
             if (now >= s.fuseEnd) {
                 scene.remove(s.mesh);
-                s.mesh.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
-                if (s.mesh.geometry) s.mesh.geometry.dispose();
-                if (s.mesh.material) s.mesh.material.dispose();
+                // ★ C2：几何体/材质是共享的，不再 dispose
                 s.mesh = null;
 
                 const cloud = createSmokeCloud(s.pos, SMOKE.radius, SMOKE.verticalRadius, SMOKE.centerHeight);
@@ -302,6 +337,7 @@ function updateSmokes(dt, now) {
             }
             if (now >= s.doneAt) {
                 scene.remove(s.cloudMesh);
+                // 烟雾云是独立创建的资源，需要 dispose
                 s.cloudMesh.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
                 activeSmokes.splice(i, 1);
             }
@@ -317,9 +353,8 @@ function updateFlashes(dt, now) {
 
             if (now >= s.fuseEnd) {
                 scene.remove(s.mesh);
-                s.mesh.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
-                if (s.mesh.geometry) s.mesh.geometry.dispose();
-                if (s.mesh.material) s.mesh.material.dispose();
+                // ★ C2：几何体/材质是共享的，不再 dispose
+                s.mesh = null;
 
                 const isAuthority = (gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost);
                 if (isAuthority) {
@@ -646,10 +681,9 @@ function throwFlash(p, now, fuseMs) {
 
 function clearAllSmokes() {
     for (const s of activeSmokes) {
-        if (s.mesh) {
-            scene.remove(s.mesh);
-            s.mesh.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
-        }
+        // ★ C2：投掷物 mesh 的几何体/材质是共享的，不 dispose
+        if (s.mesh) scene.remove(s.mesh);
+        // 烟雾云是独立创建的，需要 dispose
         if (s.cloudMesh) {
             scene.remove(s.cloudMesh);
             s.cloudMesh.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
@@ -661,10 +695,8 @@ function clearAllSmokes() {
 
 function clearAllFlashes() {
     for (const s of activeFlashes) {
-        if (s.mesh) {
-            scene.remove(s.mesh);
-            s.mesh.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
-        }
+        // ★ C2：投掷物 mesh 的几何体/材质是共享的，不 dispose
+        if (s.mesh) scene.remove(s.mesh);
     }
     activeFlashes.length = 0;
 

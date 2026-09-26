@@ -17,9 +17,9 @@ const FLASH_CAP_MAT = new THREE.MeshLambertMaterial({ color: 0x2a2e34 });
 //      —— 几何体 / 材质共享引用，clone 只复制节点，耗时 ~1ms
 //   3. clone() 会深拷贝 userData（内部 Object3D 引用会失效），
 //      因此这里按 name 从 clone 树里重新绑定 muzzlePoint / boltGroup /
-//      scopeCenter / lensMeshF / lensMeshB
+//      scopeCenter / lensMeshF / lensMeshB / bladeTip / attackPoint
 // ============================================================
-const _hdWorldTemplates = new Map();   // key: 'rifle' | 'sniper' | 'shotgun' | 'odin'
+const _hdWorldTemplates = new Map();   // key: 'rifle' | 'sniper' | 'shotgun' | 'odin' | 'knife'
 const _hdViewTemplates  = new Map();
 
 function _findByName(root, name) {
@@ -52,6 +52,9 @@ function _cloneHdTemplate(tpl) {
     dst.scopeCenter = _findByName(clone, 'scopeCenter');
     dst.lensMeshF   = _findByName(clone, 'scopeLensFront');
     dst.lensMeshB   = _findByName(clone, 'scopeLensBack');
+    // ★ 新增：刀的锚点
+    dst.bladeTip    = _findByName(clone, 'bladeTip');
+    dst.attackPoint = _findByName(clone, 'attackPoint');
 
     return clone;
 }
@@ -69,6 +72,9 @@ function _getWorldTemplate(type) {
             tpl = window.__HD_SHOTGUN.buildWorld();
         } else if (type === 'odin' && window.__HD_ODIN && window.__HD_ODIN.buildWorld) {
             tpl = window.__HD_ODIN.buildWorld();
+        } else if (type === 'knife' && window.__HD_KNIFE && window.__HD_KNIFE.buildWorld) {
+            // ★ 新增：刀的世界模型
+            tpl = window.__HD_KNIFE.buildWorld();
         }
     } catch (e) {
         console.warn('[player_model] HD 世界模型模板构建失败:', type, e);
@@ -90,6 +96,9 @@ function _getViewTemplate(type) {
             tpl = window.__HD_SHOTGUN.buildViewmodel();
         } else if (type === 'odin' && window.__HD_ODIN && window.__HD_ODIN.buildViewmodel) {
             tpl = window.__HD_ODIN.buildViewmodel();
+        } else if (type === 'knife' && window.__HD_KNIFE && window.__HD_KNIFE.buildViewmodel) {
+            // ★ 新增：刀的视图模型
+            tpl = window.__HD_KNIFE.buildViewmodel();
         }
     } catch (e) {
         console.warn('[player_model] HD 视图模型模板构建失败:', type, e);
@@ -98,10 +107,10 @@ function _getViewTemplate(type) {
     return tpl;
 }
 
-// ★ 预热：进入游戏前调用一次，把四种 HD 武器的世界/视图模板全部构建好，
+// ★ 预热：进入游戏前调用一次，把四种 HD 武器 + 刀的世界/视图模板全部构建好，
 //   避免第一次换枪时因为首次构建而卡一下
 function preloadHdWeaponTemplates() {
-    ['rifle', 'sniper', 'shotgun', 'odin'].forEach(t => {
+    ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(t => {
         _getWorldTemplate(t);
         _getViewTemplate(t);
     });
@@ -112,14 +121,15 @@ window.preloadHdWeaponTemplates = preloadHdWeaponTemplates;
 // makeWeaponModel
 // ============================================================
 function makeWeaponModel(type, mat) {
-    // ===== ★ 高细节武器（rifle / sniper / shotgun / odin）：模板克隆 =====
-    if (type === 'rifle' || type === 'sniper' || type === 'shotgun' || type === 'odin') {
+    // ===== ★ 高细节武器（rifle / sniper / shotgun / odin / knife）：模板克隆 =====
+    if (type === 'rifle' || type === 'sniper' || type === 'shotgun'
+        || type === 'odin' || type === 'knife') {
         const tpl = _getWorldTemplate(type);
         if (tpl) return _cloneHdTemplate(tpl);
         // 模板构建失败 → 落入下面低模分支兜底
     }
 
-    // ===== 低模分支（knife / smoke / flash / 兜底）=====
+    // ===== 低模分支（smoke / flash / 兜底）=====
     const g = new THREE.Group();
     if (type === 'sniper') {
         const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.15, 1.1), DARK_MAT);
@@ -163,6 +173,7 @@ function makeWeaponModel(type, mat) {
         sight.position.set(0, 0.15, -0.2);
         g.add(body, barrel, magz, stock, grip, sight);
     } else if (type === 'knife') {
+        // 低模兜底（HD 模板构建失败时才走这里）
         const handle = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22, 0.06), DARK_MAT);
         handle.position.set(0, -0.1, 0);
         const guard = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.04, 0.06), DARK_MAT);
@@ -212,8 +223,9 @@ function makeWeaponModel(type, mat) {
 // makeViewmodel
 // ============================================================
 function makeViewmodel(type, mat) {
-    // ===== ★ 高细节武器视图模型（rifle / sniper / shotgun / odin）：模板克隆 =====
-    if (type === 'rifle' || type === 'sniper' || type === 'shotgun' || type === 'odin') {
+    // ===== ★ 高细节武器视图模型（rifle / sniper / shotgun / odin / knife）：模板克隆 =====
+    if (type === 'rifle' || type === 'sniper' || type === 'shotgun'
+        || type === 'odin' || type === 'knife') {
         const tpl = _getViewTemplate(type);
         if (tpl) return _cloneHdTemplate(tpl);
         // 模板构建失败 → 落入下面低模分支兜底
@@ -262,6 +274,7 @@ function makeViewmodel(type, mat) {
         g.add(body, barrel, magz, stock, grip, sight);
         g.position.set(0.32, -0.32, -0.55);
     } else if (type === 'knife') {
+        // 低模兜底（HD 模板构建失败时才走这里）
         const handle = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.2, 0.055), DARK_MAT);
         handle.position.set(0, -0.08, 0);
         const guard = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.035, 0.055), DARK_MAT);

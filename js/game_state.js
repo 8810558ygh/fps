@@ -10,6 +10,18 @@ let stateEndTime = 0;
 let roundNumber = 0;
 let lastKillReport = null;
 
+// ============================================================
+// ★ 性能优化（A2）：isOver() 不再每帧查询 DOM
+//   原本通过 document.getElementById('endOverlay').style.display 判断，
+//   每帧被调用 5~10 次；改为维护一个显式标志位。
+//   由 game.js 的 endMatch() / resetMatch() 更新。
+// ============================================================
+let _overFlag = false;
+function isOver() { return _overFlag; }
+function setOver(v) { _overFlag = !!v; }
+window.isOver = isOver;
+window.setOver = setOver;
+
 // ===== 复用的临时向量 =====
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
 
@@ -20,9 +32,6 @@ function isOnlineClientPlayer() {
         && NET.role === 'player'
         && !NET.isHost;
 }
-
-// ===== 是否结算画面 =====
-function isOver() { return document.getElementById('endOverlay').style.display === 'flex'; }
 
 // ===== 地形高度查询 =====
 function terrainGroundAt(x, z) {
