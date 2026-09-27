@@ -5,7 +5,8 @@ const leftEl = document.getElementById('touch-left');
 if (leftEl) {
     leftEl.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') {
+        // ★ 问题 1 修复：统一走 NET.isSpectator()
+        if (NET.isSpectator()) {
             if (typeof NET_spectatorToggle === 'function') NET_spectatorToggle();
             return;
         }
@@ -13,7 +14,7 @@ if (leftEl) {
     }, { passive: false });
     leftEl.addEventListener('touchmove', (e) => {
         e.preventDefault();
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         const t = Array.from(e.changedTouches).find(t => t.identifier === leftTouchId);
         if (!t) return;
         const rect = e.target.getBoundingClientRect();
@@ -28,7 +29,7 @@ if (leftEl) {
     }, { passive: false });
     leftEl.addEventListener('touchend', (e) => {
         e.preventDefault();
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         keys['KeyW'] = false; keys['KeyS'] = false;
         keys['KeyA'] = false; keys['KeyD'] = false;
         leftTouchId = null;
@@ -46,7 +47,7 @@ const rightEl = document.getElementById('touch-right');
 if (rightEl) {
     rightEl.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') {
+        if (NET.isSpectator()) {
             if (typeof NET_spectatorToggle === 'function') NET_spectatorToggle();
             return;
         }
@@ -56,7 +57,7 @@ if (rightEl) {
     }, { passive: false });
     rightEl.addEventListener('touchmove', (e) => {
         e.preventDefault();
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         const t = Array.from(e.changedTouches).find(t => t.identifier === rightTouchId);
         if (!t) return;
         const dx = t.clientX - lastRightX;
@@ -76,7 +77,7 @@ const fireBtn = document.getElementById('btn-fire');
 if (fireBtn) {
     fireBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         if (typeof p1 !== 'undefined' && p1 && p1.isSmoke) {
             if (running && !isOver() && gameState === 'combat') {
                 _requestFuseStart('smoke');
@@ -108,7 +109,7 @@ const jumpBtn = document.getElementById('btn-jump');
 if (jumpBtn) {
     jumpBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         keys['Space'] = true;
     }, { passive: false });
     jumpBtn.addEventListener('touchend', (e) => { e.preventDefault(); keys['Space'] = false; }, { passive: false });
@@ -119,7 +120,7 @@ const aimBtn = document.getElementById('btn-aim');
 if (aimBtn) {
     aimBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         if (running && !isOver() && gameState === 'combat') {
             if (typeof p1 !== 'undefined' && p1 && p1.isMelee) {
                 tryMelee(p1, performance.now(), true);
@@ -134,7 +135,7 @@ const reloadBtn = document.getElementById('btn-reload');
 if (reloadBtn) {
     reloadBtn.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         if (running && !isOver() && gameState === 'combat') {
             startReload(p1, performance.now());
             if (_isOnlineClient()) NET.pendingReload = true;
@@ -146,7 +147,7 @@ const weaponBtn = document.getElementById('btn-weapon');
 if (weaponBtn) {
     weaponBtn.addEventListener('touchstart', (e) => {
         e.preventDefault(); e.stopPropagation();
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         if (!(running && !isOver())) return;
         if (typeof p1 === 'undefined' || !p1) return;
 

@@ -1,14 +1,23 @@
 // ===== js/main.js – 主循环与启动（服务器权威版 + 瞄准镜画中画 · 优化版） =====
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.setScissorTest(false);
 
 const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
+
+// ============================================================
+// ★ 方案 A 优化 2：按模式动态像素比
+// ============================================================
+function getDesiredPixelRatio() {
+    if (isTouchDevice) return 1;
+    const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
+    return Math.min(window.devicePixelRatio || 1, isOnline ? 1.5 : 2);
+}
+renderer.setPixelRatio(getDesiredPixelRatio());
+
 if (isTouchDevice) {
-    renderer.setPixelRatio(1);
     renderer.shadowMap.type = THREE.PCFShadowMap;
 } else {
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -17,8 +26,12 @@ document.body.appendChild(renderer.domElement);
 
 // ============================================================
 // ★ B3：阴影节流更新
+// ★ 方案 A 优化 3：联机时降到 6 帧一次（5Hz），单机保持 3 帧
 // ============================================================
-const SHADOW_UPDATE_INTERVAL = 3;
+function getShadowUpdateInterval() {
+    const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
+    return isOnline ? 6 : 3;
+}
 let _shadowFrameCounter = 0;
 
 renderer.shadowMap.autoUpdate = false;
@@ -65,14 +78,14 @@ window.addEventListener('orientationchange', () => { if (isTouchDevice) lockLand
 
 renderer.domElement.addEventListener('click', () => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
-    if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+    if (NET.isSpectator()) return;
     if (running && document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
         renderer.domElement.requestPointerLock();
     }
 });
 document.addEventListener('mousemove', e => {
     if (document.pointerLockElement === renderer.domElement && running && !isOver()) {
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         const sens = 0.0022 * (p1.cam.fov / BASE_FOV);
         p1.yaw -= e.movementX * sens;
         p1.pitch -= e.movementY * sens;
@@ -93,7 +106,7 @@ function enterFullscreenAndLock() {
         }
         return;
     }
-    if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+    if (NET.isSpectator()) return;
     if (!document.fullscreenElement && !document.webkitFullscreenElement) {
         const el = document.documentElement;
         if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
@@ -102,7 +115,7 @@ function enterFullscreenAndLock() {
     function tryLock() {
         if (!running) return;
         if (typeof isChatOpen === 'function' && isChatOpen()) return;
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         if (document.pointerLockElement !== renderer.domElement) {
             renderer.domElement.requestPointerLock();
             setTimeout(() => {
@@ -117,7 +130,7 @@ document.addEventListener('fullscreenchange', () => {
     if (isTouchDevice) lockLandscape();
     if (running && document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
         if (typeof isChatOpen === 'function' && isChatOpen()) return;
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         renderer.domElement.requestPointerLock();
     }
 });
@@ -125,7 +138,7 @@ document.addEventListener('webkitfullscreenchange', () => {
     if (isTouchDevice) lockLandscape();
     if (running && document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
         if (typeof isChatOpen === 'function' && isChatOpen()) return;
-        if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+        if (NET.isSpectator()) return;
         renderer.domElement.requestPointerLock();
     }
 });
@@ -134,13 +147,13 @@ document.getElementById('weaponPanel').addEventListener('click', function(e) {
     const btn = e.target.closest('.weapon-btn');
     if (!btn) return;
     if (!(running && gameState === 'prep')) return;
-    if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+    if (NET.isSpectator()) return;
     const key = btn.dataset.weapon;
     if (key && WEAPONS[key]) {
         setWeapon(p1, key);
         sPickup(1);
         if (typeof gameMode !== 'undefined' && gameMode === 'online'
-            && typeof NET !== 'undefined' && NET.role === 'player' && !NET.isHost) {
+            && NET.role === 'player' && !NET.isHost) {
             NET.pendingWeaponSwitch = key;
         }
         document.getElementById('weaponPanel').style.display = 'none';
@@ -220,8 +233,8 @@ let _pipActive = false;
 let _pipFrameCounter = 0;
 
 const PIP_UPDATE_EVERY_N_FRAMES = 2;
-const PIP_RT_SIZE_DESKTOP = 256;
-const PIP_RT_SIZE_MOBILE  = 192;
+const PIP_RT_SIZE_DESKTOP = 192;
+const PIP_RT_SIZE_MOBILE  = 160;
 
 function ensureScopeResources() {
     if (_scopeCam) return;
@@ -266,7 +279,7 @@ function updateScopePip() {
     }
 
     const now = performance.now();
-        const isADS = running && gameState === 'combat'
+    const isADS = running && gameState === 'combat'
         && p1.aiming
         && p1.weapon && (p1.weapon.key === 'rifle' || p1.weapon.key === 'odin')
         && !p1.isMelee && !p1.isSmoke && !p1.isFlash
@@ -315,14 +328,68 @@ function updateScopePip() {
     p1.vm.visible = vmWasVisible;
 }
 
+// ============================================================
+// ★ A1：联机对手阴影管理
+// ============================================================
+function updateP2ShadowState() {
+    if (typeof p2 === 'undefined' || !p2 || !p2.mesh) return;
+
+    const shouldDisable = (typeof gameMode !== 'undefined' && gameMode === 'online');
+    if (!!p2._shadowDisabled === shouldDisable) return;
+
+    p2._shadowDisabled = shouldDisable;
+    const cast = !shouldDisable;
+    p2.mesh.traverse(o => { if (o.isMesh) o.castShadow = cast; });
+}
+
+// ============================================================
+// ★ B1：对手位置插值
+//
+//   服务器每 33ms 发来一次对手快照 → 存到 p2._netTargetPos
+//   本函数每帧（16ms）把 p2.pos 平滑靠拢到 _netTargetPos
+//   → 视觉上从"30Hz 跳一下"变成"60Hz 平滑跟随"
+//
+//   参数：
+//     p  - 目标玩家（通常是 p2，对手）
+//     dt - 帧间隔（秒）
+//
+//   收敛速率 k = dt * 22：
+//     · 33ms 收敛 ~66%（一帧快照间隔后已完成大部分追赶）
+//     · 100ms 收敛 ~90%
+//     · 150ms 收敛 ~98%
+//   这个速度能在"跟得上对手"和"看起来平滑"之间取得平衡。
+// ============================================================
+function interpolateRemotePlayer(p, dt) {
+    if (!p || !p._netTargetPos) return;
+
+    const k = Math.min(1, dt * 22);
+
+    p.pos.x += (p._netTargetPos.x - p.pos.x) * k;
+    p.pos.y += (p._netTargetPos.y - p.pos.y) * k;
+    p.pos.z += (p._netTargetPos.z - p.pos.z) * k;
+
+    // yaw 需要处理角度环绕（-π ~ π 之间最短路径）
+    let dyaw = p._netTargetYaw - p.yaw;
+    while (dyaw >  Math.PI) dyaw -= Math.PI * 2;
+    while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+    p.yaw += dyaw * k;
+
+    // 同步到 mesh
+    p.mesh.position.copy(p.pos);
+    p.mesh.rotation.y = p.yaw;
+    p.mesh.scale.y = p.height / HEIGHT_STAND;
+}
+
 function render() {
+    updateP2ShadowState();
+
     p1.mesh.visible = false;
     p2.mesh.visible = p2.baseVisible;
     p1.vm.visible = p1.baseVisible && !(p1.aiming && p1.weapon.scope);
     if (p2.vm) p2.vm.visible = false;
 
     _shadowFrameCounter++;
-    if (_shadowFrameCounter >= SHADOW_UPDATE_INTERVAL) {
+    if (_shadowFrameCounter >= getShadowUpdateInterval()) {
         _shadowFrameCounter = 0;
         renderer.shadowMap.needsUpdate = true;
     }
@@ -348,40 +415,9 @@ function collectLocalInput(p) {
     p.input.fire = !!mouse.leftDown;
 }
 
-function updateLocalClientCamera(dt, now) {
-    if (p1.input.fire && !p1.isMelee && !p1.isSmoke && !p1.isFlash && gameState === 'combat' && now >= p1.deadUntil) {
-        tryFire(p1, now);
-    }
-
-    let targetFov = BASE_FOV;
-    const canAim = !p1.isMelee && !p1.isSmoke && !p1.isFlash && p1.reloadEnd <= now && now >= p1.boltEnd;
-    p1.aiming = !!p1.input.aim && canAim;
-    if (p1.aiming) {
-        if (p1.weapon.key === 'sniper' && p1.aimStage === 2 && p1.weapon.zoomFov2) targetFov = p1.weapon.zoomFov2;
-        else targetFov = p1.weapon.zoomFov;
-    }
-    if (Math.abs(p1.cam.fov - targetFov) > 0.05) {
-        p1.cam.fov += (targetFov - p1.cam.fov) * Math.min(1, dt * 11);
-        p1.cam.updateProjectionMatrix();
-    }
-    p1.cam.position.set(p1.pos.x, p1.pos.y + p1.eyeH, p1.pos.z);
-    p1.cam.rotation.y = p1.yaw;
-    p1.cam.rotation.x = p1.pitch;
-    p1.mesh.position.copy(p1.pos);
-    p1.mesh.rotation.y = p1.yaw;
-    p1.mesh.scale.y = p1.height / HEIGHT_STAND;
-    updateSniperViewmodel(p1, dt, now);
-
-    if (typeof updateThirdPersonWeapon === 'function') {
-        updateThirdPersonWeapon(p1, dt, now);
-        if (typeof p2 !== 'undefined' && p2) {
-            updateThirdPersonWeapon(p2, dt, now);
-        }
-    }
-}
-
+// ★ 方案 A 优化 1：客户端上报频率 100Hz → 30Hz
 let _lastClientReportTime = 0;
-const CLIENT_REPORT_INTERVAL = 10;
+const CLIENT_REPORT_INTERVAL = 33;
 
 function loop() {
     requestAnimationFrame(loop);
@@ -391,10 +427,8 @@ function loop() {
     if (typeof desertGrassTime !== 'undefined') desertGrassTime.value = now / 1000;
 
     const isHost      = (gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost);
-    const isClient    = (gameMode === 'online' && typeof NET !== 'undefined'
-                         && NET.role === 'player' && !NET.isHost);
-    const isSpectator = (gameMode === 'online' && typeof NET !== 'undefined'
-                         && NET.role === 'spectator');
+    const isClient    = NET.isClientPlayer();
+    const isSpectator = NET.isSpectator();
 
     if (running) {
         if (isHost) {
@@ -408,14 +442,28 @@ function loop() {
             if (gameState === 'prep' && now >= stateEndTime) endPrep(now);
             else if (gameState === 'roundEnd' && now >= stateEndTime) startRound(now);
         } else if (isClient) {
+            // ★ 粘滞感修复：客户端本地预测
             collectLocalInput(p1);
+            updatePlayer(p1, dt, now);
+
+            // ============================================================
+            // ★ B1：对手位置插值
+            //   在 updatePlayer(p1) 之后，把 p2 平滑靠拢到服务器目标位置
+            // ============================================================
+            if (typeof p2 !== 'undefined' && p2) {
+                interpolateRemotePlayer(p2, dt);
+            }
+
+            // p2 的第三人称武器动画（依赖 p2.pos 已经更新过）
+            if (typeof updateThirdPersonWeapon === 'function'
+                && typeof p2 !== 'undefined' && p2) {
+                updateThirdPersonWeapon(p2, dt, now);
+            }
 
             if (now - _lastClientReportTime >= CLIENT_REPORT_INTERVAL) {
                 _lastClientReportTime = now;
                 if (typeof NET_sendClientInput === 'function') NET_sendClientInput();
             }
-
-            updateLocalClientCamera(dt, now);
         } else if (isSpectator) {
             if (typeof NET_updateSpectatorView === 'function') NET_updateSpectatorView(dt);
         }
@@ -432,7 +480,6 @@ function loop() {
                 if (gameMode === 'ai' || (gameMode === 'online' && NET.isHost)) updateFootsteps(p2, dt, now);
             } else if (isClient) {
                 updateFootsteps(p1, dt, now);
-                updateFootsteps(p2, dt, now);
             }
             if (typeof updateXrayVisibility === 'function') updateXrayVisibility();
         }
@@ -471,7 +518,7 @@ function enterGame(mode) {
     if (!window.getCurrentMapId() && window.loadMap) {
         window.loadMap('battlefield');
     }
-    gameMode = mode;
+    window.GAME_setMode(mode);
     p2.gunHolder.visible = (mode === 'ai' || mode === 'online');
     document.getElementById('lobbyOverlay').style.display = 'none';
     resetMatch();
@@ -479,7 +526,6 @@ function enterGame(mode) {
 }
 window.enterGame = enterGame;
 
-// ★ 按钮事件保留原样 —— loading.js 会用 cloneNode 覆盖它们
 document.getElementById('lobbyRangeBtn').addEventListener('click', () => enterGame('range'));
 document.getElementById('lobbyAiBtn').addEventListener('click', () => enterGame('ai'));
 
@@ -507,8 +553,18 @@ document.getElementById('againBtn').addEventListener('click', () => {
     enterFullscreenAndLock();
 });
 
-window.GAME_setMode = function (mode) { gameMode = mode; };
-window.GAME_setSpectator = false;
+// ============================================================
+// ★ 方案 A 优化 2：模式切换时刷新 pixelRatio
+// ============================================================
+window.GAME_setMode = function (mode) {
+    const wasOnline = (gameMode === 'online');
+    gameMode = mode;
+    const isOnline = (mode === 'online');
+    if (wasOnline !== isOnline && typeof renderer !== 'undefined' && renderer) {
+        renderer.setPixelRatio(getDesiredPixelRatio());
+        console.log('[perf] pixelRatio →', renderer.getPixelRatio(), '(mode:', mode + ')');
+    }
+};
 
 function buildMapSelect() {
     const row = document.getElementById('mapSelectRow');
@@ -555,5 +611,4 @@ function buildMapSelect() {
 (function init() {
     if (window.loadMap) window.loadMap('battlefield');
     buildMapSelect();
-    // 武器预热交给 loading.js 完成
 })();

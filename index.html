@@ -255,9 +255,116 @@
         </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <!-- ============================================================
+         ★ 依赖加载：本地优先，CDN 回退
+         ────────────────────────────────────────────────────────────
+         首次部署前请把以下两个文件放到 vendor/ 目录：
+           vendor/three.min.js     (r128)
+           vendor/peerjs.min.js    (1.5.2)
+         缺失时会自动从 cdnjs / unpkg 拉取，保证即使忘记下载也能跑
+         ============================================================ -->
 
+    <!-- ① three.js -->
+    <script src="vendor/three.min.js"></script>
+    <script>
+        if (typeof THREE === 'undefined') {
+            console.warn('[deps] 本地 three.js 未找到，回退到 cdnjs');
+            document.write(
+                '<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>'
+            );
+        }
+    </script>
+
+    <!-- ② peerjs -->
+    <script src="vendor/peerjs.min.js"></script>
+    <script>
+        if (typeof Peer === 'undefined') {
+            console.warn('[deps] 本地 peerjs 未找到，回退到 unpkg');
+            document.write(
+                '<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"><\/script>'
+            );
+        }
+    </script>
+
+    <!-- ③ 依赖最终校验：任一缺失则停止加载并显示错误 -->
+    <script>
+    (function () {
+        var missing = [];
+        if (typeof THREE === 'undefined') missing.push('three.js (r128)');
+        if (typeof Peer  === 'undefined') missing.push('peerjs (1.5.2)');
+
+        if (missing.length > 0) {
+            console.error('[deps] 缺少依赖:', missing);
+            document.body.innerHTML =
+                '<div style="' +
+                    'display:flex;flex-direction:column;align-items:center;' +
+                    'justify-content:center;height:100vh;color:#fff;' +
+                    'font-family:\'Microsoft YaHei\',Arial,sans-serif;' +
+                    'background:radial-gradient(ellipse at center,#16263a 0%,#08131f 75%);' +
+                    'text-align:center;padding:0 24px;' +
+                '">' +
+                    '<h1 style="color:#ff7a6d;font-size:38px;letter-spacing:6px;margin-bottom:18px;">依赖加载失败</h1>' +
+                    '<p style="color:#cfe0f0;font-size:16px;line-height:1.9;">' +
+                        '缺少：<b style="color:#ffd24a;">' + missing.join('、') + '</b>' +
+                    '</p>' +
+                    '<p style="color:#9fb2c8;font-size:14px;line-height:2;margin-top:12px;max-width:520px;">' +
+                        '请检查网络连接，或手动下载以下文件到 <code style="color:#6ee7b7;">vendor/</code> 目录：' +
+                    '</p>' +
+                    '<ul style="color:#9fb2c8;font-size:13px;text-align:left;line-height:2;' +
+                        'background:rgba(0,0,0,0.3);padding:14px 26px;border-radius:8px;margin-top:14px;">' +
+                        '<li>vendor/three.min.js &nbsp;←&nbsp; cdnjs three.js r128</li>' +
+                        '<li>vendor/peerjs.min.js &nbsp;←&nbsp; unpkg peerjs 1.5.2</li>' +
+                    '</ul>' +
+                    '<button onclick="location.reload()" style="' +
+                        'margin-top:28px;padding:12px 42px;font-size:16px;font-weight:700;' +
+                        'color:#08131f;background:linear-gradient(180deg,#ffd24a,#f0a92e);' +
+                        'border:none;border-radius:10px;letter-spacing:4px;cursor:pointer;' +
+                    '">刷 新 重 试</button>' +
+                '</div>';
+            throw new Error('Missing dependencies: ' + missing.join(', '));
+        }
+
+        console.log('[deps] three.js r128 + peerjs 1.5.2 已就绪');
+    })();
+    </script>
+
+    <!-- ============================================================
+         ④ ★ Canvas2D 性能补丁
+         ────────────────────────────────────────────────────────────
+         程序化生成法线/粗糙度贴图时会大量调用 getImageData 逐像素读取，
+         默认 canvas 保存在 GPU 显存里，回读速度慢，且浏览器会反复警告：
+             "Canvas2D: Multiple readback operations using getImageData
+              are faster with the willReadFrequently attribute set to true."
+
+         这里全局拦截 HTMLCanvasElement.prototype.getContext：
+           · 所有 getContext('2d') 调用自动注入 willReadFrequently: true
+           · canvas 改用 CPU 内存保存，getImageData 读取快一个数量级
+           · 覆盖 weapon_*_hd.js / textures.js / map_desert.js 等所有文件
+           · 必须在所有 js/*.js 之前执行
+         ============================================================ -->
+    <script>
+    (function () {
+        if (typeof HTMLCanvasElement === 'undefined') return;
+
+        const _origGetContext = HTMLCanvasElement.prototype.getContext;
+
+        HTMLCanvasElement.prototype.getContext = function (type, opts) {
+            if (type === '2d') {
+                opts = opts || {};
+                if (opts.willReadFrequently === undefined) {
+                    opts.willReadFrequently = true;
+                }
+            }
+            return _origGetContext.call(this, type, opts);
+        };
+
+        console.log('[perf] Canvas2D willReadFrequently 已全局启用');
+    })();
+    </script>
+
+    <!-- ============================================================
+         游戏脚本（依赖就绪后按序加载）
+         ============================================================ -->
     <script src="js/config.js"></script>
     <script src="js/audio.js"></script>
     <script src="js/textures.js"></script>

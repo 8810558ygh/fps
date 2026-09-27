@@ -220,6 +220,11 @@ function damage(victim, dmg, from) {
     if (victim.hp <= 0) kill(victim, from, now);
 }
 
+// ============================================================
+// ★ kill()：改为按"座位（blue/red）"语义广播与展示
+//   · 房主视角：p1 = 房主自己；p2 = 客户端代理
+//   · 广播座位让客户端和观战者都能正确解析出"谁杀了谁"
+// ============================================================
 function kill(victim, from, now) {
     from.score++;
     victim.hp = 0;
@@ -228,17 +233,31 @@ function kill(victim, from, now) {
     const dmgByVictim = victim.damageDealt[from.id] || { body: 0, head: 0, total: 0 };
     lastKillReport = { attacker: from, victim: victim, dmgByAttacker, dmgByVictim };
 
+    // ★ 联机模式：计算座位并广播
+    let killerSeat = null, victimSeat = null;
     if (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost) {
-        const killerSide = (from === p1) ? 'host' : 'client';
-        const victimSide = (victim === p1) ? 'host' : 'client';
+        const hostSeat  = (NET.mySeat === 'red') ? 'red' : 'blue';
+        const otherSeat = (hostSeat === 'blue')  ? 'red' : 'blue';
+        killerSeat = (from   === p1) ? hostSeat : otherSeat;
+        victimSeat = (victim === p1) ? hostSeat : otherSeat;
+
         if (typeof NET_sendKillEvent === 'function') {
-            NET_sendKillEvent(killerSide, victimSide, roundNumber,
+            NET_sendKillEvent(
+                killerSeat, victimSeat, roundNumber,
                 { head: dmgByAttacker.head, body: dmgByAttacker.body, total: dmgByAttacker.total },
-                { head: dmgByVictim.head, body: dmgByVictim.body, total: dmgByVictim.total });
+                { head: dmgByVictim.head,   body: dmgByVictim.body,   total: dmgByVictim.total }
+            );
         }
     }
 
-    if (window.showRoundReport) window.showRoundReport(roundNumber, from, victim, dmgByAttacker, dmgByVictim);
+    // ★ 回合报告：把座位信息一并传给 UI，让观战者也能正确标注
+    if (window.showRoundReport) {
+        window.showRoundReport(
+            roundNumber, from, victim,
+            dmgByAttacker, dmgByVictim,
+            killerSeat, victimSeat
+        );
+    }
 
     delete from.damageDealt[victim.id];
     delete victim.damageDealt[from.id];
@@ -271,7 +290,6 @@ function computeSniperRecoil(p, now) {
     const dt = now - p.lastShotTime;
     if (dt < 0 || dt >= RECOIL_MS) return 0;
     const t = 1 - dt / RECOIL_MS;
-    // ★ 指数改 1.35：前半段保持更久，不会瞬间回落
     return Math.pow(t, 1.35);
 }
 
@@ -285,7 +303,6 @@ function updateSniperViewmodel(p, dt, now) {
     const w = p.weapon;
 
     // ★ 通用 ADS 分支（rifle + odin，共用 PiP 红点逻辑）
-    // ============================================================
     if (w && vm.userData.adsPos
         && (w.key === 'rifle' || w.key === 'odin')
         && !p.isMelee && !p.isSmoke && !p.isFlash) {
@@ -305,10 +322,7 @@ function updateSniperViewmodel(p, dt, now) {
         return;
     }
 
-    // ============================================================
-    // ★ 狙击枪 ADS 分支（同样使用 adsPos / adsRot）
-    //   开镜时不加后坐力，保持瞄准镜锁在屏幕中心
-    // ============================================================
+    // ★ 狙击枪 ADS 分支
     if (w && w.key === 'sniper' && vm.userData.adsPos
         && !p.isMelee && !p.isSmoke && !p.isFlash
         && p.aiming) {
@@ -324,7 +338,6 @@ function updateSniperViewmodel(p, dt, now) {
         vm.rotation.y += (targetRot.y - vm.rotation.y) * k;
         vm.rotation.z += (targetRot.z - vm.rotation.z) * k;
 
-        // ADS 期间拉栓也继续动
         if (p.boltEnd > now && w.boltMs && vm.userData.boltGroup) {
             const progress = 1 - (p.boltEnd - now) / w.boltMs;
             let pull;
@@ -406,13 +419,10 @@ function updateSniperViewmodel(p, dt, now) {
         return;
     }
 
-    // ============================================================
-    // ★ 狙击拉栓（非 ADS）+ ★ 开火后坐力
-    // ============================================================
+    // ★ 狙击拉栓（非 ADS）+ 开火后坐力
     if (w.key === 'sniper' && w.boltMs && p.boltEnd > now) {
         const progress = 1 - (p.boltEnd - now) / w.boltMs;
 
-        // 拉栓曲线：快拉 → 保持 → 缓推
         let pull;
         if (progress < 0.30) {
             const t = progress / 0.30;
@@ -430,18 +440,15 @@ function updateSniperViewmodel(p, dt, now) {
             boltGroup.position.x = -pull * 0.18;
         }
 
-        // ★ 开火后坐力强度（0~1）
         const recoil = computeSniperRecoil(p, now);
 
-        // ★ 带后坐力的目标位姿
         const targetPos = vm.userData.basePos.clone();
-        targetPos.y += recoil * 0.16;    // 上抬
-        targetPos.z += recoil * 0.13;    // 后撤
+        targetPos.y += recoil * 0.16;
+        targetPos.z += recoil * 0.13;
 
         const targetRot = vm.userData.baseRot.clone();
-        targetRot.z += recoil * 0.45;    // 枪口上翘
+        targetRot.z += recoil * 0.45;
 
-        // 平滑追踪
         const k = Math.min(1, dt * 16);
         vm.position.x += (targetPos.x - vm.position.x) * k;
         vm.position.y += (targetPos.y - vm.position.y) * k;
@@ -460,7 +467,6 @@ function updateSniperViewmodel(p, dt, now) {
     vm.rotation.y += (vm.userData.baseRot.y - vm.rotation.y) * k;
     vm.rotation.z += (vm.userData.baseRot.z - vm.rotation.z) * k;
 
-    // ★ 狙击枪：确保拉栓复位
     if (w.key === 'sniper' && vm.userData.boltGroup) {
         vm.userData.boltGroup.position.x *= Math.max(0, 1 - dt * 20);
     }
@@ -479,7 +485,6 @@ function updateThirdPersonWeapon(p, dt, now) {
 
     const k = Math.min(1, dt * 14);
 
-    // ★ 第三人称狙击枪拉栓：只动枪栓组
     const gun = gh.children.length > 0 ? gh.children[0] : null;
     if (gun && gun.userData && gun.userData.boltGroup) {
         if (p.weapon && p.weapon.key === 'sniper' && p.weapon.boltMs && p.boltEnd > now) {
@@ -556,7 +561,6 @@ function updateThirdPersonWeapon(p, dt, now) {
         return;
     }
 
-    // 非狙击（旧逻辑）：拉栓时整枪后撤
     if (p.boltEnd > now && p.weapon && p.weapon.boltMs && p.weapon.key !== 'sniper') {
         const total = p.weapon.boltMs;
         const t = 1 - (p.boltEnd - now) / total;

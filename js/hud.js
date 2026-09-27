@@ -31,8 +31,6 @@ const _adsRetEl  = document.getElementById('adsReticle');
 
 // ============================================================
 // ★ 性能优化（B4）：HUD 只在变化时写 DOM
-//   updateHUD 每帧被调用，但绝大多数值在一帧内不会变化。
-//   缓存上次写入的值，只有变化才触发 DOM 写入 / 样式重算。
 // ============================================================
 const _hudState = {
     score: -1,
@@ -73,29 +71,73 @@ function createReportContainer() {
     return div;
 }
 
-function getReportColumns(attacker) {
+// ============================================================
+// ★ 报告列名解析
+//   新增 attackerSeat：优先用座位语义，保证观战者/红方客户端的列名正确
+// ============================================================
+function getReportColumns(attacker, attackerSeat) {
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
-    const hasNET = (typeof NET !== 'undefined' && NET && NET.roomId);
+    const hasNET   = (typeof NET !== 'undefined' && NET && NET.roomId);
+
     if (isOnline && hasNET) {
+        // —— 观战者：左右列固定为"蓝方 | 红方" ——
         if (NET.role === 'spectator') {
-            return { leftLabel: '蓝方', leftColor: '#6db3ff', rightLabel: '红方', rightColor: '#ff7a6d', killLabel: attacker.id === 1 ? '蓝方' : '红方' };
+            const killLabel =
+                attackerSeat === 'red'  ? '红方' :
+                attackerSeat === 'blue' ? '蓝方' :
+                (attacker && attacker.id === 1 ? '蓝方' : '红方');
+            return {
+                leftLabel:  '蓝方', leftColor:  '#6db3ff',
+                rightLabel: '红方', rightColor: '#ff7a6d',
+                killLabel
+            };
         }
+
+        // —— 玩家：左右列固定为"你 | 对手名" ——
         const myIsBlue = (NET.mySeat === 'blue');
-        const myColor = myIsBlue ? '#6db3ff' : '#ff7a6d';
-        const opColor = myIsBlue ? '#ff7a6d' : '#6db3ff';
-        const opName = (NET.getOpponentName && NET.getOpponentName()) || '对手';
-        const killLabel = (attacker.id === 1) ? '你' : opName;
-        return { leftLabel: '你', leftColor: myColor, rightLabel: opName, rightColor: opColor, killLabel };
+        const myColor  = myIsBlue ? '#6db3ff' : '#ff7a6d';
+        const opColor  = myIsBlue ? '#ff7a6d' : '#6db3ff';
+        const opName   = (NET.getOpponentName && NET.getOpponentName()) || '对手';
+        const killLabel = attackerSeat
+            ? (attackerSeat === NET.mySeat ? '你' : opName)
+            : (attacker && attacker.id === 1 ? '你' : opName);
+        return {
+            leftLabel:  '你',   leftColor:  myColor,
+            rightLabel: opName, rightColor: opColor,
+            killLabel
+        };
     }
-    return { leftLabel: '玩家1', leftColor: '#6db3ff', rightLabel: '玩家2', rightColor: '#ff7a6d', killLabel: '玩家' + attacker.id };
+
+    // —— 单机 / AI 模式 ——
+    return {
+        leftLabel:  '玩家1', leftColor:  '#6db3ff',
+        rightLabel: '玩家2', rightColor: '#ff7a6d',
+        killLabel:  '玩家' + (attacker ? attacker.id : 1)
+    };
 }
 
-function showRoundReport(roundNumber, attacker, victim, dmgByAttacker, dmgByVictim) {
+// ============================================================
+// ★ showRoundReport：新增 killerSeat / victimSeat 参数
+//   · 有座位信息 → 左列=蓝方、右列=红方
+//   · 无座位信息 → 沿用 attacker.id 的旧逻辑（单机 / AI）
+//   列值语义：该玩家造成的伤害
+// ============================================================
+function showRoundReport(roundNumber, attacker, victim, dmgByAttacker, dmgByVictim,
+                         killerSeat, victimSeat) {
     const report = createReportContainer();
+
+    // 伤害列映射
     let dmg1, dmg2;
-    if (attacker.id === 1) { dmg1 = dmgByAttacker; dmg2 = dmgByVictim; }
-    else { dmg1 = dmgByVictim; dmg2 = dmgByAttacker; }
-    const cols = getReportColumns(attacker);
+    if (killerSeat && victimSeat) {
+        const blueIsAttacker = (killerSeat === 'blue');
+        dmg1 = blueIsAttacker ? dmgByAttacker : dmgByVictim;   // 蓝方造成的伤害
+        dmg2 = blueIsAttacker ? dmgByVictim  : dmgByAttacker;  // 红方造成的伤害
+    } else {
+        if (attacker.id === 1) { dmg1 = dmgByAttacker; dmg2 = dmgByVictim; }
+        else                   { dmg1 = dmgByVictim;  dmg2 = dmgByAttacker; }
+    }
+
+    const cols = getReportColumns(attacker, killerSeat);
 
     const titleRow = document.createElement('div');
     titleRow.style.cssText = `
@@ -139,7 +181,7 @@ function showRoundReport(roundNumber, attacker, victim, dmgByAttacker, dmgByVict
 
     const totalRow = document.createElement('div');
     totalRow.style.cssText = `display: grid; grid-template-columns: 1fr 70px 70px; gap: 8px; padding: 4px 0; font-size: 15px; font-weight: 700;`;
-    const t1c = dmg1.total > 0 ? cols.leftColor : 'rgba(255,255,255,0.25)';
+    const t1c = dmg1.total > 0 ? cols.leftColor  : 'rgba(255,255,255,0.25)';
     const t2c = dmg2.total > 0 ? cols.rightColor : 'rgba(255,255,255,0.25)';
     totalRow.innerHTML = `
         <span style="color: rgba(255,255,255,0.6);">总伤害</span>
@@ -185,12 +227,11 @@ function centerMsg(p, text) { if (p.id === 1) H[1].center.textContent = text; }
 
 // ============================================================
 // ★ 受伤红闪：加 requestAnimationFrame 去重
-//   霰弹枪 12 颗弹丸同帧命中时，只闪一次
 // ============================================================
 let _dmgFlashRaf = 0;
 function dmgFlash(p) {
     if (p.id !== 1) return;
-    if (_dmgFlashRaf) return;           // 同帧已在闪烁，跳过
+    if (_dmgFlashRaf) return;
     const f = H[1].flash;
     f.style.transition = 'none';
     f.style.opacity = 1;
@@ -293,7 +334,7 @@ function updateHUD(now) {
     _setHtml(h.ammo, ammoHtml, 'ammoHtml');
     _setText(h.wtag, wtagText, 'wtagText');
 
-    // 投掷引信倒计时（★ A1：使用缓存节点；★ B4：display 状态变化才写）
+    // 投掷引信倒计时
     if (_cdEl) {
         if (running && gameState === 'combat' && p.throwFuseActive && p.throwFuseType) {
             const remain = Math.max(0, p.throwFuseEnd - now);
@@ -339,9 +380,7 @@ function updateHUD(now) {
     if (h.hint) h.hint.style.display =
         (running && gameState === 'prep' && document.pointerLockElement !== renderer.domElement && !isOver()) ? 'block' : 'none';
 
-    // ============================================================
-    // ★ ADS 状态：隐藏大十字准星，显示倍镜中心红点
-    // ============================================================
+    // ADS 状态
     const isRedDotADS = running && gameState === 'combat'
         && p1.aiming
         && p1.weapon && (p1.weapon.key === 'rifle' || p1.weapon.key === 'odin')

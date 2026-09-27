@@ -36,6 +36,43 @@ const ai = {
 
 const AI_WEAPON_POOL = ['rifle', 'rifle', 'sniper', 'shotgun', 'odin'];
 
+// ============================================================
+// ★ 问题 3 修复：AI 专属临时变量
+//
+//   之前 ai.js 借用了 game_combat.js 里的模块级变量：
+//     _ray / _rcOrigin / _rcTarget / _rcDir / _rcEnd /
+//     _rcRandDir / _rcUp / _rcAxis / _rcQ1 / _rcQ2
+//
+//   这形成了跨文件的隐式耦合：
+//     · 依赖 game_combat.js 先加载（否则 ReferenceError）
+//     · 阅读时看不出这些变量从哪来
+//     · 未来如果加异步/缓存/换加载顺序会静默错乱
+//
+//   现在 ai.js 独立维护自己的一整套：
+//     · 视线检测用 _aiRay / _aiSightOrigin / _aiSightTarget / _aiSightDir
+//     · 开火用   _aiRay / _aiEye / _aiEuler / _aiDir / _aiRandDir /
+//               _aiEnd / _aiUp / _aiAxis / _aiQ1 / _aiQ2
+//
+//   性能不变：依旧复用同一批对象，零 GC 压力。
+// ============================================================
+
+// 视线检测（aiCanSeePlayer）专用
+const _aiRay          = new THREE.Raycaster();
+const _aiSightOrigin  = new THREE.Vector3();
+const _aiSightTarget  = new THREE.Vector3();
+const _aiSightDir     = new THREE.Vector3();
+
+// 开火（aiFire）专用
+const _aiEye     = new THREE.Vector3();
+const _aiDir     = new THREE.Vector3();
+const _aiEuler   = new THREE.Euler(0, 0, 0, 'YXZ');
+const _aiRandDir = new THREE.Vector3();
+const _aiEnd     = new THREE.Vector3();
+const _aiUp      = new THREE.Vector3(0, 1, 0);
+const _aiAxis    = new THREE.Vector3();
+const _aiQ1      = new THREE.Quaternion();
+const _aiQ2      = new THREE.Quaternion();
+
 function aiResetRound(now) {
     const key = AI_WEAPON_POOL[Math.floor(Math.random() * AI_WEAPON_POOL.length)];
     setWeapon(p2, key);
@@ -70,22 +107,22 @@ function aiCanSeePlayer(now) {
         return false;
     }
 
-    // ★ A3：复用 _rcOrigin / _rcTarget / _rcDir / _ray
+    // ★ 问题 3 修复：使用 AI 专属变量
     const eyeY = p2.pos.y + p2.eyeH;
-    _rcOrigin.set(p2.pos.x, eyeY, p2.pos.z);
+    _aiSightOrigin.set(p2.pos.x, eyeY, p2.pos.z);
     const targetY = p1.pos.y + p1.eyeH * 0.85;
-    _rcTarget.set(p1.pos.x, targetY, p1.pos.z);
+    _aiSightTarget.set(p1.pos.x, targetY, p1.pos.z);
 
-    _rcDir.copy(_rcTarget).sub(_rcOrigin);
-    const dist = _rcDir.length();
+    _aiSightDir.copy(_aiSightTarget).sub(_aiSightOrigin);
+    const dist = _aiSightDir.length();
     if (dist < 0.5) { ai.lastVisibilityResult = true; return true; }
-    _rcDir.normalize();
+    _aiSightDir.normalize();
 
-    _ray.set(_rcOrigin, _rcDir);
-    _ray.near = 0;
-    _ray.far = dist;
+    _aiRay.set(_aiSightOrigin, _aiSightDir);
+    _aiRay.near = 0;
+    _aiRay.far = dist;
     const targets = wallMeshes.concat(crateMeshes);
-    const hits = _ray.intersectObjects(targets, false);
+    const hits = _aiRay.intersectObjects(targets, false);
 
     if (hits.length > 0 && hits[0].distance < dist - 0.3) {
         ai.lastVisibilityResult = false;
@@ -94,10 +131,6 @@ function aiCanSeePlayer(now) {
     ai.lastVisibilityResult = true;
     return true;
 }
-
-const _aiEye = new THREE.Vector3();
-const _aiDir = new THREE.Vector3();
-const _aiEuler = new THREE.Euler(0, 0, 0, 'YXZ');
 
 function aiStartReload(now) {
     if (p2.isMelee) return;
@@ -157,27 +190,27 @@ function aiFire(now) {
     if (now >= p1.deadUntil) targets.push(p1.body, p1.head);
 
     for (let i = 0; i < pellets; i++) {
-        // ★ A3：复用临时向量
-        _rcRandDir.copy(_aiDir);
+        // ★ 问题 3 修复：使用 AI 专属变量
+        _aiRandDir.copy(_aiDir);
         if (pellets > 1) {
             const theta = Math.random() * 2 * Math.PI;
             const phi = Math.acos(1 - Math.random() * (1 - Math.cos(spread)));
-            _rcAxis.crossVectors(_aiDir, _rcUp).normalize();
-            if (_rcAxis.length() < 0.01) _rcAxis.set(1, 0, 0);
-            _rcQ1.setFromAxisAngle(_rcAxis, phi);
-            _rcQ2.setFromAxisAngle(_aiDir, theta);
-            _rcRandDir.applyQuaternion(_rcQ1).applyQuaternion(_rcQ2);
+            _aiAxis.crossVectors(_aiDir, _aiUp).normalize();
+            if (_aiAxis.length() < 0.01) _aiAxis.set(1, 0, 0);
+            _aiQ1.setFromAxisAngle(_aiAxis, phi);
+            _aiQ2.setFromAxisAngle(_aiDir, theta);
+            _aiRandDir.applyQuaternion(_aiQ1).applyQuaternion(_aiQ2);
         }
 
-        _ray.set(_aiEye, _rcRandDir);
-        _ray.near = 0;
-        _ray.far = 150;
-        const hits = _ray.intersectObjects(targets, false);
+        _aiRay.set(_aiEye, _aiRandDir);
+        _aiRay.near = 0;
+        _aiRay.far = 150;
+        const hits = _aiRay.intersectObjects(targets, false);
 
-        _rcEnd.copy(_aiEye).addScaledVector(_rcRandDir, 150);
+        _aiEnd.copy(_aiEye).addScaledVector(_aiRandDir, 150);
         if (hits.length) {
             const h = hits[0];
-            _rcEnd.copy(h.point);
+            _aiEnd.copy(h.point);
             if (h.object.userData.part) {
                 const dmg = h.object.userData.part === 'head' ? w.dmgHead : w.dmgBody;
                 if (!p2.damageDealt[1]) p2.damageDealt[1] = { body: 0, head: 0, total: 0 };
@@ -194,7 +227,7 @@ function aiFire(now) {
                 }
             }
         }
-        if (i === 0) spawnTracer(_aiEye.clone(), _rcEnd);
+        if (i === 0) spawnTracer(_aiEye.clone(), _aiEnd);
     }
 }
 

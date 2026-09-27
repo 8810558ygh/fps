@@ -31,6 +31,9 @@ function setWeapon(p, key) {
         p.equipEnd = performance.now() + MELEE.equipMs;
         p.meleeCombo = 0; p.meleeEnd = 0; p.meleeRecovery = 0;
         p.meleeIsHeavy = false; p.lastMeleeTime = 0;
+        if (p._shadowDisabled) {
+            p.gunHolder.traverse(o => { if (o.isMesh) o.castShadow = false; });
+        }
         return;
     }
 
@@ -45,6 +48,9 @@ function setWeapon(p, key) {
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
         p.equipEnd = performance.now() + 400;
+        if (p._shadowDisabled) {
+            p.gunHolder.traverse(o => { if (o.isMesh) o.castShadow = false; });
+        }
         return;
     }
 
@@ -59,6 +65,9 @@ function setWeapon(p, key) {
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
         p.equipEnd = performance.now() + 400;
+        if (p._shadowDisabled) {
+            p.gunHolder.traverse(o => { if (o.isMesh) o.castShadow = false; });
+        }
         return;
     }
 
@@ -80,7 +89,66 @@ function setWeapon(p, key) {
     p.equipEnd = performance.now() + 500;
     p.meleeCombo = 0; p.meleeEnd = 0; p.meleeRecovery = 0;
     p.meleeIsHeavy = false;
+    if (p._shadowDisabled) {
+        p.gunHolder.traverse(o => { if (o.isMesh) o.castShadow = false; });
+    }
 }
+
+// ============================================================
+// ★ 通用武器模型切换函数（问题 2 修复）
+// ============================================================
+function applyWeaponToPlayer(p, key, withViewmodel) {
+    if (!p) return;
+
+    while (p.gunHolder.children.length) {
+        p.gunHolder.remove(p.gunHolder.children[0]);
+    }
+    if (withViewmodel && p.vm) {
+        while (p.vm.children.length) {
+            p.vm.remove(p.vm.children[0]);
+        }
+    }
+
+    let isMelee = false, isSmoke = false, isFlash = false;
+    let weapon = null, weaponKey = null;
+
+    if (key === 'knife') {
+        isMelee = true;
+        weaponKey = 'knife';
+        weapon = MELEE;
+    } else if (key === 'smoke') {
+        isSmoke = true;
+        weaponKey = 'smoke';
+        weapon = SMOKE;
+    } else if (key === 'flash') {
+        isFlash = true;
+        weaponKey = 'flash';
+        weapon = FLASH;
+    } else if (WEAPONS[key]) {
+        weaponKey = key;
+        weapon = WEAPONS[key];
+    } else {
+        return;
+    }
+
+    if (typeof makeWeaponModel === 'function') {
+        p.gunHolder.add(makeWeaponModel(key, p.mat));
+    }
+    if (withViewmodel && p.vm && typeof makeViewmodel === 'function') {
+        p.vm.add(makeViewmodel(key, p.mat));
+    }
+
+    if (p._shadowDisabled) {
+        p.gunHolder.traverse(o => { if (o.isMesh) o.castShadow = false; });
+    }
+
+    p.isMelee   = isMelee;
+    p.isSmoke   = isSmoke;
+    p.isFlash   = isFlash;
+    p.weaponKey = weaponKey;
+    p.weapon    = weapon;
+}
+window.applyWeaponToPlayer = applyWeaponToPlayer;
 
 function makePlayer(id, color, spawn, weaponKey) {
     const mat = new THREE.MeshLambertMaterial({ color, transparent: true });
@@ -99,7 +167,6 @@ function makePlayer(id, color, spawn, weaponKey) {
     light.position.set(0.26, 1.3, -0.85);
     g.add(body, head, visor, pack, gunHolder, light);
 
-    // ★ 闪光指示器：被闪光弹命中时在角色眼前显示光晕
     const flashIndicator = new THREE.Group();
     flashIndicator.position.set(0, 1.62, -0.28);
     flashIndicator.visible = false;
@@ -186,6 +253,17 @@ function makePlayer(id, color, spawn, weaponKey) {
         throwFuseStart: 0,
         throwFuseEnd: 0,
         throwFuseInHand: false,
+        // A1：默认不处于"禁用阴影"状态
+        _shadowDisabled: false,
+
+        // ============================================================
+        // ★ B1：联机对手位置插值目标
+        //   · 服务器每 33ms 发来快照 → 存到 _netTargetPos
+        //   · 客户端每帧（16ms）用 lerp 平滑靠拢 → 30Hz 看起来像 60Hz
+        //   · 初始化时 = spawn 位置，避免开局从 (0,0,0) 追过来
+        // ============================================================
+        _netTargetPos: new THREE.Vector3(spawn.x, 0, spawn.z),
+        _netTargetYaw: spawn.yaw,
 
         input: {
             forward: 0,

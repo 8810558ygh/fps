@@ -24,17 +24,6 @@ canvas {
     z-index: 0;
 }
 
-.divider {
-    position: fixed;
-    top: 0;
-    left: 50%;
-    width: 3px;
-    height: 100%;
-    background: #000;
-    z-index: 5;
-    transform: translateX(-1.5px);
-}
-
 /* ---------- 小地图 ---------- */
 #minimap {
     position: fixed !important;
@@ -72,17 +61,17 @@ canvas {
 }
 
 /* ---------- HUD ---------- */
+/* ★ 现在只有一个 HUD，宽度占满屏幕 */
 .hud {
     position: fixed;
     top: 0;
-    width: 50%;
+    width: 100%;
     height: 100%;
     z-index: 10;
     pointer-events: none;
     color: #fff;
 }
 #hud1 { left: 0; }
-#hud2 { left: 50%; }
 
 .cross {
     position: absolute;
@@ -142,7 +131,6 @@ canvas {
     text-shadow: 0 2px 6px #000;
 }
 #hud1 .score { color: #6db3ff; }
-#hud2 .score { color: #ff7a6d; }
 
 .timer {
     position: fixed;
@@ -199,21 +187,6 @@ canvas {
     align-items: flex-end;
     justify-content: space-between;
 }
-.hpwrap {
-    width: 46%;
-    height: 16px;
-    background: rgba(0, 0, 0, .55);
-    border: 1px solid rgba(255, 255, 255, .35);
-    border-radius: 8px;
-    overflow: hidden;
-}
-.hp {
-    height: 100%;
-    width: 100%;
-    background: linear-gradient(90deg, #37c46a, #7ee08a);
-    transition: width .15s;
-}
-.hp.low { background: linear-gradient(90deg, #d33, #f66); }
 
 .ammo {
     font-size: 26px;
@@ -233,7 +206,6 @@ canvas {
     opacity: .9;
 }
 #hud1 .wtag { color: #9cc8ff; }
-#hud2 .wtag { color: #ffab9f; }
 
 .feed {
     position: absolute;
@@ -272,31 +244,6 @@ canvas {
     display: none;
 }
 
-/* ---------- 武器选择 ---------- */
-.wsel { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
-.wrow { display: flex; align-items: center; gap: 10px; }
-.wlabel { width: 88px; text-align: right; color: #9fb2c8; font-size: 15px; }
-.wbtn {
-    pointer-events: auto;
-    cursor: pointer;
-    width: 34px;
-    height: 34px;
-    border-radius: 8px;
-    border: 1px solid #3a4a5e;
-    background: #1c2836;
-    color: #ffd24a;
-    font-size: 13px;
-}
-.wbtn:hover { background: #26374a; }
-.wcur {
-    width: 250px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-}
-.wcur b { font-size: 19px; letter-spacing: 2px; color: #fff; }
-.wcur i { font-style: normal; font-size: 12px; color: #8fa3b8; margin-top: 2px; }
-
 /* ---------- 覆盖层 ---------- */
 .overlay {
     position: fixed;
@@ -312,12 +259,6 @@ canvas {
 .overlay h1 { font-size: 44px; letter-spacing: 6px; margin-bottom: 8px; }
 .overlay h1 .b { color: #6db3ff; }
 .overlay h1 .r { color: #ff7a6d; }
-.overlay .sub { color: #9fb2c8; margin-bottom: 22px; }
-table.ctrl { border-collapse: collapse; margin-bottom: 26px; }
-table.ctrl th,
-table.ctrl td { border: 1px solid #3a4a5e; padding: 7px 18px; text-align: center; font-size: 15px; }
-table.ctrl th { background: #1c2836; }
-table.ctrl td.k { background: #141d29; font-family: Consolas, monospace; color: #ffd24a; }
 .btn {
     pointer-events: auto;
     cursor: pointer;
@@ -447,7 +388,6 @@ table.ctrl td.k { background: #141d29; font-family: Consolas, monospace; color: 
     .throw-cd-icon  { font-size: 13px; }
     .throw-cd-time  { min-width: 38px; }
     .overlay h1 { font-size: 30px; letter-spacing: 2px; }
-    table.ctrl th, table.ctrl td { padding: 4px 10px; font-size: 13px; }
     .btn { font-size: 16px; padding: 10px 30px; }
     .lobby-title { font-size: 52px !important; letter-spacing: 10px !important; }
     .lobby-sub { font-size: 12px; letter-spacing: 4px; margin-bottom: 32px; }

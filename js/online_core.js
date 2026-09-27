@@ -39,13 +39,34 @@ const NET = {
     },
     ping: 0,
 
-    // 内部计时器与集合
     _heartbeatTimer: null,
     _pingTimer: null,
     _hostBroadcastTimer: null,
     _assignedPeers: new Set()
 };
 window.NET = NET;
+
+// ============================================================
+// ★ 问题 1 修复：统一状态查询接口
+//
+//   之前散落在 main.js / input.js / input_touch.js 里的
+//   `NET.role === 'spectator'` 判断，现在统一走这两个方法：
+//     · 单一真相来源是 NET.role
+//     · 删除只写不读的 window.GAME_setSpectator
+//     · 未来加新角色（如 coach）只需改这一处
+// ============================================================
+NET.isSpectator = function () {
+    return typeof gameMode !== 'undefined'
+        && gameMode === 'online'
+        && NET.role === 'spectator';
+};
+
+NET.isClientPlayer = function () {
+    return typeof gameMode !== 'undefined'
+        && gameMode === 'online'
+        && NET.role === 'player'
+        && !NET.isHost;
+};
 
 function getMyName() {
     let n = localStorage.getItem('pvp_nick');
@@ -294,11 +315,10 @@ function handleRoomMessage(fromId, data) {
             if (NET.isHost) handleSeatRequest(fromId, data.targetSeat); break;
         case 'seatUpdate':
             applySeatUpdate(data.seats, data.members); updateOpponentInfo(); break;
-                case 'gameStart':
+        case 'gameStart':
             if (!NET.started) {
                 NET.started = true;
                 syncMapToHost(data.mapId);
-                // ★ 进入加载流程（loading.js 提供），加载完成后自动进入游戏
                 if (typeof window.beginOnlineLoading === 'function') {
                     window.beginOnlineLoading(data.mapId, false);
                 } else {
@@ -344,7 +364,6 @@ function handleRoomMessage(fromId, data) {
             }
             break;
 
-            // ★ 加载流程消息（loading.js 提供处理函数）
         case 'loadingProgress':
             if (typeof window.handleClientLoadingProgress === 'function') {
                 window.handleClientLoadingProgress(fromId, data.progress);
@@ -360,7 +379,7 @@ function handleRoomMessage(fromId, data) {
                 window.handleLoadingComplete();
             }
             break;
-            
+
         case 'chat':
             if (window.addChatMessage) addChatMessage(fromId === NET.myPeerId ? 1 : 2, data.text); break;
         case 'ping':
@@ -514,6 +533,5 @@ window.leaveOnlineRoom = function () {
     document.getElementById('lobbyOverlay').style.display = 'flex';
 };
 
-// 核心函数暴露给 UI 使用
 window._NET_createRoom = createRoom;
 window._NET_joinRoom = joinRoom;

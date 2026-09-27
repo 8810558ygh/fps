@@ -32,6 +32,28 @@ function _findByName(root, name) {
     return found;
 }
 
+// ============================================================
+// ★ 关键修复（观战视角 bug）：
+//
+//   loading.js 的 compileWeaponShadersAllAngles() 预热武器模板时，
+//   会把模板的 position 设成 (0, 0, 0) 以方便绕圈渲染，
+//   渲染结束后**没有恢复**。由于模板是单例缓存，
+//   之后每次 clone 出来的视图模型位置都是 (0, 0, 0)。
+//
+//   正常玩家为什么看不出问题：
+//     updateSniperViewmodel() 每帧执行 vm.position.lerp(basePos, k)，
+//     会把位置从 (0,0,0) 平滑插值回 basePos（如 (0.32, -0.26, -0.44)），
+//     玩家几乎察觉不到。
+//
+//   观战为什么暴露：
+//     updateSpectatorView() 里不调用 updateSniperViewmodel，
+//     位置就停在 (0,0,0)（= 相机原点），武器模型贴在镜头上，
+//     屏幕上什么都看不到 → 表现为"切刀看不到刀"、"枪倒着显示"、
+//     "开镜不显示"等一堆现象。
+//
+//   修复：clone 后立即从 userData 恢复 basePos / baseRot。
+//   世界模型的 basePos / baseRot 为 undefined，此判断不会误伤。
+// ============================================================
 function _cloneHdTemplate(tpl) {
     if (!tpl) return null;
 
@@ -47,12 +69,16 @@ function _cloneHdTemplate(tpl) {
     dst.adsPos  = src.adsPos  ? src.adsPos.clone()  : undefined;
     dst.adsRot  = src.adsRot  ? src.adsRot.clone()  : undefined;
 
+    // ★ 关键修复：从 userData 恢复默认位姿
+    if (dst.basePos) clone.position.copy(dst.basePos);
+    if (dst.baseRot) clone.rotation.copy(dst.baseRot);
+
     dst.muzzlePoint = _findByName(clone, 'muzzlePoint');
     dst.boltGroup   = _findByName(clone, 'boltGroup');
     dst.scopeCenter = _findByName(clone, 'scopeCenter');
     dst.lensMeshF   = _findByName(clone, 'scopeLensFront');
     dst.lensMeshB   = _findByName(clone, 'scopeLensBack');
-    // ★ 新增：刀的锚点
+    // ★ 刀的锚点
     dst.bladeTip    = _findByName(clone, 'bladeTip');
     dst.attackPoint = _findByName(clone, 'attackPoint');
 
@@ -73,7 +99,6 @@ function _getWorldTemplate(type) {
         } else if (type === 'odin' && window.__HD_ODIN && window.__HD_ODIN.buildWorld) {
             tpl = window.__HD_ODIN.buildWorld();
         } else if (type === 'knife' && window.__HD_KNIFE && window.__HD_KNIFE.buildWorld) {
-            // ★ 新增：刀的世界模型
             tpl = window.__HD_KNIFE.buildWorld();
         }
     } catch (e) {
@@ -97,7 +122,6 @@ function _getViewTemplate(type) {
         } else if (type === 'odin' && window.__HD_ODIN && window.__HD_ODIN.buildViewmodel) {
             tpl = window.__HD_ODIN.buildViewmodel();
         } else if (type === 'knife' && window.__HD_KNIFE && window.__HD_KNIFE.buildViewmodel) {
-            // ★ 新增：刀的视图模型
             tpl = window.__HD_KNIFE.buildViewmodel();
         }
     } catch (e) {

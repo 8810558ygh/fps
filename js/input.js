@@ -31,7 +31,8 @@ function _requestFuseRelease() {
 window.addEventListener('keydown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
-    if (typeof NET !== 'undefined' && NET.role === 'spectator') {
+    // ★ 问题 1 修复：统一走 NET.isSpectator()
+    if (NET.isSpectator()) {
         if (e.code === 'Enter' || e.code === 'NumpadEnter') {
             if (running && !isOver() && typeof openChat === 'function') {
                 e.preventDefault(); openChat(); return;
@@ -129,7 +130,8 @@ window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; }
 document.addEventListener('mousedown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
-    if (typeof NET !== 'undefined' && NET.role === 'spectator') {
+    // ★ 问题 1 修复：统一走 NET.isSpectator()
+    if (NET.isSpectator()) {
         if (e.button === 0) {
             e.preventDefault(); e.stopPropagation();
             if (typeof NET_spectatorToggle === 'function') NET_spectatorToggle();
@@ -168,7 +170,8 @@ document.addEventListener('mousedown', e => {
 
 document.addEventListener('mouseup', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
-    if (typeof NET !== 'undefined' && NET.role === 'spectator') { e.preventDefault(); e.stopPropagation(); return; }
+    // ★ 问题 1 修复：统一走 NET.isSpectator()
+    if (NET.isSpectator()) { e.preventDefault(); e.stopPropagation(); return; }
     if (e.button === 0) {
         mouse.leftDown = false;
         _requestFuseRelease();
@@ -178,7 +181,8 @@ document.addEventListener('mouseup', e => {
 
 document.addEventListener('wheel', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
-    if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
+    // ★ 问题 1 修复：统一走 NET.isSpectator()
+    if (NET.isSpectator()) return;
     e.preventDefault(); e.stopPropagation();
     if (!running || isOver()) return;
     if (typeof p1 === 'undefined' || !p1) return;

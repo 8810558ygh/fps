@@ -38,7 +38,6 @@ function handleFullSync(data) {
     syncMapToHost(data.mapId);
 
     renderRoomUI(); updateOpponentInfo();
-        // ★ 已开局：走加载流程（loading.js 提供）
     if (NET.started) {
         if (typeof window.beginOnlineLoading === 'function') {
             window.beginOnlineLoading(data.mapId || getLocalMapId(), false);
@@ -161,10 +160,7 @@ function enterOnlineGame() {
     if (NET.role === 'spectator') {
         const mc = document.getElementById('mobile-controls');
         if (mc) mc.style.display = 'none';
-        window.GAME_setSpectator = true;
         showSpectatorHint();
-    } else {
-        window.GAME_setSpectator = false;
     }
 
     updateOpponentInfo();
@@ -173,9 +169,12 @@ function enterOnlineGame() {
 }
 window.NET_enterOnlineGame = enterOnlineGame;
 
+// ============================================================
+// ★ 方案 A 优化 1：房主广播频率 100Hz → 30Hz
+// ============================================================
 function startHostBroadcast() {
     if (NET._hostBroadcastTimer) clearInterval(NET._hostBroadcastTimer);
-    NET._hostBroadcastTimer = setInterval(hostBroadcastTick, 10);
+    NET._hostBroadcastTimer = setInterval(hostBroadcastTick, 33);
 }
 function stopHostBroadcast() {
     if (NET._hostBroadcastTimer) { clearInterval(NET._hostBroadcastTimer); NET._hostBroadcastTimer = null; }
@@ -309,9 +308,30 @@ function handleHostState(data) {
         if (typeof p1 !== 'undefined' && p1) {
             const targetKey = myData.isMelee ? 'knife' : (myData.isSmoke ? 'smoke' : (myData.isFlash ? 'flash' : myData.weapon));
             const currentKey = p1.isMelee ? 'knife' : (p1.isSmoke ? 'smoke' : (p1.isFlash ? 'flash' : p1.weaponKey));
-            if (targetKey !== currentKey) setWeapon(p1, targetKey);
+            if (targetKey !== currentKey) {
+                applyWeaponToPlayer(p1, targetKey, true);
+            }
 
-            p1.pos.set(myData.x, myData.y, myData.z);
+            // ★ 自己（p1）：本地预测 + 服务器平滑校正（粘滞感修复）
+            const authX = myData.x, authY = myData.y, authZ = myData.z;
+            const dx = authX - p1.pos.x;
+            const dy = authY - p1.pos.y;
+            const dz = authZ - p1.pos.z;
+            const errSq = dx * dx + dy * dy + dz * dz;
+
+            const HARD_RESYNC_SQ = 4.0;
+            const SMOOTH_RATE = 0.25;
+
+            if (errSq > HARD_RESYNC_SQ) {
+                p1.pos.set(authX, authY, authZ);
+                p1.vy = 0;
+                p1.prevY = authY;
+            } else {
+                p1.pos.x += dx * SMOOTH_RATE;
+                p1.pos.y += dy * SMOOTH_RATE;
+                p1.pos.z += dz * SMOOTH_RATE;
+            }
+
             p1.hp = myData.hp;
             p1.armor = myData.armor;
             p1.score = myData.score;
@@ -357,9 +377,26 @@ function handleHostState(data) {
         }
 
         if (typeof p2 !== 'undefined' && p2) {
-            p2.pos.set(oppData.x, oppData.y, oppData.z);
-            p2.yaw = oppData.yaw;
+            // ============================================================
+            // ★ B1：对手（p2）位置改为"记录目标"，实际位置由
+            //   main.js 的 interpolateRemotePlayer 每帧平滑靠拢
+            //
+            //   改动前：p2.pos.set(...) → 每 33ms 跳一次
+            //   改动后：p2._netTargetPos = 快照位置
+            //          客户端每帧 lerp(p2.pos → _netTargetPos) → 视觉平滑
+            // ============================================================
+            if (p2._netTargetPos) {
+                p2._netTargetPos.set(oppData.x, oppData.y, oppData.z);
+                p2._netTargetYaw = oppData.yaw;
+            } else {
+                // 兜底（理论上不会走到）
+                p2.pos.set(oppData.x, oppData.y, oppData.z);
+                p2.yaw = oppData.yaw;
+            }
+
+            // pitch 不做插值（影响小）
             p2.pitch = oppData.pitch;
+
             p2.hp = oppData.hp;
             p2.armor = oppData.armor;
             p2.baseVisible = oppData.visible;
@@ -387,31 +424,14 @@ function handleHostState(data) {
                 p2.mesh.visible = true;
             }
 
-            p2.mesh.position.copy(p2.pos);
-            p2.mesh.rotation.y = p2.yaw;
-            p2.mesh.scale.y = p2.height / HEIGHT_STAND;
+            // ★ 注意：mesh 的 position / rotation / scale 现在由
+            //   main.js 里的 interpolateRemotePlayer 每帧更新，
+            //   这里不再 p2.mesh.position.copy(...)
 
             const targetKey = oppData.isMelee ? 'knife' : (oppData.isSmoke ? 'smoke' : (oppData.isFlash ? 'flash' : oppData.weapon));
             const currentKey = p2.isMelee ? 'knife' : (p2.isSmoke ? 'smoke' : (p2.isFlash ? 'flash' : p2.weaponKey));
             if (targetKey !== currentKey) {
-                while (p2.gunHolder.children.length) p2.gunHolder.remove(p2.gunHolder.children[0]);
-                if (targetKey === 'knife') {
-                    if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel('knife', p2.mat));
-                    p2.isMelee = true; p2.isSmoke = false; p2.isFlash = false;
-                    p2.weaponKey = 'knife'; p2.weapon = MELEE;
-                } else if (targetKey === 'smoke') {
-                    if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel('smoke', p2.mat));
-                    p2.isMelee = false; p2.isSmoke = true; p2.isFlash = false;
-                    p2.weaponKey = 'smoke'; p2.weapon = SMOKE;
-                } else if (targetKey === 'flash') {
-                    if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel('flash', p2.mat));
-                    p2.isMelee = false; p2.isSmoke = false; p2.isFlash = true;
-                    p2.weaponKey = 'flash'; p2.weapon = FLASH;
-                } else if (WEAPONS[targetKey]) {
-                    if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel(targetKey, p2.mat));
-                    p2.isMelee = false; p2.isSmoke = false; p2.isFlash = false;
-                    p2.weaponKey = targetKey; p2.weapon = WEAPONS[targetKey];
-                }
+                applyWeaponToPlayer(p2, targetKey, false);
             }
         }
     } else if (NET.role === 'spectator') {
@@ -450,29 +470,7 @@ function updateSpectatorView(dt) {
     const wantKey = watchData.isMelee ? 'knife' : (watchData.isSmoke ? 'smoke' : (watchData.isFlash ? 'flash' : watchData.weapon));
     const curKey = p1.isMelee ? 'knife' : (p1.isSmoke ? 'smoke' : (p1.isFlash ? 'flash' : p1.weaponKey));
     if (wantKey !== curKey) {
-        while (p1.gunHolder.children.length) p1.gunHolder.remove(p1.gunHolder.children[0]);
-        while (p1.vm.children.length) p1.vm.remove(p1.vm.children[0]);
-        if (wantKey === 'knife') {
-            if (typeof makeWeaponModel === 'function') p1.gunHolder.add(makeWeaponModel('knife', p1.mat));
-            if (typeof makeViewmodel === 'function') p1.vm.add(makeViewmodel('knife', p1.mat));
-            p1.isMelee = true; p1.isSmoke = false; p1.isFlash = false;
-            p1.weaponKey = 'knife'; p1.weapon = MELEE;
-        } else if (wantKey === 'smoke') {
-            if (typeof makeWeaponModel === 'function') p1.gunHolder.add(makeWeaponModel('smoke', p1.mat));
-            if (typeof makeViewmodel === 'function') p1.vm.add(makeViewmodel('smoke', p1.mat));
-            p1.isMelee = false; p1.isSmoke = true; p1.isFlash = false;
-            p1.weaponKey = 'smoke'; p1.weapon = SMOKE;
-        } else if (wantKey === 'flash') {
-            if (typeof makeWeaponModel === 'function') p1.gunHolder.add(makeWeaponModel('flash', p1.mat));
-            if (typeof makeViewmodel === 'function') p1.vm.add(makeViewmodel('flash', p1.mat));
-            p1.isMelee = false; p1.isSmoke = false; p1.isFlash = true;
-            p1.weaponKey = 'flash'; p1.weapon = FLASH;
-        } else if (WEAPONS[wantKey]) {
-            if (typeof makeWeaponModel === 'function') p1.gunHolder.add(makeWeaponModel(wantKey, p1.mat));
-            if (typeof makeViewmodel === 'function') p1.vm.add(makeViewmodel(wantKey, p1.mat));
-            p1.isMelee = false; p1.isSmoke = false; p1.isFlash = false;
-            p1.weaponKey = wantKey; p1.weapon = WEAPONS[wantKey];
-        }
+        applyWeaponToPlayer(p1, wantKey, true);
     }
 
     p1.cam.position.set(watchData.x, watchData.y + p1.eyeH, watchData.z);
@@ -506,29 +504,16 @@ function updateSpectatorView(dt) {
     const otherKey = otherData.isMelee ? 'knife' : (otherData.isSmoke ? 'smoke' : (otherData.isFlash ? 'flash' : otherData.weapon));
     const p2Key = p2.isMelee ? 'knife' : (p2.isSmoke ? 'smoke' : (p2.isFlash ? 'flash' : p2.weaponKey));
     if (otherKey !== p2Key) {
-        while (p2.gunHolder.children.length) p2.gunHolder.remove(p2.gunHolder.children[0]);
-        if (otherKey === 'knife') {
-            if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel('knife', p2.mat));
-            p2.isMelee = true; p2.isSmoke = false; p2.isFlash = false;
-            p2.weaponKey = 'knife'; p2.weapon = MELEE;
-        } else if (otherKey === 'smoke') {
-            if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel('smoke', p2.mat));
-            p2.isMelee = false; p2.isSmoke = true; p2.isFlash = false;
-            p2.weaponKey = 'smoke'; p2.weapon = SMOKE;
-        } else if (otherKey === 'flash') {
-            if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel('flash', p2.mat));
-            p2.isMelee = false; p2.isSmoke = false; p2.isFlash = true;
-            p2.weaponKey = 'flash'; p2.weapon = FLASH;
-        } else if (WEAPONS[otherKey]) {
-            if (typeof makeWeaponModel === 'function') p2.gunHolder.add(makeWeaponModel(otherKey, p2.mat));
-            p2.isMelee = false; p2.isSmoke = false; p2.isFlash = false;
-            p2.weaponKey = otherKey; p2.weapon = WEAPONS[otherKey];
-        }
+        applyWeaponToPlayer(p2, otherKey, false);
     }
 
     if (typeof updateThirdPersonWeapon === 'function') {
         updateThirdPersonWeapon(p1, dt, performance.now());
         updateThirdPersonWeapon(p2, dt, performance.now());
+    }
+
+    if (typeof updateSniperViewmodel === 'function') {
+        updateSniperViewmodel(p1, dt, performance.now());
     }
 }
 window.NET_updateSpectatorView = updateSpectatorView;
@@ -610,22 +595,45 @@ function handleShootEvent(data) {
     }
 }
 
+function getPlayerNameBySeat(seat) {
+    if (!seat) return '未知';
+    const peerId = seat === 'blue' ? NET.seats.blue
+                 : seat === 'red'  ? NET.seats.red
+                 : null;
+    if (!peerId) return seat === 'blue' ? '蓝方' : '红方';
+    if (peerId === NET.myPeerId) return '你';
+    const m = NET.members.get(peerId);
+    return (m && m.name) || (seat === 'blue' ? '蓝方' : '红方');
+}
+
 function handleKillEvent(data) {
-    if (typeof sKill === 'function') sKill(1);
+    if (typeof sKill  === 'function') sKill(1);
     if (typeof sDeath === 'function') sDeath();
 
-    const hostSeat = NET.hostSeat || 'blue';
-    const iAmPlayer = (NET.mySeat === 'blue' || NET.mySeat === 'red');
-    const mySide = (NET.mySeat === hostSeat) ? 'host' : 'client';
-    const iAmVictim = iAmPlayer && (data.victimSide === mySide);
-    const iAmKiller = iAmPlayer && (data.killerSide === mySide);
+    const mySeat     = NET.mySeat;
+    const isMePlayer = (mySeat === 'blue' || mySeat === 'red');
+    const iAmKiller  = isMePlayer && (data.killerSeat === mySeat);
+    const iAmVictim  = isMePlayer && (data.victimSeat === mySeat);
 
-    if (iAmVictim && typeof p1 !== 'undefined' && p1) {
+    if (NET.role === 'spectator') {
+        if (data.victimSeat === NET.spectatorTarget) {
+            if (typeof p1 !== 'undefined' && p1) {
+                p1.hp = 0;
+                p1.deadUntil = Infinity;
+                p1.baseVisible = false;
+            }
+        } else if (typeof p2 !== 'undefined' && p2) {
+            p2.hp = 0;
+            p2.deadUntil = Infinity;
+            p2.baseVisible = false;
+            p2.mesh.visible = false;
+        }
+    } else if (iAmVictim && typeof p1 !== 'undefined' && p1) {
         p1.hp = 0;
         p1.deadUntil = Infinity;
         p1.baseVisible = false;
         p1.aiming = false;
-        p1.input.aim = false;
+        if (p1.input) p1.input.aim = false;
         p1.flashUntil = 0;
     } else if (iAmKiller && typeof p2 !== 'undefined' && p2) {
         p2.hp = 0;
@@ -641,16 +649,38 @@ function handleKillEvent(data) {
         p2.flashUntil = 0;
     }
 
-    let attacker, victim;
-    if (data.killerSide === 'client') { attacker = p1; victim = p2; }
-    else { attacker = p2; victim = p1; }
-    if (typeof feed === 'function' && typeof p1 !== 'undefined') {
-        const attackerName = (attacker === p1) ? '你' : NET.getOpponentName();
-        const victimName = (victim === p1) ? '你' : NET.getOpponentName();
-        feed(p1, `<b style="color:#ffd24a">${attackerName}</b> 击杀了 <b style="color:#ff7a6d">${victimName}</b>`);
+    const killerName = getPlayerNameBySeat(data.killerSeat);
+    const victimName = getPlayerNameBySeat(data.victimSeat);
+    const kc = data.killerSeat === 'blue' ? '#6db3ff' : '#ff7a6d';
+    const vc = data.victimSeat === 'blue' ? '#6db3ff' : '#ff7a6d';
+    const html = `<b style="color:${kc}">${killerName}</b> 击杀了 <b style="color:${vc}">${victimName}</b>`;
+    if (typeof feed === 'function' && typeof p1 !== 'undefined' && p1) {
+        feed(p1, html);
     }
-    if (typeof showRoundReport === 'function' && data.dmgByKiller && data.dmgByVictim) {
-        window.showRoundReport(data.roundNumber || 1, attacker, victim, data.dmgByKiller, data.dmgByVictim);
+
+    if (typeof showRoundReport === 'function'
+        && data.dmgByKiller && data.dmgByVictim) {
+
+        let attacker, victim;
+        if (NET.role === 'spectator') {
+            if (data.killerSeat === NET.spectatorTarget) {
+                attacker = p1; victim = p2;
+            } else {
+                attacker = p2; victim = p1;
+            }
+        } else if (isMePlayer) {
+            if (iAmKiller) { attacker = p1; victim = p2; }
+            else           { attacker = p2; victim = p1; }
+        } else {
+            attacker = p1; victim = p2;
+        }
+
+        window.showRoundReport(
+            data.roundNumber || 1,
+            attacker, victim,
+            data.dmgByKiller, data.dmgByVictim,
+            data.killerSeat, data.victimSeat
+        );
     }
 }
 
@@ -703,14 +733,19 @@ window.NET_sendDamageEvent = function (target, dmg) {
     if (!NET.isHost) return;
     broadcast({ type: 'damageEvent', target, dmg });
 };
-window.NET_sendKillEvent = function (killerSide, victimSide, round, dmgByKiller, dmgByVictim) {
+
+window.NET_sendKillEvent = function (killerSeat, victimSeat, round, dmgByKiller, dmgByVictim) {
     if (!NET.isHost) return;
     broadcast({
-        type: 'killEvent', killerSide, victimSide, roundNumber: round,
+        type: 'killEvent',
+        killerSeat: killerSeat || null,
+        victimSeat: victimSeat || null,
+        roundNumber: round,
         dmgByKiller: dmgByKiller || { body: 0, head: 0, total: 0 },
         dmgByVictim: dmgByVictim || { body: 0, head: 0, total: 0 }
     });
 };
+
 window.NET_sendRoundEvent = function (gameStateStr, remain, reset, roundNum) {
     if (!NET.isHost) return;
     broadcast({ type: 'roundEvent', gameState: gameStateStr, remain, reset, roundNumber: roundNum });

@@ -1,7 +1,6 @@
 // ===== js/game.js – 回合管理、特效循环、比赛管理 =====
 
 function updateEffects(dt, now) {
-    // ★ B1：曳光弹改为对象池，不再遍历 / dispose
     if (typeof updateTracers === 'function') updateTracers(now);
 
     for (let i = sparks.length - 1; i >= 0; i--) {
@@ -11,8 +10,6 @@ function updateEffects(dt, now) {
         s.mesh.position.addScaledVector(s.vel, dt);
         if (s.life <= 0) {
             scene.remove(s.mesh);
-            // ★ 火花材质现在是共享缓存的（见 game_effects.js 的 _getSparkMat），
-            //   这里不能再 dispose，否则会把其他火花的材质一起销毁
             sparks.splice(i, 1);
         }
     }
@@ -46,7 +43,6 @@ function resetPlayer(p, now) {
     p.reloadEnd = 0; p.nextShot = 0;
     p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
 
-    // ★★★ 关键修复：重置右键开镜意图，避免下一回合自动开镜 ★★★
     if (p.input) {
         p.input.aim   = false;
         p.input.fire  = false;
@@ -79,6 +75,13 @@ function resetPlayer(p, now) {
     p.throwFuseEnd = 0;
     p.throwFuseInHand = false;
 
+    // ============================================================
+    // ★ B1：回合重置时同步插值目标
+    //   否则 p2（对手）会在回合重置后被插值函数"拉回"上一回合位置
+    // ============================================================
+    if (p._netTargetPos) p._netTargetPos.set(p.spawn.x, gh, p.spawn.z);
+    if (p._netTargetYaw !== undefined) p._netTargetYaw = p.spawn.yaw;
+
     if (p.vm && p.vm.children.length > 0) {
         const vm = p.vm.children[0];
         if (vm.userData.basePos) {
@@ -107,7 +110,6 @@ function startRound(now) {
     for (const k in keys) keys[k] = false;
     mouse.leftDown = false; mouse.aim = false;
 
-    // ★★★ 双保险：再清一次输入意图（p1 本地 + p2 联机时可能残留）★★★
     if (p1 && p1.input) p1.input.aim = false;
     if (p2 && p2.input) p2.input.aim = false;
 
@@ -151,7 +153,6 @@ function endMatch(winner) {
     document.getElementById('endScore').textContent = `${p1.score} : ${p2.score}`;
     el.style.display = 'flex';
 
-    // ★ A2：同步 isOver 标志位
     if (typeof setOver === 'function') setOver(true);
 
     sWin();
@@ -180,7 +181,6 @@ function resetMatch() {
     if (flashOverlayEl) flashOverlayEl.style.opacity = '0';
     document.getElementById('endOverlay').style.display = 'none';
 
-    // ★ A2：同步 isOver 标志位
     if (typeof setOver === 'function') setOver(false);
 
     document.getElementById('weaponPanel').style.display = 'none';
