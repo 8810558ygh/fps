@@ -1,14 +1,15 @@
-// ===== js/loading.js – 加载页面完整实现 =====
+// ===== js/loading.js – 加载页面完整实现（含真实场景编译 + 武器多角度编译 + 特效预热） =====
 //
 // 职责：
 //   1. 显示/隐藏加载遮罩层，管理进度条与百分比
-//   2. 按顺序执行任务列表（构建地图 / 构建武器模板 / 编译 shader）
+//   2. 按顺序执行任务列表
 //   3. 单机模式：点击靶场/人机按钮 → 走加载 → 进入游戏
 //   4. 联机模式：房主开始 → 双方进入加载 → 全员 100% → 同时进入游戏
 //   5. 覆盖 onlineStartGame / lobbyRangeBtn / lobbyAiBtn 的事件
 //
 // 依赖（按 index.html 顺序加载好）：
-//   config.js / scene.js / player_model.js / online_core.js / online_game.js / main.js
+//   config.js / scene.js / player_model.js / game_effects.js / game_projectiles.js
+//   online_core.js / online_game.js / main.js
 //   —— loading.js 必须在 main.js 之后加载
 
 (function () {
@@ -42,7 +43,7 @@
         progress: 0,
         status: '',
         online: false,
-        players: {},   // peerId -> { name, isSelf, progress }
+        players: {},
     };
 
     // ============================================================
@@ -184,73 +185,234 @@
     }
 
     // ============================================================
-    // Shader 编译（每把武器单独编译，分帧进行）
+    // 预热相机：加载期间主循环不更新 p1.cam，可以临时挪走
     // ============================================================
-    // 创建一个"与主场景配置一致"的临时场景（fog + 灯光），
-    // 把某个武器的世界/视图模板挂进去，调 renderer.compile 强制编译
-    // 编译结束后从临时场景移除，模板本身保留供游戏使用。
-    //
-    // 关键：material.name 必须唯一，否则 renderer.compile 内部会
-    //      按 name 去重，大量材质被误判为同一个而跳过编译。
-    let _warmScene = null;
-    let _warmCam = null;
-    let _matCounter = 0;
-    const _seenMats = new Set();
-
-    function ensureWarmScene() {
-        if (_warmScene) return;
-        _warmScene = new THREE.Scene();
-        if (typeof scene !== 'undefined' && scene.fog) {
-            _warmScene.fog = scene.fog.clone();
+    function withWarmupCamera(fn) {
+        if (typeof p1 === 'undefined' || !p1 || !p1.cam) {
+            try { fn(); } catch (e) {}
+            return;
         }
-        _warmScene.add(new THREE.HemisphereLight(0xdfe9f2, 0x51503f, 0.8));
-        const sun = new THREE.DirectionalLight(0xfff2dd, 0.85);
-        sun.position.set(35, 55, 20);
-        sun.castShadow = true;
-        _warmScene.add(sun);
-        _warmCam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
-        _warmCam.position.set(0, 0, 2.5);
-        _warmCam.lookAt(0, 0, 0);
-    }
+        const cam = p1.cam;
+        const origPos    = cam.position.clone();
+        const origRotX   = cam.rotation.x;
+        const origRotY   = cam.rotation.y;
+        const origRotZ   = cam.rotation.z;
+        const origFov    = cam.fov;
+        const origAspect = cam.aspect;
+        const origNear   = cam.near;
+        const origFar    = cam.far;
 
-    function assignUniqueMaterialNames(root) {
-        root.traverse(o => {
-            if (!o.isMesh || !o.material) return;
-            const mats = Array.isArray(o.material) ? o.material : [o.material];
-            for (const m of mats) {
-                if (!m || _seenMats.has(m)) continue;
-                _seenMats.add(m);
-                m.name = '__warmup_' + (_matCounter++);
-            }
-        });
-    }
-
-    function compileWeaponShader(type) {
-        if (typeof renderer === 'undefined' || !renderer || !renderer.compile) return;
-
-        ensureWarmScene();
-
-        const w = (typeof _getWorldTemplate === 'function') ? _getWorldTemplate(type) : null;
-        const v = (typeof _getViewTemplate  === 'function') ? _getViewTemplate(type)  : null;
-
-        const added = [];
-        [w, v].forEach(tpl => {
-            if (!tpl) return;
-            if (tpl.parent) tpl.parent.remove(tpl);
-            _warmScene.add(tpl);
-            added.push(tpl);
-        });
-
-        assignUniqueMaterialNames(_warmScene);
+        cam.position.set(0, 55, 0);
+        cam.rotation.set(-Math.PI / 2, 0, 0);
+        cam.fov = 100;
+        cam.aspect = 1;
+        cam.near = 0.1;
+        cam.far = 500;
+        cam.updateProjectionMatrix();
+        cam.updateMatrixWorld(true);
 
         try {
-            renderer.compile(_warmScene, _warmCam);
-        } catch (e) {
-            console.warn('[loading] shader 编译失败:', type, e);
+            fn();
+        } finally {
+            cam.position.copy(origPos);
+            cam.rotation.set(origRotX, origRotY, origRotZ);
+            cam.fov = origFov;
+            cam.aspect = origAspect;
+            cam.near = origNear;
+            cam.far = origFar;
+            cam.updateProjectionMatrix();
+            cam.updateMatrixWorld(true);
+        }
+    }
+
+    // ============================================================
+    // ★ 真实场景整体 shader 编译（覆盖地图 + 阴影 pass）
+    // ============================================================
+    function compileSceneShaders() {
+        if (typeof renderer === 'undefined' || !renderer) return;
+        if (typeof scene === 'undefined' || !scene) return;
+
+        withWarmupCamera(() => {
+            const attached = [];
+            ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(type => {
+                try {
+                    const w = (typeof _getWorldTemplate === 'function') ? _getWorldTemplate(type) : null;
+                    const v = (typeof _getViewTemplate  === 'function') ? _getViewTemplate(type)  : null;
+                    [w, v].forEach(tpl => {
+                        if (!tpl) return;
+                        if (tpl.parent) tpl.parent.remove(tpl);
+                        tpl.position.set(0, 0.5, 0);
+                        tpl.visible = true;
+                        tpl.traverse(o => { o.visible = true; });
+                        scene.add(tpl);
+                        attached.push(tpl);
+                    });
+                } catch (e) {}
+            });
+
+            scene.updateMatrixWorld(true);
+
+            try {
+                renderer.compile(scene, p1.cam);
+            } catch (e) {
+                console.warn('[loading] scene compile failed:', e);
+            }
+
+            try {
+                const prevAuto  = renderer.shadowMap.autoUpdate;
+                const prevNeeds = renderer.shadowMap.needsUpdate;
+                renderer.shadowMap.autoUpdate = false;
+                renderer.shadowMap.needsUpdate = true;
+                renderer.render(scene, p1.cam);
+                renderer.shadowMap.autoUpdate = prevAuto;
+                renderer.shadowMap.needsUpdate = true;
+            } catch (e) {
+                console.warn('[loading] scene render failed:', e);
+            }
+
+            attached.forEach(o => {
+                if (o.parent === scene) scene.remove(o);
+            });
+        });
+    }
+
+    // ============================================================
+    // ★ 武器多角度 shader 编译（本轮新增，解决换枪后跳跃卡）
+    //
+    //   为什么需要单独做一遍：
+    //     场景整体编译只从"俯瞰"一个角度看武器，枪身的侧面 /
+    //     底面 / 内部结构（镜筒、弹链）从没被渲染过 → 那些部位
+    //     的纹理 / VBO 首次上传就发生在跳跃 / 击杀的那一刻。
+    //
+    //   做法：
+    //     · 用一个独立小场景，只放武器模板 + 灯光 + fog
+    //     · 相机绕武器转 8 个水平角 × 3 个仰角 = 24 个视角
+    //     · 每个视角 compile + render 一帧，把材质 / 纹理 / VBO
+    //       全部上传 GPU
+    //     · 最后再从"枪口方向"渲染一帧，模拟玩家视角
+    //     · 全程只渲染武器（几十个 mesh），单帧 < 5ms
+    // ============================================================
+    function compileWeaponShadersAllAngles() {
+        if (typeof renderer === 'undefined' || !renderer) return;
+
+        const ws = new THREE.Scene();
+        ws.add(new THREE.HemisphereLight(0xdfe9f2, 0x51503f, 0.8));
+        const wsSun = new THREE.DirectionalLight(0xfff2dd, 0.85);
+        wsSun.position.set(35, 55, 20);
+        ws.add(wsSun);
+
+        // 加一份和主场景一样的 fog，让 fog 变体的 shader 也一起编译
+        if (typeof scene !== 'undefined' && scene.fog) {
+            ws.fog = scene.fog.clone();
         }
 
-        added.forEach(o => {
-            if (o.parent === _warmScene) _warmScene.remove(o);
+        const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 20);
+
+        // 挂载所有武器模板
+        const attached = [];
+        ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(type => {
+            try {
+                const w = (typeof _getWorldTemplate === 'function') ? _getWorldTemplate(type) : null;
+                const v = (typeof _getViewTemplate  === 'function') ? _getViewTemplate(type)  : null;
+                [w, v].forEach(tpl => {
+                    if (!tpl) return;
+                    if (tpl.parent) tpl.parent.remove(tpl);
+                    tpl.position.set(0, 0, 0);
+                    tpl.visible = true;
+                    tpl.traverse(o => { o.visible = true; });
+                    ws.add(tpl);
+                    attached.push(tpl);
+                });
+            } catch (e) {}
+        });
+
+        ws.updateMatrixWorld(true);
+
+        const HORIZONTAL_STEPS = 8;
+        const VERTICAL_ANGLES = [-0.5, 0, 0.5];
+        const R = 2.5;
+
+        // 24 个绕圈视角
+        for (let vi = 0; vi < VERTICAL_ANGLES.length; vi++) {
+            const vAng = VERTICAL_ANGLES[vi];
+            for (let i = 0; i < HORIZONTAL_STEPS; i++) {
+                const a = (i / HORIZONTAL_STEPS) * Math.PI * 2;
+                cam.position.set(
+                    Math.sin(a) * R * Math.cos(vAng),
+                    Math.sin(vAng) * R,
+                    Math.cos(a) * R * Math.cos(vAng)
+                );
+                cam.lookAt(0, 0, 0);
+                cam.updateMatrixWorld(true);
+                try {
+                    renderer.compile(ws, cam);
+                    renderer.render(ws, cam);
+                } catch (e) {}
+            }
+        }
+
+        // 从枪口方向看（模拟第一人称视角）
+        cam.position.set(0, 0.3, 2);
+        cam.lookAt(0, 0.1, -2);
+        cam.updateMatrixWorld(true);
+        try { renderer.compile(ws, cam); renderer.render(ws, cam); } catch (e) {}
+
+        // 正上方 + 正下方
+        cam.position.set(0, 3, 0);
+        cam.lookAt(0, 0, 0);
+        cam.updateMatrixWorld(true);
+        try { renderer.compile(ws, cam); renderer.render(ws, cam); } catch (e) {}
+
+        cam.position.set(0, -3, 0);
+        cam.lookAt(0, 0, 0);
+        cam.updateMatrixWorld(true);
+        try { renderer.compile(ws, cam); renderer.render(ws, cam); } catch (e) {}
+
+        // 摘掉模板
+        attached.forEach(o => {
+            if (o.parent === ws) ws.remove(o);
+        });
+    }
+
+    // ============================================================
+    // ★ 运行时特效预热
+    // ============================================================
+    const WARMUP_OBJ_POS = new THREE.Vector3(0, 54.5, 0);
+
+    function warmupSparks(color) {
+        if (typeof window.spawnSparks !== 'function') {
+            console.warn('[loading] spawnSparks 未暴露，跳过预热');
+            return;
+        }
+        withWarmupCamera(() => {
+            window.spawnSparks(WARMUP_OBJ_POS.clone(), color);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+        });
+    }
+
+    function warmupBulletHole() {
+        if (typeof window.spawnBulletHole !== 'function') {
+            console.warn('[loading] spawnBulletHole 未暴露，跳过预热');
+            return;
+        }
+        withWarmupCamera(() => {
+            const pos = WARMUP_OBJ_POS.clone();
+            const normal = new THREE.Vector3(0, 1, 0);
+            window.spawnBulletHole(pos, normal);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+        });
+    }
+
+    function warmupTracer() {
+        if (typeof window.spawnTracer !== 'function') {
+            console.warn('[loading] spawnTracer 未暴露，跳过预热');
+            return;
+        }
+        withWarmupCamera(() => {
+            const from = WARMUP_OBJ_POS.clone();
+            const to = from.clone().add(new THREE.Vector3(3, 0, 0));
+            window.spawnTracer(from, to);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
         });
     }
 
@@ -272,13 +434,11 @@
             fn: () => {
                 if (typeof window.loadMap !== 'function') return;
                 const cur = (window.getCurrentMapId && window.getCurrentMapId()) || null;
-                if (cur !== mapId && mapId) {
-                    window.loadMap(mapId);
-                }
+                if (cur !== mapId && mapId) window.loadMap(mapId);
             },
         });
 
-        // 2) 每把武器：构建模板 + 编译这一把的 shader（分 5 个任务）
+        // 2) 5 把武器：只构建模板，不编译
         ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(type => {
             tasks.push({
                 name: '载入武器：' + (WEAPON_NAMES[type] || type),
@@ -286,21 +446,55 @@
                 fn: () => {
                     if (typeof _getWorldTemplate === 'function') _getWorldTemplate(type);
                     if (typeof _getViewTemplate  === 'function') _getViewTemplate(type);
-                    compileWeaponShader(type);
                 },
             });
+        });
+
+        // 3) 真实场景整体编译（覆盖地图 + 阴影 pass）
+        tasks.push({
+            name: '编译场景着色器',
+            weight: 10,
+            fn: () => compileSceneShaders(),
+        });
+
+        // 4) ★ 武器多角度编译（覆盖枪身所有角度的材质 / 纹理 / VBO）
+        tasks.push({
+            name: '编译武器多角度着色器',
+            weight: 6,
+            fn: () => compileWeaponShadersAllAngles(),
+        });
+
+        // 5) 运行时特效预热
+        tasks.push({
+            name: '预热特效：火花',
+            weight: 1,
+            fn: () => warmupSparks(0xff5040),
+        });
+        tasks.push({
+            name: '预热特效：火花',
+            weight: 1,
+            fn: () => warmupSparks(0xffd28a),
+        });
+        tasks.push({
+            name: '预热特效：弹痕',
+            weight: 1,
+            fn: () => warmupBulletHole(),
+        });
+        tasks.push({
+            name: '预热特效：曳光弹',
+            weight: 1,
+            fn: () => warmupTracer(),
         });
 
         return tasks;
     }
 
     // ============================================================
-    // 单机入口：靶场 / 人机
+    // 单机入口
     // ============================================================
     async function beginSinglePlayerLoading(mode) {
         if (typeof audio === 'function') audio();
 
-        // 隐藏大厅
         const ll = document.getElementById('lobbyOverlay');
         if (ll) ll.style.display = 'none';
 
@@ -331,13 +525,11 @@
         NET.loadingAllDone = false;
         NET.loadingState = {};
 
-        // 隐藏所有大厅
         const ol = document.getElementById('onlineLobbyOverlay');
         const ll = document.getElementById('lobbyOverlay');
         if (ol) ol.style.display = 'none';
         if (ll) ll.style.display = 'none';
 
-        // 收集玩家列表（含观战）
         const players = [];
         if (isHost) {
             players.push({ id: NET.myPeerId, name: NET.myName, isSelf: true });
@@ -415,7 +607,6 @@
         }
     }
 
-    // 由 online_core.js 的 handleRoomMessage 调用
     function handleClientLoadingProgress(fromId, progress) {
         const NET = window.NET;
         if (!NET || !NET.isHost) return;
@@ -459,7 +650,6 @@
         setStatus('全员就绪');
         setProgress(1);
 
-        // 让进度条动画画完再切场景
         setTimeout(() => {
             hide();
             if (typeof window.NET_enterOnlineGame === 'function') {
@@ -476,7 +666,6 @@
 
     // ============================================================
     // 覆盖：onlineStartGame
-    //   —— 不直接进入游戏，而是走加载流程
     // ============================================================
     function installOnlineStartHook() {
         window.onlineStartGame = function () {
@@ -499,7 +688,6 @@
 
     // ============================================================
     // 覆盖：lobbyRangeBtn / lobbyAiBtn
-    //   —— 用 cloneNode 移除 main.js 里原有的监听器
     // ============================================================
     function hijackClick(id, handler) {
         const old = document.getElementById(id);
@@ -515,7 +703,7 @@
     }
 
     // ============================================================
-    // 暴露给 online_core.js / online_game.js 使用
+    // 暴露
     // ============================================================
     window.LoadingManager = {
         show,
@@ -529,12 +717,12 @@
         isActive: () => state.active,
     };
 
-    window.beginSinglePlayerLoading   = beginSinglePlayerLoading;
-    window.beginOnlineLoading         = beginOnlineLoading;
+    window.beginSinglePlayerLoading    = beginSinglePlayerLoading;
+    window.beginOnlineLoading          = beginOnlineLoading;
     window.handleClientLoadingProgress = handleClientLoadingProgress;
-    window.handleLoadingStatus        = handleLoadingStatus;
-    window.handleLoadingComplete      = handleLoadingComplete;
-    window.finishOnlineLoading        = finishOnlineLoading;
+    window.handleLoadingStatus         = handleLoadingStatus;
+    window.handleLoadingComplete       = handleLoadingComplete;
+    window.finishOnlineLoading         = finishOnlineLoading;
 
     // ============================================================
     // 初始化

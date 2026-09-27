@@ -175,7 +175,7 @@ window.NET_enterOnlineGame = enterOnlineGame;
 
 function startHostBroadcast() {
     if (NET._hostBroadcastTimer) clearInterval(NET._hostBroadcastTimer);
-    NET._hostBroadcastTimer = setInterval(hostBroadcastTick, 20);
+    NET._hostBroadcastTimer = setInterval(hostBroadcastTick, 10);
 }
 function stopHostBroadcast() {
     if (NET._hostBroadcastTimer) { clearInterval(NET._hostBroadcastTimer); NET._hostBroadcastTimer = null; }

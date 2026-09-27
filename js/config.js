@@ -38,7 +38,7 @@ const MELEE = {
     mag: 0, startReserve: 0, reloadMs: 0
 };
 
-// ===== 烟雾弹（球状浓密） =====
+// ===== 烟雾弹 =====
 const SMOKE = {
     key: 'smoke', name: '烟雾弹',
     throwSpeed: 20, throwUpBias: 0.35,
@@ -50,16 +50,16 @@ const SMOKE = {
     mag: 0, startReserve: 0, reloadMs: 0
 };
 
-// ===== ★ 闪光弹（5 秒引信 · 视锥内无遮挡即被闪 · 全白 5 秒） =====
+// ===== 闪光弹 =====
 const FLASH = {
     key: 'flash', name: '闪光弹',
     throwSpeed: 20, throwUpBias: 0.35,
     gravity: 16, bounces: 0.35, friction: 0.55,
-    fuseMs: 5000,               // 5 秒引信
-    maxDistance: 45,            // 最大可被闪距离（米）
-    minFovMargin: 0.0,          // 视锥边距（0 = 完全按 FOV 判定）
-    flashDurationMs: 5000,      // 完全白屏总时长
-    flashFadeMs: 800,           // 最后 0.8 秒淡出
+    fuseMs: 5000,
+    maxDistance: 45,
+    minFovMargin: 0.0,
+    flashDurationMs: 5000,
+    flashFadeMs: 800,
     cooldownMs: 800, maxPerRound: 1,
     speedMul: 1.0, scope: false, adsSpeedMul: 1.0,
     mag: 0, startReserve: 0, reloadMs: 0
@@ -76,20 +76,31 @@ const WEAPONS = {
     sniper: {
         key: 'sniper', name: '冥驹',
         dmgBody: 150, dmgHead: 255,
-        fireMs: 850,                  // ★ A 方案：与 boltMs 一致，拉栓完即可开火
+        fireMs: 850,
         mag: 5, reserveMax: 10, startReserve: 10, reloadMs: 3700,
         zoomFov: 14, zoomFov2: 6,
-        scope: true, boltMs: 850,     // 拉栓动画时长
+        scope: true, boltMs: 850,
         speedMul: 0.72, adsSpeedMul: 0.72
     },
+
+    // ===== ★ 判官（霰弹枪）：本次重点调整 =====
+    //   1. spread 0.25 → 0.08（约 4.6° 半角）
+    //      对应真实 00 号弹 10m 直径约 0.35m，接近现实散布
+    //   2. pellets 12 → 10（贴近真实 12GA 00 号 9 颗铅弹）
+    //   3. dmgBody 17 → 22（单颗弹丸更致命，近距离一枪秒杀）
+    //   4. dmgHead 34 → 44
+    //   5. fireMs 286 → 350（模拟泵动 0.35 秒/发，熟练射手节奏）
+    //   6. reloadMs 2200 → 2400（管式弹仓一发一发压）
+    //   7. speedMul 0.75 → 0.80（霰弹枪不算很重）
     shotgun: {
         key: 'shotgun', name: '判官',
-        dmgBody: 17, dmgHead: 34,
-        fireMs: 286, mag: 5, reserveMax: 15, startReserve: 15, reloadMs: 2200,
+        dmgBody: 22, dmgHead: 44,
+        fireMs: 350, mag: 5, reserveMax: 15, startReserve: 15, reloadMs: 2400,
         zoomFov: 60, scope: false,
-        speedMul: 0.75, adsSpeedMul: 0.75,
-        pellets: 12, spread: 0.25
+        speedMul: 0.80, adsSpeedMul: 0.78,
+        pellets: 10, spread: 0.08
     },
+
     odin: {
         key: 'odin', name: '奥丁机枪',
         dmgBody: 38, dmgHead: 95,

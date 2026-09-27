@@ -38,6 +38,7 @@ function spawnTracer(from, to) {
     t.line.visible = true;
     t.until = performance.now() + TRACER_LIFETIME_MS;
 }
+window.spawnTracer = spawnTracer;
 
 function updateTracers(now) {
     for (let i = 0; i < TRACER_POOL_SIZE; i++) {
@@ -307,6 +308,7 @@ function spawnSparks(point, color) {
         });
     }
 }
+window.spawnSparks = spawnSparks;
 
 // ===== 投掷轨迹线 =====
 let smokeTrajLine = null;

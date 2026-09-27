@@ -2,22 +2,12 @@
 
 const activeSmokes = [];
 const activeFlashes = [];
-const activeFlashBursts = [];
 
 const SMOKE_PROJ_RADIUS = 0.09;
 const SMOKE_PROJ_HALF_H = 0.12;
 
 // ============================================================
 // ★ C2：投掷物几何体 / 材质共享
-//
-//   原实现每投一次就 new 一整套几何体 + 克隆两份材质。
-//   投掷物本身数量不多，但一旦连投（回合初期、玩家尝试不同位置）
-//   仍会产生可观的分配。
-//
-//   现在：
-//     · 主体 / 端盖 / 色带几何体全部预建一次，跨投掷共享
-//     · 主材质从 SMOKE_MAT / FLASH_MAT 各克隆一次，改好 emissive 后复用
-//     · 清理时不再 dispose，避免误删共享资源
 // ============================================================
 const _projBodyGeo = new THREE.CylinderGeometry(
     SMOKE_PROJ_RADIUS, SMOKE_PROJ_RADIUS, SMOKE_PROJ_HALF_H * 2, 14
@@ -47,7 +37,102 @@ function _ensureProjectileMaterials() {
     return _projMats;
 }
 
-// ===== 通用投掷物理 =====
+// ============================================================
+// ★ 闪光弹爆炸特效池（修复爆炸瞬间卡顿）
+//
+//   原实现每次爆炸都 new PointLight + scene.add + 380ms 后 remove，
+//   每次都会触发场景里所有材质的 shader 重编译（几十~几百 ms）。
+//
+//   现改为：
+//     · 游戏启动时一次性创建 N 个 PointLight + N 个 shell，
+//       全部 add 进 scene，初始 intensity = 0、opacity = 0、visible = false
+//     · 爆炸时从池里借一个，改 intensity / position / opacity
+//     · 结束时把 intensity 归零、隐藏 shell，不 remove
+//   → 场景光源数量恒定，不再触发 shader 重编译
+// ============================================================
+const FLASH_BURST_POOL_SIZE = 3;
+const FLASH_BURST_LIFE_MS = 380;
+const _flashBurstPool = [];
+let _flashBurstPoolInited = false;
+
+function initFlashBurstPool() {
+    if (_flashBurstPoolInited) return;
+    if (typeof scene === 'undefined' || !scene) return;
+    _flashBurstPoolInited = true;
+
+    // 所有 shell 共享同一个几何体
+    const sharedGeo = new THREE.SphereGeometry(0.5, 20, 14);
+
+    for (let i = 0; i < FLASH_BURST_POOL_SIZE; i++) {
+        const mat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+        const shell = new THREE.Mesh(sharedGeo, mat);
+        shell.visible = false;
+        shell.renderOrder = 90;
+        shell.frustumCulled = false;
+        scene.add(shell);
+
+        const light = new THREE.PointLight(0xffffff, 0, 40);
+        light.position.set(0, -1000, 0);
+        scene.add(light);
+
+        _flashBurstPool.push({
+            shell,
+            light,
+            active: false,
+            born: 0,
+        });
+    }
+}
+
+// 找一个槽位：优先空闲的，没有空闲就抢最早的那个
+function _acquireFlashBurstSlot() {
+    let slot = null;
+    for (let i = 0; i < _flashBurstPool.length; i++) {
+        if (!_flashBurstPool[i].active) { slot = _flashBurstPool[i]; break; }
+    }
+    if (!slot) {
+        slot = _flashBurstPool[0];
+        for (let i = 1; i < _flashBurstPool.length; i++) {
+            if (_flashBurstPool[i].born < slot.born) slot = _flashBurstPool[i];
+        }
+    }
+    return slot;
+}
+
+// 每帧在 updateEffects 里调用，推进所有活跃特效的动画
+function updateFlashBursts(dt, now) {
+    for (let i = 0; i < _flashBurstPool.length; i++) {
+        const b = _flashBurstPool[i];
+        if (!b.active) continue;
+
+        const age = now - b.born;
+        const t = age / FLASH_BURST_LIFE_MS;
+
+        if (t >= 1) {
+            b.active = false;
+            b.shell.visible = false;
+            b.shell.material.opacity = 0;
+            b.light.intensity = 0;
+            b.light.position.set(0, -1000, 0);
+            continue;
+        }
+
+        const scale = 1 + t * 8;
+        b.shell.scale.setScalar(scale);
+        b.shell.material.opacity = 1 - t;
+        b.light.intensity = 12 * (1 - t);
+    }
+}
+
+// ============================================================
+// 通用投掷物理
+// ============================================================
 function updateThrownPhysics(s, dt) {
     s.vel.y -= s.gravity * dt;
     const next = s.pos.clone().addScaledVector(s.vel, dt);
@@ -114,7 +199,7 @@ function createThrownProjectileMesh(kind) {
     return mesh;
 }
 
-// ===== 烟雾云（每次展开独立创建，因为需要独立 opacity 淡出） =====
+// ===== 烟雾云 =====
 function createSmokeCloud(pos, radius, verticalRadius, centerHeight) {
     const group = new THREE.Group();
     group.position.set(pos.x, centerHeight, pos.z);
@@ -196,22 +281,22 @@ function spawnFlashProjectile(pos, vel, fuseMs, now) {
 }
 window.spawnFlashProjectile = spawnFlashProjectile;
 
+// ★ 池化后：不 new light、不 add 新节点，只借一个槽位
 function spawnFlashBurst(pos) {
-    const geo = new THREE.SphereGeometry(0.5, 20, 14);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 });
-    const shell = new THREE.Mesh(geo, mat);
-    shell.position.copy(pos);
-    scene.add(shell);
+    initFlashBurstPool();
+    const slot = _acquireFlashBurstSlot();
+    if (!slot) return;
 
-    const light = new THREE.PointLight(0xffffff, 12, 40);
-    light.position.copy(pos);
-    scene.add(light);
+    slot.active = true;
+    slot.born = performance.now();
 
-    activeFlashBursts.push({
-        shell, light,
-        born: performance.now(),
-        life: 380
-    });
+    slot.shell.position.copy(pos);
+    slot.shell.scale.setScalar(1);
+    slot.shell.material.opacity = 1;
+    slot.shell.visible = true;
+
+    slot.light.position.copy(pos);
+    slot.light.intensity = 12;
 }
 
 function checkFlashHit(target, flashPos, now) {
@@ -290,7 +375,6 @@ function updateSmokes(dt, now) {
 
             if (now >= s.fuseEnd) {
                 scene.remove(s.mesh);
-                // ★ C2：几何体/材质是共享的，不再 dispose
                 s.mesh = null;
 
                 const cloud = createSmokeCloud(s.pos, SMOKE.radius, SMOKE.verticalRadius, SMOKE.centerHeight);
@@ -337,7 +421,6 @@ function updateSmokes(dt, now) {
             }
             if (now >= s.doneAt) {
                 scene.remove(s.cloudMesh);
-                // 烟雾云是独立创建的资源，需要 dispose
                 s.cloudMesh.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
                 activeSmokes.splice(i, 1);
             }
@@ -353,7 +436,6 @@ function updateFlashes(dt, now) {
 
             if (now >= s.fuseEnd) {
                 scene.remove(s.mesh);
-                // ★ C2：几何体/材质是共享的，不再 dispose
                 s.mesh = null;
 
                 const isAuthority = (gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost);
@@ -366,25 +448,6 @@ function updateFlashes(dt, now) {
                 activeFlashes.splice(i, 1);
             }
         }
-    }
-}
-
-function updateFlashBursts(dt, now) {
-    for (let i = activeFlashBursts.length - 1; i >= 0; i--) {
-        const b = activeFlashBursts[i];
-        const age = now - b.born;
-        const t = age / b.life;
-        if (t >= 1) {
-            scene.remove(b.shell); scene.remove(b.light);
-            b.shell.geometry.dispose();
-            b.shell.material.dispose();
-            activeFlashBursts.splice(i, 1);
-            continue;
-        }
-        const scale = 1 + t * 8;
-        b.shell.scale.set(scale, scale, scale);
-        b.shell.material.opacity = 1 - t;
-        b.light.intensity = 12 * (1 - t);
     }
 }
 
@@ -681,9 +744,7 @@ function throwFlash(p, now, fuseMs) {
 
 function clearAllSmokes() {
     for (const s of activeSmokes) {
-        // ★ C2：投掷物 mesh 的几何体/材质是共享的，不 dispose
         if (s.mesh) scene.remove(s.mesh);
-        // 烟雾云是独立创建的，需要 dispose
         if (s.cloudMesh) {
             scene.remove(s.cloudMesh);
             s.cloudMesh.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
@@ -695,17 +756,30 @@ function clearAllSmokes() {
 
 function clearAllFlashes() {
     for (const s of activeFlashes) {
-        // ★ C2：投掷物 mesh 的几何体/材质是共享的，不 dispose
         if (s.mesh) scene.remove(s.mesh);
     }
     activeFlashes.length = 0;
 
-    for (const b of activeFlashBursts) {
-        scene.remove(b.shell); scene.remove(b.light);
-        b.shell.geometry.dispose();
-        b.shell.material.dispose();
+    // ★ 池化后：不 remove light / shell，只重置状态
+    for (let i = 0; i < _flashBurstPool.length; i++) {
+        const b = _flashBurstPool[i];
+        b.active = false;
+        b.shell.visible = false;
+        b.shell.material.opacity = 0;
+        b.light.intensity = 0;
+        b.light.position.set(0, -1000, 0);
     }
-    activeFlashBursts.length = 0;
 
     if (flashTrajLine) flashTrajLine.visible = false;
+}
+
+// ============================================================
+// ★ 脚本加载后立即初始化闪光弹特效池
+//
+//   目的：把池里的 PointLight 在游戏启动时就加进 scene，
+//   这样它们会被"加载页面"里的 renderer.compile() 一并编译，
+//   之后第一次爆炸也**不会**触发 shader 重编译。
+// ============================================================
+if (typeof scene !== 'undefined' && scene) {
+    initFlashBurstPool();
 }

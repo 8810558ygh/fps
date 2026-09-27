@@ -381,7 +381,7 @@ function updateLocalClientCamera(dt, now) {
 }
 
 let _lastClientReportTime = 0;
-const CLIENT_REPORT_INTERVAL = 20;
+const CLIENT_REPORT_INTERVAL = 10;
 
 function loop() {
     requestAnimationFrame(loop);
