@@ -1,4 +1,4 @@
-// ===== js/audio.js – 程序化音效（含四种武器射击声 + 脚步声 + 近战挥刀） =====
+// ===== js/audio.js – 程序化音效（含四种武器射击声 + 脚步声 + 近战挥刀 + 油桶爆炸） =====
 let AC = null;
 let noiseBuf = null;
 const masterGain = {};
@@ -149,7 +149,6 @@ function sMelee(isHeavy) {
     const ac = audio();
     const t = ac.currentTime;
 
-    // 挥空的风声（带通噪声）
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -167,7 +166,6 @@ function sMelee(isHeavy) {
     src.start(t);
     src.stop(t + 0.25);
 
-    // 金属质感（重击更低沉、更重）
     const o = ac.createOscillator();
     o.type = 'triangle';
     o.frequency.setValueAtTime(isHeavy ? 1400 : 2200, t);
@@ -356,7 +354,7 @@ function sFootstepEnemy(volume, pan) {
     src.stop(t + 0.05);
 }
 
-// 烟雾弹投掷音效（短促的"咻"声）
+// 烟雾弹投掷音效
 function sSmokeThrow() {
     const ac = audio();
     const t = ac.currentTime;
@@ -390,7 +388,7 @@ function sSmokeThrow() {
     o.stop(t + 0.15);
 }
 
-// 烟雾弹展开音效（低沉的"呼"声）
+// 烟雾弹展开音效
 function sSmokePop() {
     const ac = audio();
     const t = ac.currentTime;
@@ -425,9 +423,7 @@ function sSmokePop() {
     o.stop(t + 0.55);
 }
 
-// ===== 追加到 js/audio.js 末尾 =====
-
-// ★ 闪光弹投掷（与烟雾弹类似，稍尖锐）
+// 闪光弹投掷
 function sFlashThrow() {
     const ac = audio();
     const t = ac.currentTime;
@@ -455,12 +451,11 @@ function sFlashThrow() {
     o.start(t); o.stop(t + 0.13);
 }
 
-// ★ 闪光弹爆炸（短促爆音 + 高频"闪"感）
+// 闪光弹爆炸
 function sFlashDetonate() {
     const ac = audio();
     const t = ac.currentTime;
 
-    // 爆音：白噪声短促
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -474,7 +469,6 @@ function sFlashDetonate() {
     src.connect(f); f.connect(g); g.connect(masterGain[1]);
     src.start(t); src.stop(t + 0.28);
 
-    // 高频"啾"
     const o = ac.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(4500, t);
@@ -485,7 +479,6 @@ function sFlashDetonate() {
     o.connect(g2); g2.connect(masterGain[1]);
     o.start(t); o.stop(t + 0.24);
 
-    // 低频冲击
     const o2 = ac.createOscillator();
     o2.type = 'sine';
     o2.frequency.setValueAtTime(160, t);
@@ -495,4 +488,58 @@ function sFlashDetonate() {
     g3.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
     o2.connect(g3); g3.connect(masterGain[1]);
     o2.start(t); o2.stop(t + 0.4);
+}
+
+// ===== ★ 油桶爆炸音效 =====
+function sExplosion() {
+    const ac = audio();
+    const t = ac.currentTime;
+
+    // 低频轰鸣
+    const o = ac.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(120, t);
+    o.frequency.exponentialRampToValueAtTime(30, t + 0.6);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    o.connect(g);
+    g.connect(masterGain[1]);
+    g.connect(masterGain[2]);
+    o.start(t);
+    o.stop(t + 0.8);
+
+    // 中频爆裂噪声
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    const f = ac.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(2000, t);
+    f.frequency.exponentialRampToValueAtTime(300, t + 0.5);
+    f.Q.value = 1.2;
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(0.4, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    src.connect(f);
+    f.connect(g2);
+    g2.connect(masterGain[1]);
+    g2.connect(masterGain[2]);
+    src.start(t);
+    src.stop(t + 0.7);
+
+    // 高频碎裂
+    const src2 = ac.createBufferSource();
+    src2.buffer = noiseBuf;
+    const f2 = ac.createBiquadFilter();
+    f2.type = 'highpass';
+    f2.frequency.value = 3000;
+    const g3 = ac.createGain();
+    g3.gain.setValueAtTime(0.2, t);
+    g3.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    src2.connect(f2);
+    f2.connect(g3);
+    g3.connect(masterGain[1]);
+    g3.connect(masterGain[2]);
+    src2.start(t);
+    src2.stop(t + 0.3);
 }

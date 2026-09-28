@@ -10,16 +10,8 @@ const FLASH_CAP_MAT = new THREE.MeshLambertMaterial({ color: 0x2a2e34 });
 
 // ============================================================
 // ★ 高细节武器模板缓存（解决准备阶段/战斗中换枪卡顿）
-//
-// 机制：
-//   1. 每种 HD 武器的世界模型 / 视图模型只在首次请求时构建一次，存成模板
-//   2. 之后每次换枪只做 template.clone(true)
-//      —— 几何体 / 材质共享引用，clone 只复制节点，耗时 ~1ms
-//   3. clone() 会深拷贝 userData（内部 Object3D 引用会失效），
-//      因此这里按 name 从 clone 树里重新绑定 muzzlePoint / boltGroup /
-//      scopeCenter / lensMeshF / lensMeshB / bladeTip / attackPoint
 // ============================================================
-const _hdWorldTemplates = new Map();   // key: 'rifle' | 'sniper' | 'shotgun' | 'odin' | 'knife'
+const _hdWorldTemplates = new Map();
 const _hdViewTemplates  = new Map();
 
 function _findByName(root, name) {
@@ -34,33 +26,17 @@ function _findByName(root, name) {
 
 // ============================================================
 // ★ 关键修复（观战视角 bug）：
-//
 //   loading.js 的 compileWeaponShadersAllAngles() 预热武器模板时，
 //   会把模板的 position 设成 (0, 0, 0) 以方便绕圈渲染，
-//   渲染结束后**没有恢复**。由于模板是单例缓存，
+//   渲染结束后没有恢复。由于模板是单例缓存，
 //   之后每次 clone 出来的视图模型位置都是 (0, 0, 0)。
-//
-//   正常玩家为什么看不出问题：
-//     updateSniperViewmodel() 每帧执行 vm.position.lerp(basePos, k)，
-//     会把位置从 (0,0,0) 平滑插值回 basePos（如 (0.32, -0.26, -0.44)），
-//     玩家几乎察觉不到。
-//
-//   观战为什么暴露：
-//     updateSpectatorView() 里不调用 updateSniperViewmodel，
-//     位置就停在 (0,0,0)（= 相机原点），武器模型贴在镜头上，
-//     屏幕上什么都看不到 → 表现为"切刀看不到刀"、"枪倒着显示"、
-//     "开镜不显示"等一堆现象。
-//
 //   修复：clone 后立即从 userData 恢复 basePos / baseRot。
-//   世界模型的 basePos / baseRot 为 undefined，此判断不会误伤。
 // ============================================================
 function _cloneHdTemplate(tpl) {
     if (!tpl) return null;
 
     const clone = tpl.clone(true);
 
-    // clone() 会深拷贝 userData，内部 Object3D 引用会断
-    // → 只保留纯数据，再按 name 从 clone 树里重新绑定引用
     const src = tpl.userData || {};
     const dst = clone.userData = {};
 
@@ -69,7 +45,6 @@ function _cloneHdTemplate(tpl) {
     dst.adsPos  = src.adsPos  ? src.adsPos.clone()  : undefined;
     dst.adsRot  = src.adsRot  ? src.adsRot.clone()  : undefined;
 
-    // ★ 关键修复：从 userData 恢复默认位姿
     if (dst.basePos) clone.position.copy(dst.basePos);
     if (dst.baseRot) clone.rotation.copy(dst.baseRot);
 
@@ -78,7 +53,6 @@ function _cloneHdTemplate(tpl) {
     dst.scopeCenter = _findByName(clone, 'scopeCenter');
     dst.lensMeshF   = _findByName(clone, 'scopeLensFront');
     dst.lensMeshB   = _findByName(clone, 'scopeLensBack');
-    // ★ 刀的锚点
     dst.bladeTip    = _findByName(clone, 'bladeTip');
     dst.attackPoint = _findByName(clone, 'attackPoint');
 
@@ -131,8 +105,6 @@ function _getViewTemplate(type) {
     return tpl;
 }
 
-// ★ 预热：进入游戏前调用一次，把四种 HD 武器 + 刀的世界/视图模板全部构建好，
-//   避免第一次换枪时因为首次构建而卡一下
 function preloadHdWeaponTemplates() {
     ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(t => {
         _getWorldTemplate(t);
@@ -145,15 +117,12 @@ window.preloadHdWeaponTemplates = preloadHdWeaponTemplates;
 // makeWeaponModel
 // ============================================================
 function makeWeaponModel(type, mat) {
-    // ===== ★ 高细节武器（rifle / sniper / shotgun / odin / knife）：模板克隆 =====
     if (type === 'rifle' || type === 'sniper' || type === 'shotgun'
         || type === 'odin' || type === 'knife') {
         const tpl = _getWorldTemplate(type);
         if (tpl) return _cloneHdTemplate(tpl);
-        // 模板构建失败 → 落入下面低模分支兜底
     }
 
-    // ===== 低模分支（smoke / flash / 兜底）=====
     const g = new THREE.Group();
     if (type === 'sniper') {
         const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.15, 1.1), DARK_MAT);
@@ -197,7 +166,6 @@ function makeWeaponModel(type, mat) {
         sight.position.set(0, 0.15, -0.2);
         g.add(body, barrel, magz, stock, grip, sight);
     } else if (type === 'knife') {
-        // 低模兜底（HD 模板构建失败时才走这里）
         const handle = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22, 0.06), DARK_MAT);
         handle.position.set(0, -0.1, 0);
         const guard = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.04, 0.06), DARK_MAT);
@@ -247,15 +215,12 @@ function makeWeaponModel(type, mat) {
 // makeViewmodel
 // ============================================================
 function makeViewmodel(type, mat) {
-    // ===== ★ 高细节武器视图模型（rifle / sniper / shotgun / odin / knife）：模板克隆 =====
     if (type === 'rifle' || type === 'sniper' || type === 'shotgun'
         || type === 'odin' || type === 'knife') {
         const tpl = _getViewTemplate(type);
         if (tpl) return _cloneHdTemplate(tpl);
-        // 模板构建失败 → 落入下面低模分支兜底
     }
 
-    // ===== 低模分支 =====
     const g = new THREE.Group();
     if (type === 'sniper') {
         const body = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.13, 0.9), DARK_MAT);
@@ -298,7 +263,6 @@ function makeViewmodel(type, mat) {
         g.add(body, barrel, magz, stock, grip, sight);
         g.position.set(0.32, -0.32, -0.55);
     } else if (type === 'knife') {
-        // 低模兜底（HD 模板构建失败时才走这里）
         const handle = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.2, 0.055), DARK_MAT);
         handle.position.set(0, -0.08, 0);
         const guard = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.035, 0.055), DARK_MAT);

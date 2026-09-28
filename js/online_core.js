@@ -47,13 +47,7 @@ const NET = {
 window.NET = NET;
 
 // ============================================================
-// ★ 问题 1 修复：统一状态查询接口
-//
-//   之前散落在 main.js / input.js / input_touch.js 里的
-//   `NET.role === 'spectator'` 判断，现在统一走这两个方法：
-//     · 单一真相来源是 NET.role
-//     · 删除只写不读的 window.GAME_setSpectator
-//     · 未来加新角色（如 coach）只需改这一处
+// ★ 统一状态查询接口
 // ============================================================
 NET.isSpectator = function () {
     return typeof gameMode !== 'undefined'
@@ -315,6 +309,7 @@ function handleRoomMessage(fromId, data) {
             if (NET.isHost) handleSeatRequest(fromId, data.targetSeat); break;
         case 'seatUpdate':
             applySeatUpdate(data.seats, data.members); updateOpponentInfo(); break;
+
         case 'gameStart':
             if (!NET.started) {
                 NET.started = true;
@@ -326,6 +321,16 @@ function handleRoomMessage(fromId, data) {
                 }
             }
             break;
+
+        // ============================================================
+        // ★ 新增：房主宣布返回房间，客户端跟随返回
+        // ============================================================
+        case 'returnToRoom':
+            if (!NET.isHost && typeof window.returnToOnlineRoom === 'function') {
+                window.returnToOnlineRoom(true);
+            }
+            break;
+
         case 'clientInput':
             if (NET.isHost) handleClientInput(fromId, data); break;
         case 'hostState':

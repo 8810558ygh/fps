@@ -36,33 +36,11 @@ const ai = {
 
 const AI_WEAPON_POOL = ['rifle', 'rifle', 'sniper', 'shotgun', 'odin'];
 
-// ============================================================
-// ★ 问题 3 修复：AI 专属临时变量
-//
-//   之前 ai.js 借用了 game_combat.js 里的模块级变量：
-//     _ray / _rcOrigin / _rcTarget / _rcDir / _rcEnd /
-//     _rcRandDir / _rcUp / _rcAxis / _rcQ1 / _rcQ2
-//
-//   这形成了跨文件的隐式耦合：
-//     · 依赖 game_combat.js 先加载（否则 ReferenceError）
-//     · 阅读时看不出这些变量从哪来
-//     · 未来如果加异步/缓存/换加载顺序会静默错乱
-//
-//   现在 ai.js 独立维护自己的一整套：
-//     · 视线检测用 _aiRay / _aiSightOrigin / _aiSightTarget / _aiSightDir
-//     · 开火用   _aiRay / _aiEye / _aiEuler / _aiDir / _aiRandDir /
-//               _aiEnd / _aiUp / _aiAxis / _aiQ1 / _aiQ2
-//
-//   性能不变：依旧复用同一批对象，零 GC 压力。
-// ============================================================
-
-// 视线检测（aiCanSeePlayer）专用
 const _aiRay          = new THREE.Raycaster();
 const _aiSightOrigin  = new THREE.Vector3();
 const _aiSightTarget  = new THREE.Vector3();
 const _aiSightDir     = new THREE.Vector3();
 
-// 开火（aiFire）专用
 const _aiEye     = new THREE.Vector3();
 const _aiDir     = new THREE.Vector3();
 const _aiEuler   = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -107,7 +85,6 @@ function aiCanSeePlayer(now) {
         return false;
     }
 
-    // ★ 问题 3 修复：使用 AI 专属变量
     const eyeY = p2.pos.y + p2.eyeH;
     _aiSightOrigin.set(p2.pos.x, eyeY, p2.pos.z);
     const targetY = p1.pos.y + p1.eyeH * 0.85;
@@ -185,12 +162,13 @@ function aiFire(now) {
     const pellets = w.pellets || 1;
     const spread = w.spread || 0;
 
-    // ★ A4：使用帧内可修改副本，避免 concat 每次分配
     const targets = prepareShotTargets();
-    if (now >= p1.deadUntil) targets.push(p1.body, p1.head);
+    if (now >= p1.deadUntil) {
+        const parts = getPlayerHitMeshes(p1);
+        for (let i = 0; i < parts.length; i++) targets.push(parts[i]);
+    }
 
     for (let i = 0; i < pellets; i++) {
-        // ★ 问题 3 修复：使用 AI 专属变量
         _aiRandDir.copy(_aiDir);
         if (pellets > 1) {
             const theta = Math.random() * 2 * Math.PI;
@@ -211,12 +189,19 @@ function aiFire(now) {
         if (hits.length) {
             const h = hits[0];
             _aiEnd.copy(h.point);
-            if (h.object.userData.part) {
-                const dmg = h.object.userData.part === 'head' ? w.dmgHead : w.dmgBody;
-                if (!p2.damageDealt[1]) p2.damageDealt[1] = { body: 0, head: 0, total: 0 };
-                if (h.object.userData.part === 'head') p2.damageDealt[1].head += dmg;
+            const part = h.object.userData.part;
+            if (part) {
+                const dmg = _resolveDamage(w, part);
+
+                // ★ 按部位分流统计（头 / 腿 / 身）
+                if (!p2.damageDealt[1]) {
+                    p2.damageDealt[1] = { body: 0, head: 0, leg: 0, total: 0 };
+                }
+                if (part === 'head') p2.damageDealt[1].head += dmg;
+                else if (part === 'leg') p2.damageDealt[1].leg += dmg;
                 else p2.damageDealt[1].body += dmg;
                 p2.damageDealt[1].total += dmg;
+
                 spawnSparks(h.point, 0xff5040);
                 damage(p1, dmg, p2);
                 sHit(p2.id);
@@ -268,7 +253,6 @@ function aiUpdate(dt, now) {
         return;
     }
 
-    // ================= 瞄准 =================
     const eyeY = p2.pos.y + p2.eyeH;
     const dx = p1.pos.x - p2.pos.x;
     const dz = p1.pos.z - p2.pos.z;
@@ -293,7 +277,6 @@ function aiUpdate(dt, now) {
         ai.aimJitterPitch = (Math.random() - 0.5) * AI_CFG.aimErrorMax * 0.6;
     }
 
-    // ================= 移动 =================
     const w = p2.weapon;
     const prefRange = aiPreferredRange(w);
 
@@ -334,7 +317,6 @@ function aiUpdate(dt, now) {
         p2.pos.z += (fz * f + rz * s) * spd * dt;
     }
 
-    // ================= 姿态 =================
     if (now > ai.stanceUntil) {
         const r = Math.random();
         if (r < 0.7) {
@@ -353,7 +335,6 @@ function aiUpdate(dt, now) {
     p2.height += (targetH - p2.height) * k;
     p2.eyeH += (stanceEye(targetH) - p2.eyeH) * k;
 
-    // ================= 跳跃 =================
     if (now > ai.nextJumpAt && p2.onGround) {
         if (Math.random() < AI_CFG.jumpChance * dt * 3) {
             p2.vy = JUMP_V;
@@ -362,7 +343,6 @@ function aiUpdate(dt, now) {
         }
     }
 
-    // 重力
     p2.prevY = p2.pos.y;
     p2.vy -= GRAV * dt;
     p2.pos.y += p2.vy * dt;
@@ -379,7 +359,6 @@ function aiUpdate(dt, now) {
         p2.onGround = true;
     }
 
-    // ================= 开火决策 =================
     const vis = aiCanSeePlayer(now);
     const totalYawErr = Math.abs(yawDiff) + Math.abs(ai.aimJitterYaw);
     const aimed = totalYawErr < AI_CFG.fireAngle;
@@ -402,12 +381,10 @@ function aiUpdate(dt, now) {
         ai.lastSeenAt = 0;
     }
 
-    // 自动换弹
     if (p2.ammo === 0 && p2.reloadEnd === 0 && p2.reserve > 0) {
         aiStartReload(now);
     }
 
-    // ================= 更新网格 =================
     p2.mesh.position.copy(p2.pos);
     p2.mesh.rotation.y = p2.yaw;
     p2.mesh.scale.y = p2.height / HEIGHT_STAND;

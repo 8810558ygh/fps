@@ -1,4 +1,4 @@
-// ===== js/scene.js – 场景框架（多地图支持 + 通用工具） =====
+// ===== js/scene.js – 场景框架（多地图支持 + 通用工具 + 可破坏油桶） =====
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xbcc9d2);
 scene.fog = new THREE.Fog(0xbcc9d2, 50, 120);
@@ -27,7 +27,7 @@ sun.shadow.camera.far = 130;
 sun.shadow.bias = -0.0004;
 scene.add(sun);
 
-// 地面（所有地图共用）
+// 地面
 const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(ARENA * 2, ARENA * 2),
     new THREE.MeshLambertMaterial({ map: groundTex })
@@ -35,30 +35,23 @@ const ground = new THREE.Mesh(
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
-// ★ 暴露地面给射击系统（用于生成弹痕）
 window.groundMesh = ground;
 
-// 碰撞与弹道阻挡表（清空后重新填充）
+// 碰撞与弹道阻挡表
 const wallMeshes = [];
 const crateMeshes = [];
 const colliders = [];
 window.platforms = [];
 
-// ============================================================
 // ★ C3：路灯 PointLight 列表
-//   每帧在 main.js 里根据与玩家的距离启停 visible，
-//   避免远端的 PointLight 白白参与 shader 光照循环。
-// ============================================================
 window.lampLights = [];
 
-// 当前地图组
 let currentMapGroup = null;
 let currentMapId = null;
 let currentMapDef = null;
 window.currentMapSpawns = null;
 const MAP_BUILDERS = {};
 
-// 注册地图
 function registerMap(id, def) {
     MAP_BUILDERS[id] = def;
 }
@@ -90,14 +83,12 @@ function _getColorMat(color) {
 }
 window._getColorMat = _getColorMat;
 
-// ★ A4：射击目标缓存失效
 function _notifyShotTargetsDirty() {
     if (typeof window.markShotTargetsDirty === 'function') {
         window.markShotTargetsDirty();
     }
 }
 
-// 平台
 function addPlatform(x, z, w, d, topY) {
     window.platforms.push({
         x0: x - w / 2, x1: x + w / 2,
@@ -106,7 +97,6 @@ function addPlatform(x, z, w, d, topY) {
     });
 }
 
-// 实心方块
 function solid(x, z, w, h, d, tex, ry) {
     const m = new THREE.Mesh(
         new THREE.BoxGeometry(w, h, d),
@@ -122,7 +112,6 @@ function solid(x, z, w, h, d, tex, ry) {
     return m;
 }
 
-// 楼梯
 function addStairs(cx, cz, dir, width, numSteps, stepH, stepD) {
     for (let i = 0; i < numSteps; i++) {
         const height = (numSteps - i) * stepH;
@@ -155,7 +144,9 @@ function addStairs(cx, cz, dir, width, numSteps, stepH, stepD) {
     }
 }
 
-// 油桶
+// ============================================================
+// 油桶（★ 现在注册为可破坏）
+// ============================================================
 const barrelGeo = new THREE.CylinderGeometry(0.45, 0.45, 1.1, 14);
 barrelGeo._shared = true;
 const barrelMat = new THREE.MeshLambertMaterial({ map: metalTex });
@@ -167,11 +158,19 @@ function addBarrel(x, z) {
     if (currentMapGroup) currentMapGroup.add(m);
     else scene.add(m);
     wallMeshes.push(m);
-    colliders.push({ x0: x - 0.45, x1: x + 0.45, z0: z - 0.45, z1: z + 0.45, top: 1.1, bottom: 0 });
+    const collider = { x0: x - 0.45, x1: x + 0.45, z0: z - 0.45, z1: z + 0.45, top: 1.1, bottom: 0 };
+    colliders.push(collider);
     addPlatform(x, z, 0.9, 0.9, 1.1);
+
+    // ★ 注册为可破坏油桶
+    if (typeof window.registerBarrel === 'function') {
+        window.registerBarrel(m, x, z, collider);
+    }
 }
 
+// ============================================================
 // 报废汽车
+// ============================================================
 const _carWheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.3, 12);
 _carWheelGeo.rotateX(Math.PI / 2);
 _carWheelGeo._shared = true;
@@ -211,7 +210,9 @@ function addCar(x, z, col, ry) {
     g.traverse(o => { if (o.isMesh) wallMeshes.push(o); });
 }
 
-// 路灯（★ C3：把 PointLight 加入全局列表供主循环剔除）
+// ============================================================
+// 路灯
+// ============================================================
 const _lampPoleGeo = new THREE.CylinderGeometry(0.09, 0.12, 4.4, 8);
 _lampPoleGeo._shared = true;
 const _lampHeadGeo = new THREE.BoxGeometry(0.6, 0.22, 0.3);
@@ -238,11 +239,9 @@ function addLamp(x, z) {
     } else {
         scene.add(pole, head, light);
     }
-    // ★ C3：注册到全局列表
     window.lampLights.push(light);
 }
 
-// 悬空薄板（如车棚顶）
 function addFloatingSlab(x, z, w, h, d, y, tex) {
     const m = new THREE.Mesh(
         new THREE.BoxGeometry(w, h, d),
@@ -261,14 +260,11 @@ function addFloatingSlab(x, z, w, h, d, y, tex) {
     });
 }
 
-// 清空地图
 function clearMap() {
     if (currentMapGroup) {
         scene.remove(currentMapGroup);
         currentMapGroup.traverse(o => {
             if (o.isMesh) {
-                // ★ B2：材质跨地图共享，不 dispose
-                // ★ 共享几何体（_shared = true）也不 dispose
                 if (o.geometry && !o.geometry._shared) o.geometry.dispose();
             }
         });
@@ -285,12 +281,15 @@ function clearMap() {
     // ★ C3：清空路灯列表
     window.lampLights.length = 0;
 
-    // ★ A4：wallMeshes / crateMeshes 被清空 → 射击目标缓存失效
+    // ★ 清空油桶注册表
+    if (typeof window.clearBarrels === 'function') {
+        window.clearBarrels();
+    }
+
     _notifyShotTargetsDirty();
 }
 window.clearMap = clearMap;
 
-// 加载地图
 function loadMap(mapId) {
     const def = MAP_BUILDERS[mapId];
     if (!def) {
@@ -337,9 +336,12 @@ function loadMap(mapId) {
     }
     window.terrainHeightFn = def.terrainHeightFn || null;
 
-    if (typeof window.refreshMinimap === 'function') window.refreshMinimap();
+    // 重建物理静态刚体
+    if (window.PHYSICS && window.PHYSICS.isReady && window.PHYSICS.isReady()) {
+        window.PHYSICS.rebuildStaticBodies();
+    }
 
-    // ★ B3：地图切换后请求一次阴影更新
+    if (typeof window.refreshMinimap === 'function') window.refreshMinimap();
     if (typeof window.requestShadowUpdate === 'function') window.requestShadowUpdate();
 
     return true;

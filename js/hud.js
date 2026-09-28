@@ -1,4 +1,4 @@
-// ===== js/hud.js – HUD更新与回合结算报告（含刀 + 烟雾 + 闪光 + 引信倒计时 + ADS准星） =====
+// ===== js/hud.js – HUD更新与回合结算报告 =====
 function q(s) { return document.querySelector(s); }
 
 const H = {
@@ -18,9 +18,6 @@ const H = {
     }
 };
 
-// ============================================================
-// ★ 性能优化（A1）：缓存 updateHUD 里高频访问的 DOM 节点
-// ============================================================
 const _timerEl   = q('#timer');
 const _cdEl      = document.getElementById('throwCountdown');
 const _cdIconEl  = document.getElementById('throwCountdownIcon');
@@ -29,9 +26,6 @@ const _cdTimeEl  = document.getElementById('throwCountdownTime');
 const _crossEl   = q('#hud1 .cross');
 const _adsRetEl  = document.getElementById('adsReticle');
 
-// ============================================================
-// ★ 性能优化（B4）：HUD 只在变化时写 DOM
-// ============================================================
 const _hudState = {
     score: -1,
     hp: -1,
@@ -71,16 +65,11 @@ function createReportContainer() {
     return div;
 }
 
-// ============================================================
-// ★ 报告列名解析
-//   新增 attackerSeat：优先用座位语义，保证观战者/红方客户端的列名正确
-// ============================================================
 function getReportColumns(attacker, attackerSeat) {
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
     const hasNET   = (typeof NET !== 'undefined' && NET && NET.roomId);
 
     if (isOnline && hasNET) {
-        // —— 观战者：左右列固定为"蓝方 | 红方" ——
         if (NET.role === 'spectator') {
             const killLabel =
                 attackerSeat === 'red'  ? '红方' :
@@ -93,7 +82,6 @@ function getReportColumns(attacker, attackerSeat) {
             };
         }
 
-        // —— 玩家：左右列固定为"你 | 对手名" ——
         const myIsBlue = (NET.mySeat === 'blue');
         const myColor  = myIsBlue ? '#6db3ff' : '#ff7a6d';
         const opColor  = myIsBlue ? '#ff7a6d' : '#6db3ff';
@@ -108,7 +96,6 @@ function getReportColumns(attacker, attackerSeat) {
         };
     }
 
-    // —— 单机 / AI 模式 ——
     return {
         leftLabel:  '玩家1', leftColor:  '#6db3ff',
         rightLabel: '玩家2', rightColor: '#ff7a6d',
@@ -117,25 +104,27 @@ function getReportColumns(attacker, attackerSeat) {
 }
 
 // ============================================================
-// ★ showRoundReport：新增 killerSeat / victimSeat 参数
-//   · 有座位信息 → 左列=蓝方、右列=红方
-//   · 无座位信息 → 沿用 attacker.id 的旧逻辑（单机 / AI）
-//   列值语义：该玩家造成的伤害
+// ★ showRoundReport：新增"腿部"一行
+//   伤害结构：{ body, head, leg, total }
+//   列含义：左列 = 蓝方（或"你"）造成的伤害
 // ============================================================
 function showRoundReport(roundNumber, attacker, victim, dmgByAttacker, dmgByVictim,
                          killerSeat, victimSeat) {
     const report = createReportContainer();
 
-    // 伤害列映射
     let dmg1, dmg2;
     if (killerSeat && victimSeat) {
         const blueIsAttacker = (killerSeat === 'blue');
-        dmg1 = blueIsAttacker ? dmgByAttacker : dmgByVictim;   // 蓝方造成的伤害
-        dmg2 = blueIsAttacker ? dmgByVictim  : dmgByAttacker;  // 红方造成的伤害
+        dmg1 = blueIsAttacker ? dmgByAttacker : dmgByVictim;
+        dmg2 = blueIsAttacker ? dmgByVictim  : dmgByAttacker;
     } else {
         if (attacker.id === 1) { dmg1 = dmgByAttacker; dmg2 = dmgByVictim; }
         else                   { dmg1 = dmgByVictim;  dmg2 = dmgByAttacker; }
     }
+
+    // 兼容旧数据结构（没有 leg 字段时视为 0）
+    const leg1 = dmg1.leg || 0;
+    const leg2 = dmg2.leg || 0;
 
     const cols = getReportColumns(attacker, killerSeat);
 
@@ -172,8 +161,10 @@ function showRoundReport(roundNumber, attacker, victim, dmgByAttacker, dmgByVict
         `;
         return r;
     }
-    report.appendChild(makeRow('🎯', '头部', dmg1.head, dmg2.head, '#ffd24a'));
-    report.appendChild(makeRow('🔫', '身体', dmg1.body, dmg2.body, '#ff6b6b'));
+    // ★ 三行：头部 / 身体 / 腿部
+    report.appendChild(makeRow('🎯', '头部', dmg1.head || 0, dmg2.head || 0, '#ffd24a'));
+    report.appendChild(makeRow('🔫', '身体', dmg1.body || 0, dmg2.body || 0, '#ff6b6b'));
+    report.appendChild(makeRow('🦵', '腿部', leg1, leg2, '#8fe8a8'));
 
     const sep = document.createElement('div');
     sep.style.cssText = `margin: 8px 0 6px; border-top: 1px solid rgba(255,255,255,0.08);`;
@@ -225,9 +216,6 @@ function feed(p, html) {
 
 function centerMsg(p, text) { if (p.id === 1) H[1].center.textContent = text; }
 
-// ============================================================
-// ★ 受伤红闪：加 requestAnimationFrame 去重
-// ============================================================
 let _dmgFlashRaf = 0;
 function dmgFlash(p) {
     if (p.id !== 1) return;
@@ -250,9 +238,6 @@ function hitmark(p) {
     el.classList.add('pop');
 }
 
-// ============================================================
-// ★ B4：只在值变化时写 DOM
-// ============================================================
 function _setText(el, val, cacheKey) {
     if (!el) return;
     if (_hudState[cacheKey] === val) return;
@@ -279,17 +264,14 @@ function updateHUD(now) {
     const h = H[1];
     if (!h) return;
 
-    // 分数
     _setText(h.score, String(p.score), 'score');
 
-    // HP
     const hpVal = Math.max(0, Math.round(p.hp));
     if (hpVal !== _hudState.hp) {
         h.hpText.textContent = hpVal;
         _hudState.hp = hpVal;
     }
 
-    // 护甲
     const armorVal = Math.max(0, Math.round(p.armor));
     if (armorVal !== _hudState.armor) {
         h.armorText.textContent = armorVal;
@@ -301,7 +283,6 @@ function updateHUD(now) {
         _hudState.armorColor = armorColor;
     }
 
-    // 弹药 / 武器名
     let ammoHtml = '';
     let wtagText = '';
     if (p.isMelee) {
@@ -334,7 +315,6 @@ function updateHUD(now) {
     _setHtml(h.ammo, ammoHtml, 'ammoHtml');
     _setText(h.wtag, wtagText, 'wtagText');
 
-    // 投掷引信倒计时
     if (_cdEl) {
         if (running && gameState === 'combat' && p.throwFuseActive && p.throwFuseType) {
             const remain = Math.max(0, p.throwFuseEnd - now);
@@ -355,7 +335,6 @@ function updateHUD(now) {
         }
     }
 
-    // 倍镜遮罩
     const scoped = running && gameState === 'combat' && !p.isMelee && !p.isSmoke && !p.isFlash
         && p.aiming && p.weapon.scope && now >= p.deadUntil;
     const scopeDisplay = scoped ? 'block' : 'none';
@@ -364,7 +343,6 @@ function updateHUD(now) {
         _hudState.scopeDisplay = scopeDisplay;
     }
 
-    // 计时器
     if (running && gameState === 'prep') {
         const remain = Math.max(0, (stateEndTime - now) / 1000);
         _setText(_timerEl, `准备 ${remain.toFixed(1)}s`, 'timerText');
@@ -380,7 +358,6 @@ function updateHUD(now) {
     if (h.hint) h.hint.style.display =
         (running && gameState === 'prep' && document.pointerLockElement !== renderer.domElement && !isOver()) ? 'block' : 'none';
 
-    // ADS 状态
     const isRedDotADS = running && gameState === 'combat'
         && p1.aiming
         && p1.weapon && (p1.weapon.key === 'rifle' || p1.weapon.key === 'odin')

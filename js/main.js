@@ -7,9 +7,6 @@ renderer.setScissorTest(false);
 
 const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
 
-// ============================================================
-// ★ 方案 A 优化 2：按模式动态像素比
-// ============================================================
 function getDesiredPixelRatio() {
     if (isTouchDevice) return 1;
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
@@ -26,7 +23,6 @@ document.body.appendChild(renderer.domElement);
 
 // ============================================================
 // ★ B3：阴影节流更新
-// ★ 方案 A 优化 3：联机时降到 6 帧一次（5Hz），单机保持 3 帧
 // ============================================================
 function getShadowUpdateInterval() {
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
@@ -41,9 +37,6 @@ window.requestShadowUpdate = function () {
     renderer.shadowMap.needsUpdate = true;
 };
 
-// ============================================================
-// ★ C3：路灯距离剔除阈值
-// ============================================================
 const LAMP_CULL_DIST_SQ = 22 * 22;
 
 async function lockLandscape() {
@@ -178,7 +171,7 @@ function syncMinimapVisibility() {
 const clock = new THREE.Clock();
 
 // ============================================================
-// ★ 实时帧率计数器
+// 实时帧率计数器
 // ============================================================
 const _fpsEl = document.getElementById('fpsCounter');
 const _fpsState = {
@@ -219,7 +212,7 @@ function updateFpsCounter(now) {
 }
 
 // ============================================================
-// ★ 瞄准镜画中画渲染（PiP）
+// 瞄准镜画中画渲染（PiP）
 // ============================================================
 let _scopeCam = null;
 let _scopeRT  = null;
@@ -329,8 +322,44 @@ function updateScopePip() {
 }
 
 // ============================================================
-// ★ A1：联机对手阴影管理
+// ★ 预热 PiP 瞄准镜资源（供 loading.js 调用）
+//   · 提前创建 scopeCam + scopeRT + scopeMat
+//   · 用 scopeCam 渲染一帧到 RT，确保 GPU 资源真的分配过
 // ============================================================
+window.warmupScopePip = function () {
+    ensureScopeResources();
+    if (!_scopeCam || !_scopeRT) return;
+
+    const prevRT = renderer.getRenderTarget();
+    const prevAuto = renderer.shadowMap.autoUpdate;
+    const prevNeeds = renderer.shadowMap.needsUpdate;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = false;
+
+    if (typeof p1 !== 'undefined' && p1 && p1.cam) {
+        _scopeCam.position.copy(p1.cam.position);
+        _scopeCam.quaternion.copy(p1.cam.quaternion);
+    } else {
+        _scopeCam.position.set(0, 5, 10);
+        _scopeCam.lookAt(0, 0, 0);
+    }
+    _scopeCam.updateMatrixWorld(true);
+
+    try {
+        renderer.setRenderTarget(_scopeRT);
+        renderer.clear();
+        renderer.render(scene, _scopeCam);
+        renderer.setRenderTarget(prevRT);
+    } catch (e) {
+        try { renderer.setRenderTarget(prevRT); } catch (e2) {}
+    }
+
+    renderer.shadowMap.autoUpdate = prevAuto;
+    renderer.shadowMap.needsUpdate = prevNeeds;
+
+    console.log('[loading] PiP 瞄准镜资源已预热');
+};
+
 function updateP2ShadowState() {
     if (typeof p2 === 'undefined' || !p2 || !p2.mesh) return;
 
@@ -342,23 +371,6 @@ function updateP2ShadowState() {
     p2.mesh.traverse(o => { if (o.isMesh) o.castShadow = cast; });
 }
 
-// ============================================================
-// ★ B1：对手位置插值
-//
-//   服务器每 33ms 发来一次对手快照 → 存到 p2._netTargetPos
-//   本函数每帧（16ms）把 p2.pos 平滑靠拢到 _netTargetPos
-//   → 视觉上从"30Hz 跳一下"变成"60Hz 平滑跟随"
-//
-//   参数：
-//     p  - 目标玩家（通常是 p2，对手）
-//     dt - 帧间隔（秒）
-//
-//   收敛速率 k = dt * 22：
-//     · 33ms 收敛 ~66%（一帧快照间隔后已完成大部分追赶）
-//     · 100ms 收敛 ~90%
-//     · 150ms 收敛 ~98%
-//   这个速度能在"跟得上对手"和"看起来平滑"之间取得平衡。
-// ============================================================
 function interpolateRemotePlayer(p, dt) {
     if (!p || !p._netTargetPos) return;
 
@@ -368,13 +380,11 @@ function interpolateRemotePlayer(p, dt) {
     p.pos.y += (p._netTargetPos.y - p.pos.y) * k;
     p.pos.z += (p._netTargetPos.z - p.pos.z) * k;
 
-    // yaw 需要处理角度环绕（-π ~ π 之间最短路径）
     let dyaw = p._netTargetYaw - p.yaw;
     while (dyaw >  Math.PI) dyaw -= Math.PI * 2;
     while (dyaw < -Math.PI) dyaw += Math.PI * 2;
     p.yaw += dyaw * k;
 
-    // 同步到 mesh
     p.mesh.position.copy(p.pos);
     p.mesh.rotation.y = p.yaw;
     p.mesh.scale.y = p.height / HEIGHT_STAND;
@@ -415,7 +425,6 @@ function collectLocalInput(p) {
     p.input.fire = !!mouse.leftDown;
 }
 
-// ★ 方案 A 优化 1：客户端上报频率 100Hz → 30Hz
 let _lastClientReportTime = 0;
 const CLIENT_REPORT_INTERVAL = 33;
 
@@ -442,19 +451,13 @@ function loop() {
             if (gameState === 'prep' && now >= stateEndTime) endPrep(now);
             else if (gameState === 'roundEnd' && now >= stateEndTime) startRound(now);
         } else if (isClient) {
-            // ★ 粘滞感修复：客户端本地预测
             collectLocalInput(p1);
             updatePlayer(p1, dt, now);
 
-            // ============================================================
-            // ★ B1：对手位置插值
-            //   在 updatePlayer(p1) 之后，把 p2 平滑靠拢到服务器目标位置
-            // ============================================================
             if (typeof p2 !== 'undefined' && p2) {
                 interpolateRemotePlayer(p2, dt);
             }
 
-            // p2 的第三人称武器动画（依赖 p2.pos 已经更新过）
             if (typeof updateThirdPersonWeapon === 'function'
                 && typeof p2 !== 'undefined' && p2) {
                 updateThirdPersonWeapon(p2, dt, now);
@@ -472,6 +475,21 @@ function loop() {
             aiUpdate(dt, now);
         } else if (gameMode === 'range') {
             updateTarget(p2, dt, now);
+        }
+
+        // 物理步进 + 同步
+        if (window.PHYSICS && window.PHYSICS.isReady()) {
+            window.PHYSICS.stepPhysics(dt);
+
+            if (typeof p1 !== 'undefined' && p1) {
+                window.PHYSICS.syncPlayerToBody(p1, dt);
+            }
+
+            if (typeof p2 !== 'undefined' && p2) {
+                if (isClient || isSpectator) {
+                    window.PHYSICS.syncPlayerToBody(p2, dt);
+                }
+            }
         }
 
         if (!isSpectator) {
@@ -513,6 +531,83 @@ window.addEventListener('resize', () => {
     p1.cam.updateProjectionMatrix();
 });
 
+// ============================================================
+// 退出到大厅（仅单机模式）
+// ============================================================
+function exitToLobby() {
+    audio();
+
+    running = false;
+    gameState = 'idle';
+    if (typeof setOver === 'function') setOver(true);
+
+    if (document.pointerLockElement) document.exitPointerLock();
+
+    if (window.closeCombatReport) window.closeCombatReport();
+    if (typeof closeChat === 'function') closeChat();
+    document.getElementById('endOverlay').style.display = 'none';
+    document.getElementById('weaponPanel').style.display = 'none';
+    document.getElementById('exitBtn').style.display = 'none';
+
+    document.body.classList.remove('in-game');
+
+    document.getElementById('lobbyOverlay').style.display = 'flex';
+
+    console.log('[game] 已退出到大厅');
+}
+window.exitToLobby = exitToLobby;
+
+// ============================================================
+// 返回联机房间
+// ============================================================
+function returnToOnlineRoom(isRemote) {
+    audio();
+
+    running = false;
+    gameState = 'idle';
+    if (typeof setOver === 'function') setOver(true);
+
+    if (document.pointerLockElement) document.exitPointerLock();
+
+    if (window.closeCombatReport) window.closeCombatReport();
+    if (typeof closeChat === 'function') closeChat();
+    document.getElementById('endOverlay').style.display = 'none';
+    document.getElementById('weaponPanel').style.display = 'none';
+    document.getElementById('exitBtn').style.display = 'none';
+
+    document.body.classList.remove('in-game');
+    document.body.classList.remove('online-mode');
+
+    if (typeof NET !== 'undefined') {
+        NET.started = false;
+        NET.role = null;
+        NET.pendingWeaponSwitch = null;
+        NET.pendingReload = false;
+        NET.pendingFuseStart = null;
+        NET.pendingFuseRelease = false;
+        NET.pendingMelee = false;
+        NET.pendingMeleeHeavy = false;
+
+        if (NET.isHost && !isRemote && typeof NET_broadcast === 'function') {
+            NET_broadcast({ type: 'returnToRoom' });
+        }
+    }
+
+    document.getElementById('onlineLobbyOverlay').style.display = 'flex';
+    if (typeof renderOnlineRoomUI === 'function') renderOnlineRoomUI();
+
+    console.log('[game] 已返回联机房间', isRemote ? '(远端触发)' : '');
+}
+window.returnToOnlineRoom = returnToOnlineRoom;
+
+document.getElementById('exitBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    exitToLobby();
+});
+
+// ============================================================
+// 开始游戏入口
+// ============================================================
 function enterGame(mode) {
     audio();
     if (!window.getCurrentMapId() && window.loadMap) {
@@ -521,6 +616,10 @@ function enterGame(mode) {
     window.GAME_setMode(mode);
     p2.gunHolder.visible = (mode === 'ai' || mode === 'online');
     document.getElementById('lobbyOverlay').style.display = 'none';
+
+    const exitBtn = document.getElementById('exitBtn');
+    if (exitBtn) exitBtn.style.display = (mode !== 'online') ? 'block' : 'none';
+
     resetMatch();
     enterFullscreenAndLock();
 }
@@ -549,13 +648,14 @@ document.getElementById('lobbyOnlineBtn').addEventListener('click', () => {
 
 document.getElementById('againBtn').addEventListener('click', () => {
     audio();
-    resetMatch();
-    enterFullscreenAndLock();
+    if (gameMode === 'online') {
+        returnToOnlineRoom(false);
+    } else {
+        resetMatch();
+        enterFullscreenAndLock();
+    }
 });
 
-// ============================================================
-// ★ 方案 A 优化 2：模式切换时刷新 pixelRatio
-// ============================================================
 window.GAME_setMode = function (mode) {
     const wasOnline = (gameMode === 'online');
     gameMode = mode;

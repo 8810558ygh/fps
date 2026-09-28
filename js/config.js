@@ -38,7 +38,6 @@ const MELEE = {
     mag: 0, startReserve: 0, reloadMs: 0
 };
 
-// ===== 烟雾弹 =====
 const SMOKE = {
     key: 'smoke', name: '烟雾弹',
     throwSpeed: 20, throwUpBias: 0.35,
@@ -50,7 +49,6 @@ const SMOKE = {
     mag: 0, startReserve: 0, reloadMs: 0
 };
 
-// ===== 闪光弹 =====
 const FLASH = {
     key: 'flash', name: '闪光弹',
     throwSpeed: 20, throwUpBias: 0.35,
@@ -65,45 +63,39 @@ const FLASH = {
     mag: 0, startReserve: 0, reloadMs: 0
 };
 
+// ===== 武器 =====
+// ★ 伤害字段（全部独立写死，不再用倍率）：
+//   · dmgHead —— 头部伤害（含面罩）
+//   · dmgBody —— 身体伤害（含手臂 / 手 / 背包）
+//   · dmgLeg  —— 腿部伤害（含脚）
 const WEAPONS = {
     rifle: {
         key: 'rifle', name: '狂徒',
-        dmgBody: 40, dmgHead: 160,
+        dmgBody: 40, dmgHead: 160, dmgLeg: 34,
         fireMs: 203, mag: 25, reserveMax: 75, startReserve: 50, reloadMs: 2500,
         zoomFov: 62, scope: false,
         speedMul: 1.0, adsSpeedMul: 0.76
     },
     sniper: {
         key: 'sniper', name: '冥驹',
-        dmgBody: 150, dmgHead: 255,
+        dmgBody: 150, dmgHead: 255, dmgLeg: 120,
         fireMs: 850,
         mag: 5, reserveMax: 10, startReserve: 10, reloadMs: 3700,
         zoomFov: 14, zoomFov2: 6,
         scope: true, boltMs: 850,
         speedMul: 0.72, adsSpeedMul: 0.72
     },
-
-    // ===== ★ 判官（霰弹枪）：本次重点调整 =====
-    //   1. spread 0.25 → 0.08（约 4.6° 半角）
-    //      对应真实 00 号弹 10m 直径约 0.35m，接近现实散布
-    //   2. pellets 12 → 10（贴近真实 12GA 00 号 9 颗铅弹）
-    //   3. dmgBody 17 → 22（单颗弹丸更致命，近距离一枪秒杀）
-    //   4. dmgHead 34 → 44
-    //   5. fireMs 286 → 350（模拟泵动 0.35 秒/发，熟练射手节奏）
-    //   6. reloadMs 2200 → 2400（管式弹仓一发一发压）
-    //   7. speedMul 0.75 → 0.80（霰弹枪不算很重）
     shotgun: {
         key: 'shotgun', name: '判官',
-        dmgBody: 22, dmgHead: 44,
+        dmgBody: 22, dmgHead: 44, dmgLeg: 19,
         fireMs: 350, mag: 5, reserveMax: 15, startReserve: 15, reloadMs: 2400,
         zoomFov: 60, scope: false,
         speedMul: 0.80, adsSpeedMul: 0.78,
         pellets: 10, spread: 0.08
     },
-
     odin: {
         key: 'odin', name: '奥丁机枪',
-        dmgBody: 38, dmgHead: 95,
+        dmgBody: 38, dmgHead: 95, dmgLeg: 32,
         fireMs: 70, minFireMs: 55, spinUpMs: 500,
         mag: 100, reserveMax: 200, startReserve: 200, reloadMs: 5000,
         zoomFov: 60, scope: false,

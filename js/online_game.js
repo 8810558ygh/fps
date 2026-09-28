@@ -157,6 +157,10 @@ function enterOnlineGame() {
     }
     document.body.classList.add('online-mode');
 
+    // ★ 联机模式隐藏退出按钮
+    const exitBtn = document.getElementById('exitBtn');
+    if (exitBtn) exitBtn.style.display = 'none';
+
     if (NET.role === 'spectator') {
         const mc = document.getElementById('mobile-controls');
         if (mc) mc.style.display = 'none';
@@ -169,9 +173,6 @@ function enterOnlineGame() {
 }
 window.NET_enterOnlineGame = enterOnlineGame;
 
-// ============================================================
-// ★ 方案 A 优化 1：房主广播频率 100Hz → 30Hz
-// ============================================================
 function startHostBroadcast() {
     if (NET._hostBroadcastTimer) clearInterval(NET._hostBroadcastTimer);
     NET._hostBroadcastTimer = setInterval(hostBroadcastTick, 33);
@@ -312,7 +313,6 @@ function handleHostState(data) {
                 applyWeaponToPlayer(p1, targetKey, true);
             }
 
-            // ★ 自己（p1）：本地预测 + 服务器平滑校正（粘滞感修复）
             const authX = myData.x, authY = myData.y, authZ = myData.z;
             const dx = authX - p1.pos.x;
             const dy = authY - p1.pos.y;
@@ -377,24 +377,14 @@ function handleHostState(data) {
         }
 
         if (typeof p2 !== 'undefined' && p2) {
-            // ============================================================
-            // ★ B1：对手（p2）位置改为"记录目标"，实际位置由
-            //   main.js 的 interpolateRemotePlayer 每帧平滑靠拢
-            //
-            //   改动前：p2.pos.set(...) → 每 33ms 跳一次
-            //   改动后：p2._netTargetPos = 快照位置
-            //          客户端每帧 lerp(p2.pos → _netTargetPos) → 视觉平滑
-            // ============================================================
             if (p2._netTargetPos) {
                 p2._netTargetPos.set(oppData.x, oppData.y, oppData.z);
                 p2._netTargetYaw = oppData.yaw;
             } else {
-                // 兜底（理论上不会走到）
                 p2.pos.set(oppData.x, oppData.y, oppData.z);
                 p2.yaw = oppData.yaw;
             }
 
-            // pitch 不做插值（影响小）
             p2.pitch = oppData.pitch;
 
             p2.hp = oppData.hp;
@@ -423,10 +413,6 @@ function handleHostState(data) {
                 p2.deadUntil = 0;
                 p2.mesh.visible = true;
             }
-
-            // ★ 注意：mesh 的 position / rotation / scale 现在由
-            //   main.js 里的 interpolateRemotePlayer 每帧更新，
-            //   这里不再 p2.mesh.position.copy(...)
 
             const targetKey = oppData.isMelee ? 'knife' : (oppData.isSmoke ? 'smoke' : (oppData.isFlash ? 'flash' : oppData.weapon));
             const currentKey = p2.isMelee ? 'knife' : (p2.isSmoke ? 'smoke' : (p2.isFlash ? 'flash' : p2.weaponKey));
@@ -741,8 +727,8 @@ window.NET_sendKillEvent = function (killerSeat, victimSeat, round, dmgByKiller,
         killerSeat: killerSeat || null,
         victimSeat: victimSeat || null,
         roundNumber: round,
-        dmgByKiller: dmgByKiller || { body: 0, head: 0, total: 0 },
-        dmgByVictim: dmgByVictim || { body: 0, head: 0, total: 0 }
+        dmgByKiller: dmgByKiller || { body: 0, head: 0, leg: 0, total: 0 },
+        dmgByVictim: dmgByVictim || { body: 0, head: 0, leg: 0, total: 0 }
     });
 };
 

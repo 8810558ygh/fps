@@ -1,4 +1,4 @@
-// ===== js/game_projectiles.js – 投掷物、烟雾、闪光、引信 =====
+// ===== js/game_projectiles.js – 投掷物、烟雾、闪光、引信（第 3 阶段：物理驱动 · 手里炸修复） =====
 
 const activeSmokes = [];
 const activeFlashes = [];
@@ -7,7 +7,7 @@ const SMOKE_PROJ_RADIUS = 0.09;
 const SMOKE_PROJ_HALF_H = 0.12;
 
 // ============================================================
-// ★ C2：投掷物几何体 / 材质共享
+// 投掷物几何体 / 材质共享
 // ============================================================
 const _projBodyGeo = new THREE.CylinderGeometry(
     SMOKE_PROJ_RADIUS, SMOKE_PROJ_RADIUS, SMOKE_PROJ_HALF_H * 2, 14
@@ -38,17 +38,7 @@ function _ensureProjectileMaterials() {
 }
 
 // ============================================================
-// ★ 闪光弹爆炸特效池（修复爆炸瞬间卡顿）
-//
-//   原实现每次爆炸都 new PointLight + scene.add + 380ms 后 remove，
-//   每次都会触发场景里所有材质的 shader 重编译（几十~几百 ms）。
-//
-//   现改为：
-//     · 游戏启动时一次性创建 N 个 PointLight + N 个 shell，
-//       全部 add 进 scene，初始 intensity = 0、opacity = 0、visible = false
-//     · 爆炸时从池里借一个，改 intensity / position / opacity
-//     · 结束时把 intensity 归零、隐藏 shell，不 remove
-//   → 场景光源数量恒定，不再触发 shader 重编译
+// 闪光弹爆炸特效池
 // ============================================================
 const FLASH_BURST_POOL_SIZE = 3;
 const FLASH_BURST_LIFE_MS = 380;
@@ -60,7 +50,6 @@ function initFlashBurstPool() {
     if (typeof scene === 'undefined' || !scene) return;
     _flashBurstPoolInited = true;
 
-    // 所有 shell 共享同一个几何体
     const sharedGeo = new THREE.SphereGeometry(0.5, 20, 14);
 
     for (let i = 0; i < FLASH_BURST_POOL_SIZE; i++) {
@@ -90,7 +79,6 @@ function initFlashBurstPool() {
     }
 }
 
-// 找一个槽位：优先空闲的，没有空闲就抢最早的那个
 function _acquireFlashBurstSlot() {
     let slot = null;
     for (let i = 0; i < _flashBurstPool.length; i++) {
@@ -105,7 +93,6 @@ function _acquireFlashBurstSlot() {
     return slot;
 }
 
-// 每帧在 updateEffects 里调用，推进所有活跃特效的动画
 function updateFlashBursts(dt, now) {
     for (let i = 0; i < _flashBurstPool.length; i++) {
         const b = _flashBurstPool[i];
@@ -131,49 +118,8 @@ function updateFlashBursts(dt, now) {
 }
 
 // ============================================================
-// 通用投掷物理
+// 投掷物 mesh
 // ============================================================
-function updateThrownPhysics(s, dt) {
-    s.vel.y -= s.gravity * dt;
-    const next = s.pos.clone().addScaledVector(s.vel, dt);
-
-    if (next.y <= SMOKE_PROJ_HALF_H) {
-        next.y = SMOKE_PROJ_HALF_H;
-        if (Math.abs(s.vel.y) > 0.8) {
-            s.vel.y = -s.vel.y * s.bounces;
-            s.vel.x *= s.friction;
-            s.vel.z *= s.friction;
-        } else {
-            s.vel.y = 0;
-            s.vel.x *= 0.2;
-            s.vel.z *= 0.2;
-        }
-    }
-    if (Math.abs(next.x) > ARENA - 0.5) { next.x = Math.sign(next.x) * (ARENA - 0.5); s.vel.x *= -0.3; }
-    if (Math.abs(next.z) > ARENA - 0.5) { next.z = Math.sign(next.z) * (ARENA - 0.5); s.vel.z *= -0.3; }
-
-    const r = SMOKE_PROJ_RADIUS;
-    for (const c of colliders) {
-        const top = c.top !== undefined ? c.top : 0;
-        const bot = c.bottom || 0;
-        if (next.y < bot || next.y - SMOKE_PROJ_HALF_H > top) continue;
-        if (next.x + r <= c.x0 || next.x - r >= c.x1) continue;
-        if (next.z + r <= c.z0 || next.z - r >= c.z1) continue;
-        const dxL = next.x - c.x0, dxR = c.x1 - next.x;
-        const dzL = next.z - c.z0, dzR = c.z1 - next.z;
-        const minH = Math.min(dxL, dxR, dzL, dzR);
-        if (minH === dxL)      { next.x = c.x0 - r; s.vel.x *= -0.3; }
-        else if (minH === dxR) { next.x = c.x1 + r; s.vel.x *= -0.3; }
-        else if (minH === dzL) { next.z = c.z0 - r; s.vel.z *= -0.3; }
-        else                   { next.z = c.z1 + r; s.vel.z *= -0.3; }
-    }
-
-    s.pos.copy(next);
-    s.mesh.position.copy(s.pos);
-    s.mesh.rotation.y += dt * 3.0;
-}
-
-// ★ C2：共享几何体 / 材质，只 new Mesh 外壳
 function createThrownProjectileMesh(kind) {
     const M = _ensureProjectileMaterials();
     const isFlash = (kind === 'flash');
@@ -256,15 +202,24 @@ function createSmokeCloud(pos, radius, verticalRadius, centerHeight) {
     return group;
 }
 
+// ============================================================
+// 投掷物生成
+// ============================================================
 function spawnSmokeProjectile(pos, vel, fuseMs, now) {
     const mesh = createThrownProjectileMesh('smoke');
     mesh.position.copy(pos);
     scene.add(mesh);
+
+    let body = null;
+    if (window.PHYSICS && window.PHYSICS.isReady()) {
+        body = window.PHYSICS.createProjectileBody(pos, vel, 'smoke');
+    }
+
     activeSmokes.push({
         mesh, pos: pos.clone(), vel: vel.clone(),
         fuseEnd: now + fuseMs, state: 'flying',
         expandStart: 0, doneAt: 0, cloudMesh: null,
-        gravity: SMOKE.gravity, bounces: SMOKE.bounces, friction: SMOKE.friction
+        body
     });
 }
 window.spawnSmokeProjectile = spawnSmokeProjectile;
@@ -273,15 +228,23 @@ function spawnFlashProjectile(pos, vel, fuseMs, now) {
     const mesh = createThrownProjectileMesh('flash');
     mesh.position.copy(pos);
     scene.add(mesh);
+
+    let body = null;
+    if (window.PHYSICS && window.PHYSICS.isReady()) {
+        body = window.PHYSICS.createProjectileBody(pos, vel, 'flash');
+    }
+
     activeFlashes.push({
         mesh, pos: pos.clone(), vel: vel.clone(),
         fuseEnd: now + fuseMs, state: 'flying',
-        gravity: FLASH.gravity, bounces: FLASH.bounces, friction: FLASH.friction
+        body
     });
 }
 window.spawnFlashProjectile = spawnFlashProjectile;
 
-// ★ 池化后：不 new light、不 add 新节点，只借一个槽位
+// ============================================================
+// 闪光爆发
+// ============================================================
 function spawnFlashBurst(pos) {
     initFlashBurstPool();
     const slot = _acquireFlashBurstSlot();
@@ -299,6 +262,9 @@ function spawnFlashBurst(pos) {
     slot.light.intensity = 12;
 }
 
+// ============================================================
+// 闪光判定（正常投掷后命中判定用）
+// ============================================================
 function checkFlashHit(target, flashPos, now) {
     if (!target) return false;
     if (target.hp <= 0) return false;
@@ -366,16 +332,34 @@ function detonateFlash(pos, now) {
     }
 }
 
+// ============================================================
+// 更新投掷物
+// ============================================================
+const _projQuat = new THREE.Quaternion();
+
 function updateSmokes(dt, now) {
     for (let i = activeSmokes.length - 1; i >= 0; i--) {
         const s = activeSmokes[i];
 
         if (s.state === 'flying') {
-            updateThrownPhysics(s, dt);
+            if (s.body) {
+                s.pos.set(s.body.position.x, s.body.position.y, s.body.position.z);
+                s.mesh.position.copy(s.pos);
+                _projQuat.set(
+                    s.body.quaternion.x, s.body.quaternion.y,
+                    s.body.quaternion.z, s.body.quaternion.w
+                );
+                s.mesh.quaternion.copy(_projQuat);
+            }
 
             if (now >= s.fuseEnd) {
                 scene.remove(s.mesh);
                 s.mesh = null;
+
+                if (s.body) {
+                    window.PHYSICS.removeProjectileBody(s.body);
+                    s.body = null;
+                }
 
                 const cloud = createSmokeCloud(s.pos, SMOKE.radius, SMOKE.verticalRadius, SMOKE.centerHeight);
                 cloud.scale.set(0.04, 0.04, 0.04);
@@ -432,11 +416,24 @@ function updateFlashes(dt, now) {
     for (let i = activeFlashes.length - 1; i >= 0; i--) {
         const s = activeFlashes[i];
         if (s.state === 'flying') {
-            updateThrownPhysics(s, dt);
+            if (s.body) {
+                s.pos.set(s.body.position.x, s.body.position.y, s.body.position.z);
+                s.mesh.position.copy(s.pos);
+                _projQuat.set(
+                    s.body.quaternion.x, s.body.quaternion.y,
+                    s.body.quaternion.z, s.body.quaternion.w
+                );
+                s.mesh.quaternion.copy(_projQuat);
+            }
 
             if (now >= s.fuseEnd) {
                 scene.remove(s.mesh);
                 s.mesh = null;
+
+                if (s.body) {
+                    window.PHYSICS.removeProjectileBody(s.body);
+                    s.body = null;
+                }
 
                 const isAuthority = (gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost);
                 if (isAuthority) {
@@ -451,7 +448,9 @@ function updateFlashes(dt, now) {
     }
 }
 
-// ===== 闪光覆盖层 =====
+// ============================================================
+// 闪光覆盖层
+// ============================================================
 let flashOverlayEl = null;
 function ensureFlashOverlay() {
     if (flashOverlayEl) return flashOverlayEl;
@@ -485,7 +484,9 @@ function updateFlashOverlay(now) {
     }
 }
 
-// ===== 投掷引信系统 =====
+// ============================================================
+// 引信系统
+// ============================================================
 function startThrowFuse(p, type) {
     if (!p) return;
     if (p.throwFuseActive) return;
@@ -646,11 +647,25 @@ function dropFuseInPlace(p) {
 }
 window.dropFuseInPlace = dropFuseInPlace;
 
+// ============================================================
+// ★ 手里爆炸（修复：位置放在"手"上，让 checkFlashHit 的近距离兜底生效）
+// ============================================================
 function detonateInHand(p, type, now) {
-    const origin = new THREE.Vector3(p.pos.x, p.pos.y + 1.0, p.pos.z);
+    // ★ 位置：玩家"手"的位置（眼睛前方偏右下）
+    //   距离眼睛约 0.45m → checkFlashHit 里 dist < 0.6 的兜底直接命中自己
+    const eyePos  = p.cam.getWorldPosition(new THREE.Vector3());
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(p.cam.quaternion);
+    const right   = new THREE.Vector3(1, 0, 0).applyQuaternion(p.cam.quaternion);
+
+    const origin = eyePos.clone()
+        .addScaledVector(forward, 0.40)      // 前方 0.4m
+        .addScaledVector(right,   -0.10)     // 略偏左（跟视图模型的右手位置相反）
+        .add(new THREE.Vector3(0, -0.20, 0)); // 略向下
+
     const vel = new THREE.Vector3(0, 0, 0);
 
     if (type === 'smoke') {
+        // 烟雾弹手里炸：走正常流程（生成烟雾云，不影响谁）
         spawnSmokeProjectile(origin, vel, 0, now);
         if (typeof sSmokeThrow === 'function') sSmokeThrow();
         if (gameMode === 'online'
@@ -665,6 +680,8 @@ function detonateInHand(p, type, now) {
             });
         }
     } else if (type === 'flash') {
+        // ★ 闪光弹手里炸：走正常引爆流程，位置在"手"上
+        //   距离眼睛约 0.45m → checkFlashHit 的 dist<0.6 兜底直接命中自己
         spawnFlashProjectile(origin, vel, 0, now);
         if (typeof sFlashThrow === 'function') sFlashThrow();
         if (gameMode === 'online'
@@ -742,9 +759,16 @@ function throwFlash(p, now, fuseMs) {
     setWeapon(p, p.primaryWeaponKey || 'rifle');
 }
 
+// ============================================================
+// 清理
+// ============================================================
 function clearAllSmokes() {
     for (const s of activeSmokes) {
         if (s.mesh) scene.remove(s.mesh);
+        if (s.body) {
+            window.PHYSICS.removeProjectileBody(s.body);
+            s.body = null;
+        }
         if (s.cloudMesh) {
             scene.remove(s.cloudMesh);
             s.cloudMesh.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
@@ -757,10 +781,13 @@ function clearAllSmokes() {
 function clearAllFlashes() {
     for (const s of activeFlashes) {
         if (s.mesh) scene.remove(s.mesh);
+        if (s.body) {
+            window.PHYSICS.removeProjectileBody(s.body);
+            s.body = null;
+        }
     }
     activeFlashes.length = 0;
 
-    // ★ 池化后：不 remove light / shell，只重置状态
     for (let i = 0; i < _flashBurstPool.length; i++) {
         const b = _flashBurstPool[i];
         b.active = false;
@@ -774,11 +801,7 @@ function clearAllFlashes() {
 }
 
 // ============================================================
-// ★ 脚本加载后立即初始化闪光弹特效池
-//
-//   目的：把池里的 PointLight 在游戏启动时就加进 scene，
-//   这样它们会被"加载页面"里的 renderer.compile() 一并编译，
-//   之后第一次爆炸也**不会**触发 shader 重编译。
+// 启动时初始化闪光弹特效池
 // ============================================================
 if (typeof scene !== 'undefined' && scene) {
     initFlashBurstPool();

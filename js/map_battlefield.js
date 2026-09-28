@@ -135,17 +135,5 @@ registerMap('battlefield', {
         addLamp(-20, 20);
         addLamp(20, 20);
         addLamp(-20, -20);
-
-        // ---- 地面杂物 ----
-        const debrisMats = [0x555a52, 0x6b6154, 0x4a4f45].map(c => _getColorMat(c));
-        for (let i = 0; i < 40; i++) {
-            const s = 0.15 + Math.random() * 0.4;
-            const m = new THREE.Mesh(new THREE.BoxGeometry(s, s * 0.5, s), debrisMats[i % 3]);
-            m.position.set((Math.random() - 0.5) * (ARENA * 2 - 4), s * 0.25, (Math.random() - 0.5) * (ARENA * 2 - 4));
-            m.rotation.y = Math.random() * 3;
-            m.castShadow = true;
-            if (currentMapGroup) currentMapGroup.add(m);
-            else scene.add(m);
-        }
     }
 });

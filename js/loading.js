@@ -1,16 +1,4 @@
-// ===== js/loading.js – 加载页面完整实现（含真实场景编译 + 武器多角度编译 + 特效预热） =====
-//
-// 职责：
-//   1. 显示/隐藏加载遮罩层，管理进度条与百分比
-//   2. 按顺序执行任务列表
-//   3. 单机模式：点击靶场/人机按钮 → 走加载 → 进入游戏
-//   4. 联机模式：房主开始 → 双方进入加载 → 全员 100% → 同时进入游戏
-//   5. 覆盖 onlineStartGame / lobbyRangeBtn / lobbyAiBtn 的事件
-//
-// 依赖（按 index.html 顺序加载好）：
-//   config.js / scene.js / player_model.js / game_effects.js / game_projectiles.js
-//   online_core.js / online_game.js / main.js
-//   —— loading.js 必须在 main.js 之后加载
+// ===== js/loading.js – 加载页面（含真实 Viewmodel 预热） =====
 
 (function () {
     'use strict';
@@ -20,9 +8,6 @@
         return;
     }
 
-    // ============================================================
-    // DOM 引用
-    // ============================================================
     const overlay   = document.getElementById('loadingOverlay');
     const barEl     = document.getElementById('loadingBar');
     const percentEl = document.getElementById('loadingPercent');
@@ -35,9 +20,6 @@
         return;
     }
 
-    // ============================================================
-    // 状态
-    // ============================================================
     const state = {
         active: false,
         progress: 0,
@@ -76,9 +58,7 @@
         renderAll();
     }
 
-    function getProgress() {
-        return state.progress;
-    }
+    function getProgress() { return state.progress; }
 
     function renderAll() {
         const pct = Math.round(state.progress * 100);
@@ -94,9 +74,6 @@
         }[c]));
     }
 
-    // ============================================================
-    // 联机玩家列表
-    // ============================================================
     function setupPlayers(players) {
         state.online = true;
         state.players = {};
@@ -140,9 +117,6 @@
         playersEl.innerHTML = html;
     }
 
-    // ============================================================
-    // 任务执行
-    // ============================================================
     function nextFrame() {
         return new Promise(r => requestAnimationFrame(() => r()));
     }
@@ -185,7 +159,7 @@
     }
 
     // ============================================================
-    // 预热相机：加载期间主循环不更新 p1.cam，可以临时挪走
+    // 预热相机
     // ============================================================
     function withWarmupCamera(fn) {
         if (typeof p1 === 'undefined' || !p1 || !p1.cam) {
@@ -226,7 +200,7 @@
     }
 
     // ============================================================
-    // ★ 真实场景整体 shader 编译（覆盖地图 + 阴影 pass）
+    // 真实场景整体 shader 编译
     // ============================================================
     function compileSceneShaders() {
         if (typeof renderer === 'undefined' || !renderer) return;
@@ -277,113 +251,73 @@
     }
 
     // ============================================================
-    // ★ 武器多角度 shader 编译（本轮新增，解决换枪后跳跃卡）
-    //
-    //   为什么需要单独做一遍：
-    //     场景整体编译只从"俯瞰"一个角度看武器，枪身的侧面 /
-    //     底面 / 内部结构（镜筒、弹链）从没被渲染过 → 那些部位
-    //     的纹理 / VBO 首次上传就发生在跳跃 / 击杀的那一刻。
-    //
-    //   做法：
-    //     · 用一个独立小场景，只放武器模板 + 灯光 + fog
-    //     · 相机绕武器转 8 个水平角 × 3 个仰角 = 24 个视角
-    //     · 每个视角 compile + render 一帧，把材质 / 纹理 / VBO
-    //       全部上传 GPU
-    //     · 最后再从"枪口方向"渲染一帧，模拟玩家视角
-    //     · 全程只渲染武器（几十个 mesh），单帧 < 5ms
+    // ★ 真实 Viewmodel 预热
+    //   直接模拟一次真实换枪：
+    //     · clone 模板 → 挂到 p1.vm → 主相机渲染一帧 → 卸下
+    //   覆盖：新 mesh 实例 + 相机局部空间 + 主场景光照
     // ============================================================
-    function compileWeaponShadersAllAngles() {
+    function warmupViewmodelsReal() {
         if (typeof renderer === 'undefined' || !renderer) return;
-
-        const ws = new THREE.Scene();
-        ws.add(new THREE.HemisphereLight(0xdfe9f2, 0x51503f, 0.8));
-        const wsSun = new THREE.DirectionalLight(0xfff2dd, 0.85);
-        wsSun.position.set(35, 55, 20);
-        ws.add(wsSun);
-
-        // 加一份和主场景一样的 fog，让 fog 变体的 shader 也一起编译
-        if (typeof scene !== 'undefined' && scene.fog) {
-            ws.fog = scene.fog.clone();
+        if (typeof p1 === 'undefined' || !p1 || !p1.vm) return;
+        if (typeof window.makeViewmodel !== 'function') {
+            console.warn('[loading] makeViewmodel 未暴露，跳过 viewmodel 预热');
+            return;
         }
 
-        const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 20);
+        withWarmupCamera(() => {
+            const allTypes = ['rifle', 'sniper', 'shotgun', 'odin', 'knife'];
 
-        // 挂载所有武器模板
-        const attached = [];
-        ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(type => {
-            try {
-                const w = (typeof _getWorldTemplate === 'function') ? _getWorldTemplate(type) : null;
-                const v = (typeof _getViewTemplate  === 'function') ? _getViewTemplate(type)  : null;
-                [w, v].forEach(tpl => {
-                    if (!tpl) return;
-                    if (tpl.parent) tpl.parent.remove(tpl);
-                    tpl.position.set(0, 0, 0);
-                    tpl.visible = true;
-                    tpl.traverse(o => { o.visible = true; });
-                    ws.add(tpl);
-                    attached.push(tpl);
-                });
-            } catch (e) {}
-        });
-
-        ws.updateMatrixWorld(true);
-
-        const HORIZONTAL_STEPS = 8;
-        const VERTICAL_ANGLES = [-0.5, 0, 0.5];
-        const R = 2.5;
-
-        // 24 个绕圈视角
-        for (let vi = 0; vi < VERTICAL_ANGLES.length; vi++) {
-            const vAng = VERTICAL_ANGLES[vi];
-            for (let i = 0; i < HORIZONTAL_STEPS; i++) {
-                const a = (i / HORIZONTAL_STEPS) * Math.PI * 2;
-                cam.position.set(
-                    Math.sin(a) * R * Math.cos(vAng),
-                    Math.sin(vAng) * R,
-                    Math.cos(a) * R * Math.cos(vAng)
-                );
-                cam.lookAt(0, 0, 0);
-                cam.updateMatrixWorld(true);
+            for (const type of allTypes) {
+                let vmClone = null;
                 try {
-                    renderer.compile(ws, cam);
-                    renderer.render(ws, cam);
-                } catch (e) {}
+                    vmClone = window.makeViewmodel(type, p1.mat);
+                } catch (e) {
+                    console.warn('[loading] makeViewmodel 失败:', type, e);
+                    continue;
+                }
+                if (!vmClone) continue;
+
+                // 挂到玩家自己的 viewmodel（相机局部空间）
+                p1.vm.add(vmClone);
+
+                // 渲染一帧（用主相机、主场景、主光照）
+                try { renderer.render(scene, p1.cam); } catch (e) {}
+
+                // 卸下并清理（共享材质/几何不 dispose）
+                p1.vm.remove(vmClone);
+                vmClone.traverse(o => {
+                    // 只清理不是共享的：这里不 dispose，因为 clone 共享几何/材质
+                });
             }
-        }
 
-        // 从枪口方向看（模拟第一人称视角）
-        cam.position.set(0, 0.3, 2);
-        cam.lookAt(0, 0.1, -2);
-        cam.updateMatrixWorld(true);
-        try { renderer.compile(ws, cam); renderer.render(ws, cam); } catch (e) {}
+            // 也预热一下第三人称模型（p2.gunHolder）
+            if (typeof window.makeWeaponModel === 'function' &&
+                typeof p2 !== 'undefined' && p2 && p2.gunHolder) {
 
-        // 正上方 + 正下方
-        cam.position.set(0, 3, 0);
-        cam.lookAt(0, 0, 0);
-        cam.updateMatrixWorld(true);
-        try { renderer.compile(ws, cam); renderer.render(ws, cam); } catch (e) {}
+                for (const type of allTypes) {
+                    let worldClone = null;
+                    try {
+                        worldClone = window.makeWeaponModel(type, p2.mat);
+                    } catch (e) {
+                        continue;
+                    }
+                    if (!worldClone) continue;
 
-        cam.position.set(0, -3, 0);
-        cam.lookAt(0, 0, 0);
-        cam.updateMatrixWorld(true);
-        try { renderer.compile(ws, cam); renderer.render(ws, cam); } catch (e) {}
-
-        // 摘掉模板
-        attached.forEach(o => {
-            if (o.parent === ws) ws.remove(o);
+                    p2.gunHolder.add(worldClone);
+                    try { renderer.render(scene, p1.cam); } catch (e) {}
+                    p2.gunHolder.remove(worldClone);
+                }
+            }
         });
     }
 
     // ============================================================
-    // ★ 运行时特效预热
+    // 运行时特效预热
     // ============================================================
     const WARMUP_OBJ_POS = new THREE.Vector3(0, 54.5, 0);
 
     function warmupSparks(color) {
-        if (typeof window.spawnSparks !== 'function') {
-            console.warn('[loading] spawnSparks 未暴露，跳过预热');
-            return;
-        }
+        if (typeof window.spawnSparks !== 'function') return;
         withWarmupCamera(() => {
             window.spawnSparks(WARMUP_OBJ_POS.clone(), color);
             try { renderer.render(scene, p1.cam); } catch (e) {}
@@ -391,10 +325,7 @@
     }
 
     function warmupBulletHole() {
-        if (typeof window.spawnBulletHole !== 'function') {
-            console.warn('[loading] spawnBulletHole 未暴露，跳过预热');
-            return;
-        }
+        if (typeof window.spawnBulletHole !== 'function') return;
         withWarmupCamera(() => {
             const pos = WARMUP_OBJ_POS.clone();
             const normal = new THREE.Vector3(0, 1, 0);
@@ -404,16 +335,126 @@
     }
 
     function warmupTracer() {
-        if (typeof window.spawnTracer !== 'function') {
-            console.warn('[loading] spawnTracer 未暴露，跳过预热');
-            return;
-        }
+        if (typeof window.spawnTracer !== 'function') return;
         withWarmupCamera(() => {
             const from = WARMUP_OBJ_POS.clone();
             const to = from.clone().add(new THREE.Vector3(3, 0, 0));
             window.spawnTracer(from, to);
             try { renderer.render(scene, p1.cam); } catch (e) {}
         });
+    }
+
+    function warmupShells() {
+        if (typeof window.spawnShellCasing !== 'function') return;
+        if (typeof updateShellCasings !== 'function') return;
+
+        withWarmupCamera(() => {
+            const fakeNow = performance.now();
+            if (typeof p1 !== 'undefined' && p1) {
+                window.spawnShellCasing(p1, fakeNow);
+            }
+            updateShellCasings(0.016, fakeNow + 16);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+            updateShellCasings(1.0, fakeNow + 5000);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+        });
+    }
+
+    function warmupExplosion() {
+        if (typeof window.spawnExplosionVisual !== 'function') return;
+        if (typeof window.updateExplosionVisuals !== 'function') return;
+
+        withWarmupCamera(() => {
+            const fakeNow = performance.now();
+            window.spawnExplosionVisual(WARMUP_OBJ_POS.x, WARMUP_OBJ_POS.y, WARMUP_OBJ_POS.z);
+            window.updateExplosionVisuals(0.016, fakeNow + 250);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+            window.updateExplosionVisuals(1.0, fakeNow + 1000);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+        });
+    }
+
+    function warmupSmokeCloud() {
+        const buildFn = (typeof window.createSmokeCloud === 'function')
+            ? window.createSmokeCloud
+            : (typeof createSmokeCloud === 'function' ? createSmokeCloud : null);
+        if (!buildFn) return;
+
+        withWarmupCamera(() => {
+            let cloud = null;
+            try {
+                cloud = buildFn(
+                    new THREE.Vector3(WARMUP_OBJ_POS.x, 0, WARMUP_OBJ_POS.z),
+                    4.0, 4.5, 3.5
+                );
+            } catch (e) { return; }
+            if (!cloud) return;
+
+            if (cloud.userData && cloud.userData.layers) {
+                for (const m of cloud.userData.layers) {
+                    m.material.opacity = m.userData.baseOpacity || 0.5;
+                }
+            }
+            cloud.position.set(WARMUP_OBJ_POS.x, WARMUP_OBJ_POS.y, WARMUP_OBJ_POS.z);
+
+            scene.add(cloud);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+
+            scene.remove(cloud);
+            cloud.traverse(o => {
+                if (o.isMesh) {
+                    o.geometry.dispose();
+                    o.material.dispose();
+                }
+            });
+        });
+    }
+
+    function warmupFlashBurst() {
+        if (typeof window.spawnFlashBurst !== 'function') return;
+        if (typeof window.updateFlashBursts !== 'function') return;
+
+        withWarmupCamera(() => {
+            const fakeNow = performance.now();
+            window.spawnFlashBurst(WARMUP_OBJ_POS.clone());
+            window.updateFlashBursts(0.016, fakeNow + 200);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+            window.updateFlashBursts(1.0, fakeNow + 1000);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+        });
+    }
+
+    function warmupFlashIndicator() {
+        if (typeof p1 === 'undefined' || !p1 || !p1.flashIndicator) return;
+
+        withWarmupCamera(() => {
+            const fi = p1.flashIndicator;
+            const ud = fi.userData || {};
+
+            const origVisible  = fi.visible;
+            const origSphereOp = ud.sphere ? ud.sphere.material.opacity : 0;
+            const origHaloOp   = ud.halo   ? ud.halo.material.opacity   : 0;
+            const origLightI   = ud.light  ? ud.light.intensity         : 0;
+
+            fi.visible = true;
+            if (ud.sphere) ud.sphere.material.opacity = 0.85;
+            if (ud.halo)   ud.halo.material.opacity   = 0.45;
+            if (ud.light)  ud.light.intensity         = 5;
+
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+
+            fi.visible = origVisible;
+            if (ud.sphere) ud.sphere.material.opacity = origSphereOp;
+            if (ud.halo)   ud.halo.material.opacity   = origHaloOp;
+            if (ud.light)  ud.light.intensity         = origLightI;
+        });
+    }
+
+    function warmupScopePip() {
+        if (typeof window.warmupScopePip !== 'function') return;
+        try {
+            window.warmupScopePip();
+        } catch (e) {}
     }
 
     // ============================================================
@@ -427,7 +468,6 @@
     function buildGameLoadTasks(mapId) {
         const tasks = [];
 
-        // 1) 地图
         tasks.push({
             name: '构建地图',
             weight: 4,
@@ -438,7 +478,7 @@
             },
         });
 
-        // 2) 5 把武器：只构建模板，不编译
+        // 只构建模板
         ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(type => {
             tasks.push({
                 name: '载入武器：' + (WEAPON_NAMES[type] || type),
@@ -450,41 +490,30 @@
             });
         });
 
-        // 3) 真实场景整体编译（覆盖地图 + 阴影 pass）
         tasks.push({
             name: '编译场景着色器',
             weight: 10,
             fn: () => compileSceneShaders(),
         });
 
-        // 4) ★ 武器多角度编译（覆盖枪身所有角度的材质 / 纹理 / VBO）
+        // ★ 改为真实 viewmodel 预热
         tasks.push({
-            name: '编译武器多角度着色器',
-            weight: 6,
-            fn: () => compileWeaponShadersAllAngles(),
+            name: '预热武器视图模型',
+            weight: 8,
+            fn: () => warmupViewmodelsReal(),
         });
 
-        // 5) 运行时特效预热
-        tasks.push({
-            name: '预热特效：火花',
-            weight: 1,
-            fn: () => warmupSparks(0xff5040),
-        });
-        tasks.push({
-            name: '预热特效：火花',
-            weight: 1,
-            fn: () => warmupSparks(0xffd28a),
-        });
-        tasks.push({
-            name: '预热特效：弹痕',
-            weight: 1,
-            fn: () => warmupBulletHole(),
-        });
-        tasks.push({
-            name: '预热特效：曳光弹',
-            weight: 1,
-            fn: () => warmupTracer(),
-        });
+        // 特效预热
+        tasks.push({ name: '预热特效：火花', weight: 1, fn: () => warmupSparks(0xff5040) });
+        tasks.push({ name: '预热特效：火花', weight: 1, fn: () => warmupSparks(0xffd28a) });
+        tasks.push({ name: '预热特效：弹痕', weight: 1, fn: () => warmupBulletHole() });
+        tasks.push({ name: '预热特效：曳光弹', weight: 1, fn: () => warmupTracer() });
+        tasks.push({ name: '预热特效：弹壳', weight: 1, fn: () => warmupShells() });
+        tasks.push({ name: '预热特效：爆炸', weight: 1, fn: () => warmupExplosion() });
+        tasks.push({ name: '预热特效：烟雾云', weight: 2, fn: () => warmupSmokeCloud() });
+        tasks.push({ name: '预热特效：闪光爆发', weight: 1, fn: () => warmupFlashBurst() });
+        tasks.push({ name: '预热特效：闪光指示器', weight: 1, fn: () => warmupFlashIndicator() });
+        tasks.push({ name: '预热特效：瞄准镜PiP', weight: 1, fn: () => warmupScopePip() });
 
         return tasks;
     }
@@ -664,9 +693,6 @@
         }, 260);
     }
 
-    // ============================================================
-    // 覆盖：onlineStartGame
-    // ============================================================
     function installOnlineStartHook() {
         window.onlineStartGame = function () {
             const NET = window.NET;
@@ -686,9 +712,6 @@
         };
     }
 
-    // ============================================================
-    // 覆盖：lobbyRangeBtn / lobbyAiBtn
-    // ============================================================
     function hijackClick(id, handler) {
         const old = document.getElementById(id);
         if (!old) return;
@@ -702,9 +725,6 @@
         hijackClick('lobbyAiBtn',    () => beginSinglePlayerLoading('ai'));
     }
 
-    // ============================================================
-    // 暴露
-    // ============================================================
     window.LoadingManager = {
         show,
         hide,
@@ -724,9 +744,6 @@
     window.handleLoadingComplete       = handleLoadingComplete;
     window.finishOnlineLoading         = finishOnlineLoading;
 
-    // ============================================================
-    // 初始化
-    // ============================================================
     function init() {
         installLobbyHooks();
         installOnlineStartHook();

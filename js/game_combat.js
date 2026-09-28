@@ -1,10 +1,7 @@
 // ===== js/game_combat.js – 射击、伤害、击杀、玩家更新、第三人称动画 =====
 
 // ============================================================
-// ★ 性能优化（A3）：复用 Raycaster 与临时向量
-//   原代码每次开火 / 近战 / AI 视线检测都 new 一批临时对象，
-//   奥丁 55ms 一发、霰弹 12 pellet 时会产生大量 GC 压力。
-//   这里模块级复用一组临时对象，供 game_combat.js 与 ai.js 共享。
+// 复用 Raycaster 与临时向量
 // ============================================================
 const _ray        = new THREE.Raycaster();
 const _rcOrigin   = new THREE.Vector3();
@@ -18,6 +15,37 @@ const _rcAxis     = new THREE.Vector3();
 const _rcQ1       = new THREE.Quaternion();
 const _rcQ2       = new THREE.Quaternion();
 
+// ============================================================
+// 命中部位 → 伤害解析
+// ============================================================
+function _resolveDamage(weaponCfg, part) {
+    if (!weaponCfg) return 0;
+    if (part === 'head') return weaponCfg.dmgHead || 0;
+    if (part === 'leg')  return weaponCfg.dmgLeg  || 0;
+    return weaponCfg.dmgBody || 0;
+}
+window._resolveDamage = _resolveDamage;
+
+// ============================================================
+// 伤害统计
+// ============================================================
+function _ensureDmgEntry(p, targetId) {
+    if (!p.damageDealt[targetId]) {
+        p.damageDealt[targetId] = { body: 0, head: 0, leg: 0, total: 0 };
+    }
+    return p.damageDealt[targetId];
+}
+function _addDamage(p, targetId, part, dmg) {
+    const e = _ensureDmgEntry(p, targetId);
+    if (part === 'head') e.head += dmg;
+    else if (part === 'leg') e.leg += dmg;
+    else e.body += dmg;
+    e.total += dmg;
+}
+
+// ============================================================
+// 近战攻击（含油桶命中）
+// ============================================================
 function tryMelee(p, now, isHeavy) {
     if (gameState !== 'combat') return;
     if (!p.isMelee) return;
@@ -38,13 +66,15 @@ function tryMelee(p, now, isHeavy) {
 
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) return;
 
-    // ★ A3：复用临时向量与 Raycaster；★ A4：使用帧内可修改副本
     p.cam.getWorldPosition(_rcOrigin);
     _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
 
     const targets = prepareShotTargets();
     const o = other(p);
-    if (now >= o.deadUntil) targets.push(o.body, o.head);
+    if (now >= o.deadUntil) {
+        const parts = getPlayerHitMeshes(o);
+        for (let i = 0; i < parts.length; i++) targets.push(parts[i]);
+    }
 
     _ray.set(_rcOrigin, _rcDir);
     _ray.near = 0;
@@ -53,24 +83,36 @@ function tryMelee(p, now, isHeavy) {
 
     if (hits.length > 0) {
         const h = hits[0];
-        if (h.object.userData.part) {
-            const isBack = isBackAttack(p, o);
-            let dmg = isHeavy ? m.dmgHeavy : m.dmgLight;
-            if (isBack) dmg *= m.backMultiplier;
-            const targetId = o.id;
-            if (!p.damageDealt[targetId]) p.damageDealt[targetId] = { body: 0, head: 0, total: 0 };
-            p.damageDealt[targetId].body += dmg;
-            p.damageDealt[targetId].total += dmg;
-            spawnSparks(h.point, 0xff5040);
+
+        const barrelRef = h.object.userData.barrelRef;
+        if (barrelRef) {
+            const dmg = isHeavy ? m.dmgHeavy : m.dmgLight;
+            window.hitBarrel(barrelRef, dmg, p, h.point);
             if (p.id === 1) { hitmark(p); }
             sHit(p.id);
-            damage(o, dmg, p);
         } else {
-            spawnSparks(h.point, 0xffd28a);
+            const part = h.object.userData.part;
+            if (part) {
+                const isBack = isBackAttack(p, o);
+                let dmg = isHeavy ? m.dmgHeavy : m.dmgLight;
+                if (isBack) dmg *= m.backMultiplier;
+
+                _addDamage(p, o.id, 'body', dmg);
+
+                spawnSparks(h.point, 0xff5040);
+                if (p.id === 1) { hitmark(p); }
+                sHit(p.id);
+                damage(o, dmg, p);
+            } else {
+                spawnSparks(h.point, 0xffd28a);
+            }
         }
     }
 }
 
+// ============================================================
+// 开火（含油桶命中 + 弹壳抛射）
+// ============================================================
 function tryFire(p, now) {
     if (gameState !== 'combat') return;
     if (p.isMelee || p.isSmoke || p.isFlash) return;
@@ -106,6 +148,11 @@ function tryFire(p, now) {
     p.muzzle.intensity = 2.2;
     if (p.id === 1) p.vmMuzzle.intensity = 2.2;
 
+    // ★ 抛壳
+    if (typeof window.spawnShellCasing === 'function') {
+        window.spawnShellCasing(p, now);
+    }
+
     // ---- 联机客户端：只发射曳光弹 ----
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) {
         p.cam.getWorldPosition(_rcOrigin);
@@ -129,15 +176,16 @@ function tryFire(p, now) {
     const pellets = w.pellets || 1;
     const spread = w.spread || 0;
 
-    // ★ A4：复用帧内数组，避免每次 concat / push
     const targets = prepareShotTargets();
     const o = other(p);
-    if (now >= o.deadUntil) targets.push(o.body, o.head);
+    if (now >= o.deadUntil) {
+        const parts = getPlayerHitMeshes(o);
+        for (let i = 0; i < parts.length; i++) targets.push(parts[i]);
+    }
 
     const isOnlineHost = (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost);
 
     for (let i = 0; i < pellets; i++) {
-        // ★ A3：复用临时向量
         _rcRandDir.copy(_rcDir);
         if (pellets > 1) {
             const theta = Math.random() * 2 * Math.PI;
@@ -158,27 +206,34 @@ function tryFire(p, now) {
         if (hits.length) {
             const h = hits[0];
             _rcEnd.copy(h.point);
-            if (h.object.userData.part) {
-                const dmg = h.object.userData.part === 'head' ? w.dmgHead : w.dmgBody;
-                const targetId = o.id;
-                if (!p.damageDealt[targetId]) p.damageDealt[targetId] = { body: 0, head: 0, total: 0 };
-                if (h.object.userData.part === 'head') p.damageDealt[targetId].head += dmg;
-                else p.damageDealt[targetId].body += dmg;
-                p.damageDealt[targetId].total += dmg;
-                spawnSparks(h.point, 0xff5040);
+
+            const barrelRef = h.object.userData.barrelRef;
+            if (barrelRef) {
+                const dmg = w.dmgBody || 30;
+                window.hitBarrel(barrelRef, dmg, p, h.point);
                 if (p.id === 1) hitmark(p);
                 sHit(p.id);
-                damage(o, dmg, p);
             } else {
-                spawnSparks(h.point, 0xffd28a);
-                const n = getHitWorldNormal(h);
-                spawnBulletHole(h.point, n);
-                if (isOnlineHost) {
-                    NET_broadcast({
-                        type: 'bulletHole',
-                        x: h.point.x, y: h.point.y, z: h.point.z,
-                        nx: n.x, ny: n.y, nz: n.z
-                    });
+                const part = h.object.userData.part;
+                if (part) {
+                    const dmg = _resolveDamage(w, part);
+                    _addDamage(p, o.id, part, dmg);
+
+                    spawnSparks(h.point, 0xff5040);
+                    if (p.id === 1) hitmark(p);
+                    sHit(p.id);
+                    damage(o, dmg, p);
+                } else {
+                    spawnSparks(h.point, 0xffd28a);
+                    const n = getHitWorldNormal(h);
+                    spawnBulletHole(h.point, n);
+                    if (isOnlineHost) {
+                        NET_broadcast({
+                            type: 'bulletHole',
+                            x: h.point.x, y: h.point.y, z: h.point.z,
+                            nx: n.x, ny: n.y, nz: n.z
+                        });
+                    }
                 }
             }
         }
@@ -221,19 +276,17 @@ function damage(victim, dmg, from) {
 }
 
 // ============================================================
-// ★ kill()：改为按"座位（blue/red）"语义广播与展示
-//   · 房主视角：p1 = 房主自己；p2 = 客户端代理
-//   · 广播座位让客户端和观战者都能正确解析出"谁杀了谁"
+// kill
 // ============================================================
 function kill(victim, from, now) {
     from.score++;
     victim.hp = 0;
     victim.deadUntil = Infinity;
-    const dmgByAttacker = from.damageDealt[victim.id] || { body: 0, head: 0, total: 0 };
-    const dmgByVictim = victim.damageDealt[from.id] || { body: 0, head: 0, total: 0 };
+    const emptyDmg = { body: 0, head: 0, leg: 0, total: 0 };
+    const dmgByAttacker = from.damageDealt[victim.id] || emptyDmg;
+    const dmgByVictim   = victim.damageDealt[from.id] || emptyDmg;
     lastKillReport = { attacker: from, victim: victim, dmgByAttacker, dmgByVictim };
 
-    // ★ 联机模式：计算座位并广播
     let killerSeat = null, victimSeat = null;
     if (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost) {
         const hostSeat  = (NET.mySeat === 'red') ? 'red' : 'blue';
@@ -244,13 +297,12 @@ function kill(victim, from, now) {
         if (typeof NET_sendKillEvent === 'function') {
             NET_sendKillEvent(
                 killerSeat, victimSeat, roundNumber,
-                { head: dmgByAttacker.head, body: dmgByAttacker.body, total: dmgByAttacker.total },
-                { head: dmgByVictim.head,   body: dmgByVictim.body,   total: dmgByVictim.total }
+                { head: dmgByAttacker.head, body: dmgByAttacker.body, leg: dmgByAttacker.leg, total: dmgByAttacker.total },
+                { head: dmgByVictim.head,   body: dmgByVictim.body,   leg: dmgByVictim.leg,   total: dmgByVictim.total }
             );
         }
     }
 
-    // ★ 回合报告：把座位信息一并传给 UI，让观战者也能正确标注
     if (window.showRoundReport) {
         window.showRoundReport(
             roundNumber, from, victim,
@@ -281,12 +333,11 @@ function kill(victim, from, now) {
 }
 
 // ============================================================
-// ★ 狙击开火后坐力（供 updateSniperViewmodel 使用）
-//   在开火后的 RECOIL_MS 时间窗口内返回 1 → 0 的衰减值
+// 狙击开火后坐力
 // ============================================================
 function computeSniperRecoil(p, now) {
     if (!p || !p.lastShotTime) return 0;
-    const RECOIL_MS = 750;   // ★ 380 → 750，恢复慢一倍，尾段更持久
+    const RECOIL_MS = 750;
     const dt = now - p.lastShotTime;
     if (dt < 0 || dt >= RECOIL_MS) return 0;
     const t = 1 - dt / RECOIL_MS;
@@ -294,7 +345,7 @@ function computeSniperRecoil(p, now) {
 }
 
 // ============================================================
-// 视图模型动画（含 ★ 步枪 ADS + ★ 狙击枪独立拉栓 + ★ 狙击后坐）
+// 视图模型动画
 // ============================================================
 function updateSniperViewmodel(p, dt, now) {
     if (!p.vm || p.vm.children.length === 0) return;
@@ -302,7 +353,6 @@ function updateSniperViewmodel(p, dt, now) {
     if (!vm.userData.basePos || !vm.userData.baseRot) return;
     const w = p.weapon;
 
-    // ★ 通用 ADS 分支（rifle + odin，共用 PiP 红点逻辑）
     if (w && vm.userData.adsPos
         && (w.key === 'rifle' || w.key === 'odin')
         && !p.isMelee && !p.isSmoke && !p.isFlash) {
@@ -322,7 +372,6 @@ function updateSniperViewmodel(p, dt, now) {
         return;
     }
 
-    // ★ 狙击枪 ADS 分支
     if (w && w.key === 'sniper' && vm.userData.adsPos
         && !p.isMelee && !p.isSmoke && !p.isFlash
         && p.aiming) {
@@ -359,7 +408,6 @@ function updateSniperViewmodel(p, dt, now) {
         return;
     }
 
-    // ---------- 近战挥砍 ----------
     if (p.isMelee && p.meleeEnd > now) {
         const fireMs = p.meleeIsHeavy ? MELEE.heavyFireMs : MELEE.lightFireMs;
         const progress = 1 - (p.meleeEnd - now) / fireMs;
@@ -407,7 +455,6 @@ function updateSniperViewmodel(p, dt, now) {
         return;
     }
 
-    // ---------- 投掷物持握摇摆 ----------
     if (p.isSmoke || p.isFlash) {
         const t = now * 0.003;
         vm.position.set(vm.userData.basePos.x + Math.sin(t) * 0.005,
@@ -419,7 +466,6 @@ function updateSniperViewmodel(p, dt, now) {
         return;
     }
 
-    // ★ 狙击拉栓（非 ADS）+ 开火后坐力
     if (w.key === 'sniper' && w.boltMs && p.boltEnd > now) {
         const progress = 1 - (p.boltEnd - now) / w.boltMs;
 
@@ -460,7 +506,6 @@ function updateSniperViewmodel(p, dt, now) {
         return;
     }
 
-    // ---------- 默认：缓慢回位 ----------
     const k = Math.min(1, dt * 15);
     vm.position.lerp(vm.userData.basePos, k);
     vm.rotation.x += (vm.userData.baseRot.x - vm.rotation.x) * k;
@@ -577,6 +622,9 @@ function updateThirdPersonWeapon(p, dt, now) {
 }
 window.updateThirdPersonWeapon = updateThirdPersonWeapon;
 
+// ============================================================
+// updatePlayer（物理驱动移动 —— 手写物理保留）
+// ============================================================
 function updatePlayer(p, dt, now) {
     if (now < p.deadUntil) {
         p.baseVisible = false;
@@ -629,13 +677,16 @@ function updatePlayer(p, dt, now) {
     const f = p.input.forward;
     const s = p.input.right;
 
-    const wMul = p.isMelee ? MELEE.speedMul : (p.isSmoke ? SMOKE.speedMul : (p.isFlash ? FLASH.speedMul : p.weapon.speedMul));
+    const wMul = p.isMelee ? MELEE.speedMul
+              : (p.isSmoke ? SMOKE.speedMul
+              : (p.isFlash ? FLASH.speedMul : p.weapon.speedMul));
     let spd = SPEED * wMul;
     if (p.height < HEIGHT_STAND - 0.1) spd = SPEED_CROUCH * wMul;
     if (p.aiming && !p.isMelee && !p.isSmoke && !p.isFlash) spd *= p.weapon.adsSpeedMul;
 
+    // 手写物理
     const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
-    const rx = Math.cos(p.yaw), rz = -Math.sin(p.yaw);
+    const rx = Math.cos(p.yaw),  rz = -Math.sin(p.yaw);
     p.pos.x += (fx * f + rx * s) * spd * dt;
     p.pos.z += (fz * f + rz * s) * spd * dt;
 
@@ -649,6 +700,11 @@ function updatePlayer(p, dt, now) {
     const _gh = terrainGroundAt(p.pos.x, p.pos.z);
     if (p.pos.y < _gh) { p.pos.y = _gh; p.vy = 0; p.onGround = true; }
     collidePlayers();
+
+    // 同步 KINEMATIC 影子刚体
+    if (window.PHYSICS && window.PHYSICS.isReady()) {
+        window.PHYSICS.syncPlayerToBody(p, dt);
+    }
 
     if (p.input.fire) {
         if (p.isMelee) tryMelee(p, now, false);

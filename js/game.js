@@ -26,6 +26,16 @@ function updateEffects(dt, now) {
     updateFlashTrajectory(now);
     updateBulletHoles(now);
     updateThrowFuse(now);
+
+    // ★ 油桶爆炸特效
+    if (typeof updateExplosionVisuals === 'function') {
+        updateExplosionVisuals(dt, now);
+    }
+
+    // ★ 弹壳物理同步
+    if (typeof updateShellCasings === 'function') {
+        updateShellCasings(dt, now);
+    }
 }
 
 function resetPlayer(p, now) {
@@ -39,7 +49,7 @@ function resetPlayer(p, now) {
     if (!p.isMelee && !p.isSmoke && !p.isFlash) {
         p.ammo = p.weapon.mag;
         p.reserve = p.weapon.startReserve;
-    } else { p.ammo = 0; p.reserve = 0; }
+    }
     p.reloadEnd = 0; p.nextShot = 0;
     p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
 
@@ -75,10 +85,6 @@ function resetPlayer(p, now) {
     p.throwFuseEnd = 0;
     p.throwFuseInHand = false;
 
-    // ============================================================
-    // ★ B1：回合重置时同步插值目标
-    //   否则 p2（对手）会在回合重置后被插值函数"拉回"上一回合位置
-    // ============================================================
     if (p._netTargetPos) p._netTargetPos.set(p.spawn.x, gh, p.spawn.z);
     if (p._netTargetYaw !== undefined) p._netTargetYaw = p.spawn.yaw;
 
@@ -93,6 +99,10 @@ function resetPlayer(p, now) {
         p.cam.fov = BASE_FOV;
         p.cam.updateProjectionMatrix();
     }
+
+    if (window.PHYSICS && window.PHYSICS.isReady()) {
+        window.PHYSICS.teleportPlayerBody(p);
+    }
 }
 
 function startRound(now) {
@@ -101,6 +111,12 @@ function startRound(now) {
     clearAllFlashes();
     clearAllBulletHoles();
     if (flashOverlayEl) flashOverlayEl.style.opacity = '0';
+
+    // ★ 重置所有油桶
+    if (typeof window.resetBarrels === 'function') window.resetBarrels();
+
+    // ★ 清空弹壳
+    if (typeof clearAllShellCasings === 'function') clearAllShellCasings();
 
     resetPlayer(p1, now);
     resetPlayer(p2, now);
@@ -147,10 +163,21 @@ function endMatch(winner) {
     if (document.pointerLockElement) document.exitPointerLock();
     if (window.closeCombatReport) window.closeCombatReport();
     if (typeof closeChat === 'function') closeChat();
+
     const el = document.getElementById('endOverlay');
     document.getElementById('endTitle').innerHTML = winner ?
         `<span class="${winner.id===1?'b':'r'}">${winner.id===1?'蓝色':'红色'}</span>玩家获胜！` : '平局！';
     document.getElementById('endScore').textContent = `${p1.score} : ${p2.score}`;
+
+    const againBtn = document.getElementById('againBtn');
+    if (againBtn) {
+        if (gameMode === 'online') {
+            againBtn.textContent = '返 回 房 间';
+        } else {
+            againBtn.textContent = '再 来 一 局';
+        }
+    }
+
     el.style.display = 'flex';
 
     if (typeof setOver === 'function') setOver(true);

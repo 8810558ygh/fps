@@ -1,4 +1,4 @@
-// ===== js/player.js – 玩家构造 + 武器切换（服务器权威版） =====
+// ===== js/player.js – 玩家构造 + 武器切换（服务器权威版 · 切枪保留弹药修复 v2） =====
 
 function setWeapon(p, key) {
     if (p.throwFuseActive && p.throwFuseInHand) {
@@ -25,7 +25,8 @@ function setWeapon(p, key) {
         p.gunHolder.add(makeWeaponModel('knife', p.mat));
         while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
         p.vm.add(makeViewmodel('knife', p.mat));
-        p.ammo = 0; p.reserve = 0; p.reloadEnd = 0;
+        // ★ 切刀时不清空 ammo/reserve —— 保留枪的弹药，切回枪时恢复
+        p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
         p.equipEnd = performance.now() + MELEE.equipMs;
@@ -44,7 +45,8 @@ function setWeapon(p, key) {
         p.gunHolder.add(makeWeaponModel('smoke', p.mat));
         while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
         p.vm.add(makeViewmodel('smoke', p.mat));
-        p.ammo = 0; p.reserve = 0; p.reloadEnd = 0;
+        // ★ 切投掷物时不清空 ammo/reserve
+        p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
         p.equipEnd = performance.now() + 400;
@@ -61,7 +63,8 @@ function setWeapon(p, key) {
         p.gunHolder.add(makeWeaponModel('flash', p.mat));
         while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
         p.vm.add(makeViewmodel('flash', p.mat));
-        p.ammo = 0; p.reserve = 0; p.reloadEnd = 0;
+        // ★ 切投掷物时不清空 ammo/reserve
+        p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
         p.equipEnd = performance.now() + 400;
@@ -71,15 +74,32 @@ function setWeapon(p, key) {
         return;
     }
 
+    // ============================================================
+    // 枪械分支
+    // ============================================================
     const w = WEAPONS[key];
     if (!w) return;
+
+    // ★ 从刀/投掷物切回本命枪 → 保留弹药
+    //   从枪切到新枪（准备阶段换枪） → 重置弹药
+    const comingBackFromNonGun = (p.isMelee || p.isSmoke || p.isFlash);
+    const isPrimaryGun = (p.primaryWeaponKey === key);
+    const shouldPreserveAmmo = comingBackFromNonGun && isPrimaryGun;
+
     p.weaponKey = key; p.primaryWeaponKey = key; p.weapon = w;
     p.isMelee = false; p.isSmoke = false; p.isFlash = false;
     while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
     p.gunHolder.add(makeWeaponModel(key, p.mat));
     while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
     p.vm.add(makeViewmodel(key, p.mat));
-    p.ammo = w.mag; p.reserve = w.startReserve; p.reloadEnd = 0;
+
+    if (!shouldPreserveAmmo) {
+        p.ammo = w.mag;
+        p.reserve = w.startReserve;
+    }
+    // 换弹状态始终清空（切枪取消换弹）
+    p.reloadEnd = 0;
+
     p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
     if (p.input) p.input.aim = false;
     p.spinUpProgress = 0; p.lastShotTime = 0;
@@ -95,7 +115,7 @@ function setWeapon(p, key) {
 }
 
 // ============================================================
-// ★ 通用武器模型切换函数（问题 2 修复）
+// ★ 通用武器模型切换函数
 // ============================================================
 function applyWeaponToPlayer(p, key, withViewmodel) {
     if (!p) return;
@@ -150,25 +170,108 @@ function applyWeaponToPlayer(p, key, withViewmodel) {
 }
 window.applyWeaponToPlayer = applyWeaponToPlayer;
 
+// ============================================================
+// ★ 暴露某个玩家所有可命中网格
+// ============================================================
+function getPlayerHitMeshes(p) {
+    if (!p) return [];
+    return [
+        p.head,
+        p.body,
+        p.visor,
+        p.pack,
+        p.legL, p.legR,
+        p.footL, p.footR,
+        p.armLUp, p.armLLow,
+        p.armRUp, p.armRLow,
+        p.handL, p.handR
+    ];
+}
+window.getPlayerHitMeshes = getPlayerHitMeshes;
+
+// ============================================================
+// makePlayer
+// ============================================================
 function makePlayer(id, color, spawn, weaponKey) {
     const mat = new THREE.MeshLambertMaterial({ color, transparent: true });
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.92, 0.42), mat);
-    body.position.y = 0.95; body.userData.part = 'body';
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.42, 0.44), mat);
-    head.position.y = 1.62; head.userData.part = 'head';
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.1, 0.05), DARK_MAT);
-    visor.position.set(0, 1.64, -0.23);
-    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.6, 0.22), DARK_MAT);
-    pack.position.set(0, 1.05, 0.32);
+
+    // ---- 头 ----
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.30, 0.30), mat);
+    head.position.y = 1.69;
+    head.userData.part = 'head';
+
+    // ---- 面罩 ----
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.09, 0.05), DARK_MAT);
+    visor.position.set(0, 1.70, -0.17);
+    visor.userData.part = 'head';
+
+    // ---- 背包 ----
+    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.44, 0.16), DARK_MAT);
+    pack.position.set(0, 1.24, 0.24);
+    pack.userData.part = 'body';
+
+    // ---- 躯干 ----
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.62, 0.32), mat);
+    body.position.y = 1.23;
+    body.userData.part = 'body';
+
+    // ---- 腿 × 2 ----
+    const legL = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.84, 0.24), mat);
+    legL.position.set(-0.12, 0.50, 0);
+    legL.userData.part = 'leg';
+    const legR = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.84, 0.24), mat);
+    legR.position.set( 0.12, 0.50, 0);
+    legR.userData.part = 'leg';
+
+    // ---- 脚 × 2 ----
+    const footL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.34), DARK_MAT);
+    footL.position.set(-0.12, 0.04, -0.06);
+    footL.userData.part = 'leg';
+    const footR = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.34), DARK_MAT);
+    footR.position.set( 0.12, 0.04, -0.06);
+    footR.userData.part = 'leg';
+
+    // ---- 上臂 × 2 ----
+    const armLUp = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.32, 0.16), mat);
+    armLUp.position.set(-0.31, 1.32, 0);
+    armLUp.userData.part = 'body';
+    const armRUp = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.32, 0.16), mat);
+    armRUp.position.set( 0.31, 1.32, 0);
+    armRUp.userData.part = 'body';
+
+    // ---- 前臂 × 2 ----
+    const armLLow = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.28, 0.14), mat);
+    armLLow.position.set(-0.31, 1.02, 0);
+    armLLow.userData.part = 'body';
+    const armRLow = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.28, 0.14), mat);
+    armRLow.position.set( 0.31, 1.02, 0);
+    armRLow.userData.part = 'body';
+
+    // ---- 手 × 2 ----
+    const handL = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.16, 0.14), DARK_MAT);
+    handL.position.set(-0.31, 0.80, 0);
+    handL.userData.part = 'body';
+    const handR = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.16, 0.14), DARK_MAT);
+    handR.position.set( 0.31, 0.80, 0);
+    handR.userData.part = 'body';
+
+    // ---- 武器挂点 ----
     const gunHolder = new THREE.Group();
     gunHolder.position.set(0.26, 1.28, -0.42);
     const light = new THREE.PointLight(0xffcc66, 0, 9);
     light.position.set(0.26, 1.3, -0.85);
-    g.add(body, head, visor, pack, gunHolder, light);
+
+    g.add(
+        body, head, visor, pack,
+        legL, legR, footL, footR,
+        armLUp, armLLow, armRUp, armRLow,
+        handL, handR,
+        gunHolder, light
+    );
 
     const flashIndicator = new THREE.Group();
-    flashIndicator.position.set(0, 1.62, -0.28);
+    flashIndicator.position.set(0, 1.69, -0.28);
     flashIndicator.visible = false;
 
     const fiSphereMat = new THREE.MeshBasicMaterial({
@@ -221,8 +324,18 @@ function makePlayer(id, color, spawn, weaponKey) {
     cam.add(vmMuzzle);
 
     const p = {
-        id, mesh: g, body, head, mat, muzzle: light, gunHolder, cam, vm, vmMuzzle,
+        id, mesh: g, mat, muzzle: light, gunHolder, cam, vm, vmMuzzle,
         flashIndicator,
+
+        head,
+        body,
+        visor,
+        pack,
+        legL, legR,
+        footL, footR,
+        armLUp, armLLow, armRUp, armRLow,
+        handL, handR,
+
         weaponKey: weaponKey || 'rifle',
         primaryWeaponKey: weaponKey || 'rifle',
         weapon: WEAPONS[weaponKey || 'rifle'],
@@ -253,15 +366,8 @@ function makePlayer(id, color, spawn, weaponKey) {
         throwFuseStart: 0,
         throwFuseEnd: 0,
         throwFuseInHand: false,
-        // A1：默认不处于"禁用阴影"状态
         _shadowDisabled: false,
 
-        // ============================================================
-        // ★ B1：联机对手位置插值目标
-        //   · 服务器每 33ms 发来快照 → 存到 _netTargetPos
-        //   · 客户端每帧（16ms）用 lerp 平滑靠拢 → 30Hz 看起来像 60Hz
-        //   · 初始化时 = spawn 位置，避免开局从 (0,0,0) 追过来
-        // ============================================================
         _netTargetPos: new THREE.Vector3(spawn.x, 0, spawn.z),
         _netTargetYaw: spawn.yaw,
 
@@ -274,6 +380,11 @@ function makePlayer(id, color, spawn, weaponKey) {
             aim: false
         }
     };
+
+    if (window.PHYSICS && window.PHYSICS.isReady()) {
+        window.PHYSICS.createPlayerBody(p);
+    }
+
     setWeapon(p, weaponKey || 'rifle');
     p.equipEnd = 0;
     return p;
