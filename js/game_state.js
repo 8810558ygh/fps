@@ -12,9 +12,6 @@ let lastKillReport = null;
 
 // ============================================================
 // ★ 性能优化（A2）：isOver() 不再每帧查询 DOM
-//   原本通过 document.getElementById('endOverlay').style.display 判断，
-//   每帧被调用 5~10 次；改为维护一个显式标志位。
-//   由 game.js 的 endMatch() / resetMatch() 更新。
 // ============================================================
 let _overFlag = false;
 function isOver() { return _overFlag; }
@@ -101,7 +98,6 @@ function collideWorld(p) {
         }
     }
 
-    // ★ 地形高度吸附（让玩家站在起伏沙丘上）
     const gh = terrainGroundAt(p.pos.x, p.pos.z);
     if (p.pos.y < gh) {
         p.pos.y = gh;
@@ -126,9 +122,35 @@ function collidePlayers() {
 const STRIDE_LENGTH = 2.0;
 const STEP_MAX_AUDIBLE = 22;
 
-function updateFootsteps(p, dt, now) {
-    if (!running || gameState !== 'combat') { p._stepAccum = 0; return; }
-    if (now < p.deadUntil) { p._stepAccum = 0; return; }
+// ============================================================
+// ★ 脚步声 + 落地声
+//   isRemote = true 时启用"远端突跳保护"（联机客户端使用）
+// ============================================================
+function updateFootsteps(p, dt, now, isRemote) {
+    if (!running || gameState !== 'combat') {
+        p._stepAccum = 0;
+        p._prevOnGround = p.onGround;
+        return;
+    }
+    if (now < p.deadUntil) {
+        p._stepAccum = 0;
+        p._prevOnGround = p.onGround;
+        return;
+    }
+
+    // ★ 落地检测（放在蹲下检查之前：蹲下落地也要响）
+    const justLanded = (p._prevOnGround === false) && p.onGround;
+    p._prevOnGround = p.onGround;
+    if (justLanded) {
+        let impact = Math.abs(p._vyBeforeLand || 0);
+        // ★ 远端玩家：网络同步拿不到真实冲击速度（客户端 p2 是插值来的），
+        //   用固定值兜底，保证房主跳一次就能被听到一次落地声。
+        if (isRemote && impact < 3.0) impact = JUMP_V * 0.7;
+        if (impact > 3.0) {
+            triggerLanding(p, impact, isRemote);
+        }
+    }
+
     const crouched = p.height < HEIGHT_STAND - 0.15;
     if (crouched) {
         p._stepAccum = 0;
@@ -142,8 +164,20 @@ function updateFootsteps(p, dt, now) {
     const dx = p.pos.x - p._prevStepX;
     const dz = p.pos.z - p._prevStepZ;
     p._prevStepX = p.pos.x; p._prevStepZ = p.pos.z;
-    if (!p.onGround) { p._stepAccum = Math.min(p._stepAccum || 0, STRIDE_LENGTH * 0.5); return; }
+    if (!p.onGround) {
+        p._stepAccum = Math.min(p._stepAccum || 0, STRIDE_LENGTH * 0.5);
+        return;
+    }
     const dist = Math.hypot(dx, dz);
+
+    if (isRemote) {
+        const maxReasonable = SPEED * dt * 2.5;
+        if (dist > maxReasonable) {
+            p._stepAccum = 0;
+            return;
+        }
+    }
+
     p._stepAccum = (p._stepAccum || 0) + dist;
     if (p._stepAccum >= STRIDE_LENGTH) {
         p._stepAccum -= STRIDE_LENGTH;
@@ -162,6 +196,30 @@ function updateFootsteps(p, dt, now) {
             const pan = d > 0.3 ? Math.max(-1, Math.min(1, dotRight / d)) : 0;
             sFootstepEnemy(vol, pan);
         }
+    }
+}
+
+// ============================================================
+// ★ 落地音效触发
+// ============================================================
+function triggerLanding(p, impact, isRemote) {
+    const impactNorm = Math.min(1, impact / JUMP_V);
+    const baseVol = 0.35 + impactNorm * 0.65;
+
+    if (p.id === 1) {
+        sLandingSelf(impactNorm);
+    } else {
+        const ex = p.pos.x - p1.pos.x;
+        const ez = p.pos.z - p1.pos.z;
+        const d = Math.hypot(ex, ez);
+        if (d >= STEP_MAX_AUDIBLE) return;
+        const t = 1 - d / STEP_MAX_AUDIBLE;
+        const vol = t * t * baseVol;
+        const yaw = p1.yaw;
+        const rightX = Math.cos(yaw), rightZ = -Math.sin(yaw);
+        const dotRight = ex * rightX + ez * rightZ;
+        const pan = d > 0.3 ? Math.max(-1, Math.min(1, dotRight / d)) : 0;
+        sLandingEnemy(vol, pan, impactNorm);
     }
 }
 

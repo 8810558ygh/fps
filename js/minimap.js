@@ -58,9 +58,7 @@
         }
 
         // ---- 墙体 ----
-        // 用 colliders 数组绘制，跳过外围大墙
         if (typeof colliders === 'undefined' || !colliders) {
-            // 还没有地图数据，只画边界
             staticCtx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
             staticCtx.lineWidth = 1.5;
             staticCtx.strokeRect(0.75, 0.75, s - 1.5, s - 1.5);
@@ -75,7 +73,6 @@
         for (const c of colliders) {
             const w = c.x1 - c.x0;
             const h = c.z1 - c.z0;
-            // 跳过外围大墙（否则会覆盖整个小地图）
             if (w > ARENA * 1.5 || h > ARENA * 1.5) continue;
 
             const x = (c.x0 + ARENA) * scale;
@@ -102,11 +99,57 @@
     const _camDir = new THREE.Vector3();
     const _ray = new THREE.Raycaster();
 
-    // 敌人是否在我方视野内（水平视锥 + 3D 射线无遮挡）
-    function enemyVisible() {
-        if (typeof p2 === 'undefined' || !p2 || !p2.baseVisible) return false;
-        if (typeof running !== 'undefined' && !running) return false;
+    // ============================================================
+    // ★ 优化：可见性缓存
+    //   原来 enemyVisible() 每帧都跑射线检测（60Hz）。
+    //   现在改为 10Hz（100ms 节流），中间帧复用上次结果。
+    //   CPU 射线开销降低约 83%，人眼几乎无感知。
+    // ============================================================
+    let _enemyVisibleLastCheck = 0;
+    let _enemyVisibleCached = false;
 
+    // ★ 优化：遮挡物列表缓存
+    //   原来每帧 wallMeshes.concat(crateMeshes) 会创建新数组。
+    //   现在缓存起来，只在地图物体数量变化时重建。
+    const _occluderCache = [];
+    let _occluderCacheLen = -1;
+    function _getOccluderList() {
+        const totalLen = wallMeshes.length + crateMeshes.length;
+        if (_occluderCacheLen !== totalLen) {
+            _occluderCache.length = 0;
+            for (let i = 0; i < wallMeshes.length; i++) _occluderCache.push(wallMeshes[i]);
+            for (let i = 0; i < crateMeshes.length; i++) _occluderCache.push(crateMeshes[i]);
+            _occluderCacheLen = totalLen;
+        }
+        return _occluderCache;
+    }
+
+    // 敌人是否在我方视野内（水平视锥 + 3D 射线无遮挡）—— 带 100ms 缓存
+    function enemyVisible() {
+        const now = performance.now();
+
+        // ★ 10Hz 节流：100ms 内直接复用上次结果
+        if (now - _enemyVisibleLastCheck < 100) {
+            return _enemyVisibleCached;
+        }
+        _enemyVisibleLastCheck = now;
+
+        // 前两个快速短路检查仍然每次执行（开销极小）
+        if (typeof p2 === 'undefined' || !p2 || !p2.baseVisible) {
+            _enemyVisibleCached = false;
+            return false;
+        }
+        if (typeof running !== 'undefined' && !running) {
+            _enemyVisibleCached = false;
+            return false;
+        }
+
+        _enemyVisibleCached = _enemyVisibleUncached();
+        return _enemyVisibleCached;
+    }
+
+    // 原 enemyVisible 的完整逻辑（重命名，不做节流）
+    function _enemyVisibleUncached() {
         p1.cam.getWorldPosition(_eye);
         _tpos.set(p2.pos.x, 1.0, p2.pos.z);
 
@@ -129,11 +172,11 @@
         const halfCos = Math.cos(hFov / 2);
         if (dot < halfCos) return false;
 
-        // ---- 遮挡检测 ----
+        // ---- 遮挡检测（用缓存的数组，不再 concat） ----
         _ray.set(_eye, _dir);
         _ray.near = 0;
         _ray.far = dist;
-        const targets = wallMeshes.concat(crateMeshes);
+        const targets = _getOccluderList();
         const hits = _ray.intersectObjects(targets, false);
         if (hits.length > 0 && hits[0].distance < dist - 0.25) return false;
 

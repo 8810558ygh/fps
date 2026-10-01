@@ -183,21 +183,47 @@ function collectSmokeOccluders(targets) {
         if (!s.cloudMesh) continue;
         const layers = s.cloudMesh.userData.layers;
         if (!layers || !layers.length) continue;
-        // 用主圆柱（layers 中不透明度最高的那个）判断是否够浓
         let maxOpacity = 0;
         for (const m of layers) {
             if (m && m.material && typeof m.material.opacity === 'number') {
                 if (m.material.opacity > maxOpacity) maxOpacity = m.material.opacity;
             }
         }
-        if (maxOpacity < 0.4) continue;  // 太淡了不算遮挡
-        // 把该烟雾云的所有子网格加入目标
+        if (maxOpacity < 0.4) continue;
         s.cloudMesh.traverse(o => { if (o.isMesh) targets.push(o); });
     }
 }
 
+// ============================================================
+// ★ 优化：遮挡检测缓存
+//   原 isOpponentOccluded() 每帧都跑 2 条射线检测。
+//   现在改为 10Hz（100ms 节流），中间帧复用上次结果。
+//   仅在开启透视时才会有可见收益（未开透视时函数不会被调用）。
+// ============================================================
+let _occludedLastCheck = 0;
+let _occludedCached = false;
+
 function isOpponentOccluded() {
-    if (!p2 || !p2.baseVisible) return false;
+    const now = performance.now();
+
+    // ★ 10Hz 节流：100ms 内直接复用上次结果
+    if (now - _occludedLastCheck < 100) {
+        return _occludedCached;
+    }
+    _occludedLastCheck = now;
+
+    // 快速短路检查
+    if (!p2 || !p2.baseVisible) {
+        _occludedCached = false;
+        return false;
+    }
+
+    _occludedCached = _isOpponentOccludedUncached();
+    return _occludedCached;
+}
+
+// 原 isOpponentOccluded 的完整逻辑（重命名，不做节流）
+function _isOpponentOccludedUncached() {
     p1.cam.getWorldPosition(_xrayEye);
 
     const scaleY = p2.height / HEIGHT_STAND;
@@ -206,7 +232,8 @@ function isOpponentOccluded() {
         p2.pos.y + 1.62 * scaleY,
     ];
 
-    // ★ 遮挡检测目标 = 墙体 + 木箱 + 活跃烟雾
+    // ★ 注意：这里保留 concat —— 因为烟雾是动态的，
+    //   需要每次都重新收集。10Hz 下开销已很小。
     const targets = wallMeshes.concat(crateMeshes);
     collectSmokeOccluders(targets);
 
@@ -393,6 +420,9 @@ function clearChat() {
         xrayEnabled = false;
         applyNormalMaterials();
     }
+    // ★ 重置缓存，避免下一局继承旧的可见性/遮挡结果
+    _occludedLastCheck = 0;
+    _occludedCached = false;
 }
 
 // ============================================================

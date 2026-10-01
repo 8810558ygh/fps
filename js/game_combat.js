@@ -66,6 +66,8 @@ function tryMelee(p, now, isHeavy) {
 
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) return;
 
+    const isOnlineHost = (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost);
+
     p.cam.getWorldPosition(_rcOrigin);
     _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
 
@@ -88,7 +90,11 @@ function tryMelee(p, now, isHeavy) {
         if (barrelRef) {
             const dmg = isHeavy ? m.dmgHeavy : m.dmgLight;
             window.hitBarrel(barrelRef, dmg, p, h.point);
-            if (p.id === 1) { hitmark(p); }
+            if (p.id === 1) {
+                hitmark(p);
+            } else if (isOnlineHost) {
+                NET_broadcast({ type: 'hitmarkForClient' });
+            }
             sHit(p.id);
         } else {
             const part = h.object.userData.part;
@@ -100,7 +106,11 @@ function tryMelee(p, now, isHeavy) {
                 _addDamage(p, o.id, 'body', dmg);
 
                 spawnSparks(h.point, 0xff5040);
-                if (p.id === 1) { hitmark(p); }
+                if (p.id === 1) {
+                    hitmark(p);
+                } else if (isOnlineHost) {
+                    NET_broadcast({ type: 'hitmarkForClient' });
+                }
                 sHit(p.id);
                 damage(o, dmg, p);
             } else {
@@ -185,6 +195,9 @@ function tryFire(p, now) {
 
     const isOnlineHost = (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost);
 
+    // ★ 一枪只发一次 hitmark 广播（霰弹枪 10 颗弹丸只触发一次）
+    let hitmarkSent = false;
+
     for (let i = 0; i < pellets; i++) {
         _rcRandDir.copy(_rcDir);
         if (pellets > 1) {
@@ -211,7 +224,12 @@ function tryFire(p, now) {
             if (barrelRef) {
                 const dmg = w.dmgBody || 30;
                 window.hitBarrel(barrelRef, dmg, p, h.point);
-                if (p.id === 1) hitmark(p);
+                if (p.id === 1) {
+                    hitmark(p);
+                } else if (isOnlineHost && !hitmarkSent) {
+                    NET_broadcast({ type: 'hitmarkForClient' });
+                    hitmarkSent = true;
+                }
                 sHit(p.id);
             } else {
                 const part = h.object.userData.part;
@@ -220,7 +238,12 @@ function tryFire(p, now) {
                     _addDamage(p, o.id, part, dmg);
 
                     spawnSparks(h.point, 0xff5040);
-                    if (p.id === 1) hitmark(p);
+                    if (p.id === 1) {
+                        hitmark(p);
+                    } else if (isOnlineHost && !hitmarkSent) {
+                        NET_broadcast({ type: 'hitmarkForClient' });
+                        hitmarkSent = true;
+                    }
                     sHit(p.id);
                     damage(o, dmg, p);
                 } else {
@@ -695,6 +718,10 @@ function updatePlayer(p, dt, now) {
     p.prevY = p.pos.y;
     p.vy -= GRAV * dt;
     p.pos.y += p.vy * dt;
+
+    // ★ 记录落地前垂直速度（供落地音效使用）
+    p._vyBeforeLand = p.vy;
+
     collideWorld(p);
     if (p.pos.y <= 0) { p.pos.y = 0; p.vy = 0; p.onGround = true; }
     const _gh = terrainGroundAt(p.pos.x, p.pos.z);

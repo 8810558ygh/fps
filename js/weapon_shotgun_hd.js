@@ -967,11 +967,18 @@
         const center = bbox.getCenter(new THREE.Vector3());
         inner.position.set(-center.x, -center.y * 0.85, -center.z * 0.15);
 
-        // -------- 整体缩放 + 旋转（枪管指向 -Z） --------
+                // -------- 整体缩放 + 旋转（枪管指向 -Z） --------
         gun.scale.setScalar(SHOTGUN_SCALE);
         gun.rotation.y = Math.PI / 2;
 
         gun.userData.muzzlePoint = muzzlePoint;
+
+        // ★ 风险 5 修复：世界模型规范变换
+        gun.userData.basePos = new THREE.Vector3(0, 0, 0);
+        gun.userData.baseRot = new THREE.Euler(0, Math.PI / 2, 0);
+        gun.userData.adsPos  = gun.userData.basePos.clone();
+        gun.userData.adsRot  = gun.userData.baseRot.clone();
+
         gun.updateMatrixWorld(true);
         return gun;
     }

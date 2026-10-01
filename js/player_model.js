@@ -24,30 +24,37 @@ function _findByName(root, name) {
     return found;
 }
 
-// ============================================================
-// ★ 关键修复（观战视角 bug）：
-//   loading.js 的 compileWeaponShadersAllAngles() 预热武器模板时，
-//   会把模板的 position 设成 (0, 0, 0) 以方便绕圈渲染，
-//   渲染结束后没有恢复。由于模板是单例缓存，
-//   之后每次 clone 出来的视图模型位置都是 (0, 0, 0)。
-//   修复：clone 后立即从 userData 恢复 basePos / baseRot。
-// ============================================================
 function _cloneHdTemplate(tpl) {
     if (!tpl) return null;
 
-    const clone = tpl.clone(true);
-
     const src = tpl.userData || {};
+
+    // ★ 风险 5 修复：世界模型的 build 函数以前不写 userData.basePos，
+    //   clone 后会跟着模板的当前 position 走。一旦模板被任何代码污染
+    //   （比如 loading 预热），就会静默错位（联机时对手看到枪挂在头顶）。
+    //   这里给出明确警告，方便定位。
+    if (!src.basePos || !src.baseRot) {
+        console.warn(
+            '[player_model] 模板缺少 userData.basePos / baseRot：' +
+            (tpl.name || tpl.type || tpl) +
+            '。若武器位置错乱，请检查对应 weapon_*_hd.js 的 build*HD()。'
+        );
+    }
+
+    const clone = tpl.clone(true);
     const dst = clone.userData = {};
 
-    dst.basePos = src.basePos ? src.basePos.clone() : undefined;
-    dst.baseRot = src.baseRot ? src.baseRot.clone() : undefined;
-    dst.adsPos  = src.adsPos  ? src.adsPos.clone()  : undefined;
-    dst.adsRot  = src.adsRot  ? src.adsRot.clone()  : undefined;
+    // 优先用模板 userData；缺失时回退到模板"当前"变换（至少不比 undefined 差）
+    dst.basePos = src.basePos ? src.basePos.clone() : tpl.position.clone();
+    dst.baseRot = src.baseRot ? src.baseRot.clone() : tpl.rotation.clone();
+    dst.adsPos  = src.adsPos  ? src.adsPos.clone()  : dst.basePos.clone();
+    dst.adsRot  = src.adsRot  ? src.adsRot.clone()  : dst.baseRot.clone();
 
-    if (dst.basePos) clone.position.copy(dst.basePos);
-    if (dst.baseRot) clone.rotation.copy(dst.baseRot);
+    // 强制重置变换（防止模板被外部代码污染）
+    clone.position.copy(dst.basePos);
+    clone.rotation.copy(dst.baseRot);
 
+    // 按 name 重新绑定关键锚点
     dst.muzzlePoint = _findByName(clone, 'muzzlePoint');
     dst.boltGroup   = _findByName(clone, 'boltGroup');
     dst.scopeCenter = _findByName(clone, 'scopeCenter');

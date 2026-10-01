@@ -543,3 +543,75 @@ function sExplosion() {
     src2.start(t);
     src2.stop(t + 0.3);
 }
+
+// ===== ★ 落地音效（自己） =====
+function sLandingSelf(impactNorm) {
+    const ac = audio();
+    const t = ac.currentTime;
+    const v = 0.10 + impactNorm * 0.10;
+
+    const o = ac.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(90 + impactNorm * 40, t);
+    o.frequency.exponentialRampToValueAtTime(30, t + 0.14);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(v, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+    o.connect(g);
+    g.connect(masterGain[1]);
+    o.start(t);
+    o.stop(t + 0.17);
+
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    const f = ac.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 1600;
+    f.Q.value = 0.9;
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(v * 0.55, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+    src.connect(f);
+    f.connect(g2);
+    g2.connect(masterGain[1]);
+    src.start(t);
+    src.stop(t + 0.09);
+}
+
+// ===== ★ 落地音效（对手，带方位 + 距离衰减） =====
+function sLandingEnemy(volume, pan, impactNorm) {
+    if (volume <= 0.005) return;
+    const ac = audio();
+    const t = ac.currentTime;
+
+    const panner = ac.createStereoPanner();
+    panner.pan.value = Math.max(-1, Math.min(1, pan));
+    panner.connect(AC.destination);
+
+    const o = ac.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(80 + impactNorm * 40, t);
+    o.frequency.exponentialRampToValueAtTime(28, t + 0.18);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.50 * volume, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.20);
+    o.connect(g);
+    g.connect(panner);
+    o.start(t);
+    o.stop(t + 0.22);
+
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    const f = ac.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 1800;
+    f.Q.value = 1.0;
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(0.20 * volume, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.10);
+    src.connect(f);
+    f.connect(g2);
+    g2.connect(panner);
+    src.start(t);
+    src.stop(t + 0.11);
+}

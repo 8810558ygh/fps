@@ -41,7 +41,8 @@ const MELEE = {
 const SMOKE = {
     key: 'smoke', name: '烟雾弹',
     throwSpeed: 20, throwUpBias: 0.35,
-    gravity: 16, bounces: 0.35, friction: 0.55,
+    gravity: GRAV,   // ★ 从 16 改为 GRAV (22)，与 cannon.js 物理世界一致
+    bounces: 0.35, friction: 0.55,
     fuseMs: 5000, growMs: 1500, durationMs: 15000,
     radius: 4.2, verticalRadius: 4.6, centerHeight: 3.8,
     cooldownMs: 800, maxPerRound: 1,
@@ -52,7 +53,8 @@ const SMOKE = {
 const FLASH = {
     key: 'flash', name: '闪光弹',
     throwSpeed: 20, throwUpBias: 0.35,
-    gravity: 16, bounces: 0.35, friction: 0.55,
+    gravity: GRAV,   // ★ 从 16 改为 GRAV (22)，与 cannon.js 物理世界一致
+    bounces: 0.35, friction: 0.55,
     fuseMs: 5000,
     maxDistance: 45,
     minFovMargin: 0.0,

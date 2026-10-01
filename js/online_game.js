@@ -1,5 +1,102 @@
 // ===== js/online_game.js – 房主权威同步、客户端输入、观战视角 =====
 
+// ============================================================
+// ★ 优化：状态增量同步
+//   把 serializePlayer 返回的字段拆为"高频"和"低频"：
+//     · 高频：位置、朝向、FOV、动作剩余时间等，每帧都发
+//     · 低频：HP、护甲、分数、弹药、武器、充能数等，只在变化时发
+//   房主每 60 帧强制发一次全量，防止增量丢失导致状态永久漂移。
+// ============================================================
+
+// 高频字段 —— 每帧都发
+const HIGH_FREQ_FIELDS = [
+    'x', 'y', 'z',
+    'yaw', 'pitch', 'fov',
+    'aiming', 'aimStage',
+    'reloadRemain', 'boltRemain', 'equipRemain',
+    'meleeEndRemain', 'meleeRecoveryRemain',
+    'throwFuseActive', 'throwFuseEndRemain',
+    'flashRemain'
+];
+
+// 低频字段 —— 只在变化时发
+const LOW_FREQ_FIELDS = [
+    'hp', 'armor', 'score',
+    'ammo', 'reserve', 'weapon',
+    'isMelee', 'isSmoke', 'isFlash',
+    'meleeIsHeavy',
+    'smokeCharges', 'flashCharges',
+    'crouching', 'dead', 'visible',
+    'throwFuseType', 'throwFuseInHand',
+    'onGround'     // ★ 新增：用于远端落地检测
+];
+
+// 房主端：上一次发送的完整状态（用作对比 baseline）
+let _lastSentBlue = null;
+let _lastSentRed  = null;
+let _forceFullCounter = 0;
+let _lastRoundNumber = -1;
+let _lastConnCount = -1;
+
+// 客户端端：合并后的完整状态
+const _clientPlayerState = {
+    blue: null,
+    red: null
+};
+
+// 生成 delta payload
+// 返回 { full: bool, data: {...} }
+function _buildPlayerPayload(full, baseline, forceFull) {
+    if (forceFull || !baseline) {
+        return { full: true, data: full };
+    }
+
+    const delta = {};
+
+    // 高频字段：全部打包
+    for (let i = 0; i < HIGH_FREQ_FIELDS.length; i++) {
+        const k = HIGH_FREQ_FIELDS[i];
+        delta[k] = full[k];
+    }
+
+    // 低频字段：只打包变化的
+    for (let i = 0; i < LOW_FREQ_FIELDS.length; i++) {
+        const k = LOW_FREQ_FIELDS[i];
+        if (full[k] !== baseline[k]) {
+            delta[k] = full[k];
+        }
+    }
+
+    return { full: false, data: delta };
+}
+
+// 客户端合并 delta → 返回合并后的完整状态
+// 如果没有 baseline 且收到的是增量，返回 null（等下一次全量）
+function _mergeDelta(side, payload) {
+    if (!payload) return null;
+
+    if (payload.full) {
+        _clientPlayerState[side] = payload.data;
+        return payload.data;
+    }
+
+    if (!_clientPlayerState[side]) {
+        // 还没有 baseline，忽略这次增量，等下一次全量
+        return null;
+    }
+
+    const merged = _clientPlayerState[side];
+    const d = payload.data;
+    for (const k in d) {
+        merged[k] = d[k];
+    }
+    return merged;
+}
+
+// ============================================================
+// 座位 / 房间（未改动）
+// ============================================================
+
 function handleJoinRequest(fromId, data) {
     if (!NET.isHost) return;
     if (NET._assignedPeers.has(fromId)) return;
@@ -24,6 +121,9 @@ function handleJoinRequest(fromId, data) {
     }
     broadcast({ type: 'seatUpdate', seats: NET.seats, members: membersArr }, fromId);
     renderRoomUI(); updateOpponentInfo();
+
+    // ★ 有新玩家加入 → 下次广播强制全量（让新客户端尽快拿到 baseline）
+    _forceFullCounter = 9999;
 }
 
 function handleFullSync(data) {
@@ -169,6 +269,16 @@ function enterOnlineGame() {
 
     updateOpponentInfo();
     if (typeof renderChatMessages === 'function') renderChatMessages();
+
+    // ★ 进入游戏时重置 baseline，确保首次广播是全量
+    _lastSentBlue = null;
+    _lastSentRed = null;
+    _clientPlayerState.blue = null;
+    _clientPlayerState.red = null;
+    _forceFullCounter = 0;
+    _lastRoundNumber = -1;
+    _lastConnCount = -1;
+
     if (NET.isHost) startHostBroadcast();
 }
 window.NET_enterOnlineGame = enterOnlineGame;
@@ -193,6 +303,7 @@ function serializePlayer(p) {
         crouching: p.height < HEIGHT_STAND - 0.15,
         dead: p.hp <= 0 || p.deadUntil > now,
         visible: p.baseVisible,
+        onGround: !!p.onGround,                       // ★ 新增：用于远端落地检测
         aiming: !!p.aiming,
         aimStage: p.aimStage || 0,
         isMelee: !!p.isMelee,
@@ -214,6 +325,9 @@ function serializePlayer(p) {
     };
 }
 
+// ============================================================
+// ★ 房主广播（增量版）
+// ============================================================
 function hostBroadcastTick() {
     if (!NET.isHost || !NET.roomId) return;
     if (typeof p1 === 'undefined' || typeof p2 === 'undefined') return;
@@ -226,7 +340,33 @@ function hostBroadcastTick() {
     const bluePlayer = hostSeat === 'blue' ? hostData : clientData;
     const redPlayer  = hostSeat === 'blue' ? clientData : hostData;
 
-    broadcast({
+    // ★ 决定是否强制全量
+    _forceFullCounter++;
+    let forceFull = false;
+    if (_forceFullCounter >= 60) {
+        _forceFullCounter = 0;
+        forceFull = true;
+    }
+    if (typeof roundNumber !== 'undefined' && roundNumber !== _lastRoundNumber) {
+        _lastRoundNumber = roundNumber;
+        forceFull = true;
+    }
+    if (NET.connections.size !== _lastConnCount) {
+        _lastConnCount = NET.connections.size;
+        forceFull = true;
+    }
+
+    // ★ 生成 delta payload
+    const bluePayload = _buildPlayerPayload(bluePlayer, _lastSentBlue, forceFull);
+    _lastSentBlue = bluePlayer;
+
+    const redPayload = _buildPlayerPayload(redPlayer, _lastSentRed, forceFull);
+    _lastSentRed = redPlayer;
+
+    // ============================================================
+    // ★ 打包成一个对象（原本直接传给 broadcast 的内容）
+    // ============================================================
+    const packet = {
         type: 'hostState',
         tick: NET.tick++,
         timestamp: now,
@@ -235,9 +375,31 @@ function hostBroadcastTick() {
         roundNumber: (typeof roundNumber !== 'undefined') ? roundNumber : 1,
         gameState: (typeof gameState !== 'undefined') ? gameState : 'idle',
         stateEndTimeRemain: (typeof stateEndTime !== 'undefined') ? Math.max(0, stateEndTime - now) : 0,
-        bluePlayer,
-        redPlayer
-    });
+        bluePlayer: bluePayload,
+        redPlayer: redPayload
+    };
+
+    // ============================================================
+    // ★ 统计本次广播的字节数
+    // ============================================================
+    try {
+        const bytes = JSON.stringify(packet).length;
+        window._netStats = window._netStats || {
+            count: 0,
+            totalBytes: 0,
+            fullCount: 0,
+            deltaCount: 0
+        };
+        window._netStats.count++;
+        window._netStats.totalBytes += bytes;
+        if (bluePayload.full) window._netStats.fullCount++;
+        else window._netStats.deltaCount++;
+    } catch (e) {}
+
+    // ============================================================
+    // ★ 广播
+    // ============================================================
+    broadcast(packet);
 }
 
 function handleClientInput(fromId, data) {
@@ -292,6 +454,9 @@ function handleClientInput(fromId, data) {
     p2.lastRemoteInputAt = performance.now();
 }
 
+// ============================================================
+// ★ 客户端处理房主状态（增量合并版）
+// ============================================================
 function handleHostState(data) {
     if (NET.isHost) return;
     NET.lastHostState = data;
@@ -299,10 +464,17 @@ function handleHostState(data) {
     if (typeof stateEndTime !== 'undefined') stateEndTime = performance.now() + data.stateEndTimeRemain;
     if (typeof roundNumber !== 'undefined' && data.roundNumber) roundNumber = data.roundNumber;
 
+    // ★ 合并增量 → 得到完整的 bluePlayer / redPlayer
+    const bluePlayer = _mergeDelta('blue', data.bluePlayer);
+    const redPlayer  = _mergeDelta('red',  data.redPlayer);
+
+    // 还没有 baseline（例如首帧或全量丢包），等下一帧
+    if (!bluePlayer || !redPlayer) return;
+
     if (NET.role === 'player') {
         const mySeat = NET.mySeat;
-        const myData  = mySeat === 'blue' ? data.bluePlayer : data.redPlayer;
-        const oppData = mySeat === 'blue' ? data.redPlayer  : data.bluePlayer;
+        const myData  = mySeat === 'blue' ? bluePlayer : redPlayer;
+        const oppData = mySeat === 'blue' ? redPlayer  : bluePlayer;
 
         const now = performance.now();
 
@@ -385,7 +557,36 @@ function handleHostState(data) {
                 p2.yaw = oppData.yaw;
             }
 
+            // ★ 远端瞬移检测
+            //   远端复活 / 硬重同步 / 房间重进时，oppData 位置会和 p2.pos 差很远。
+            //   直接 snap 并清空脚步累积，避免插值飘移过程中触发一整串脚步。
+            {
+                const snapDx = oppData.x - p2.pos.x;
+                const snapDy = oppData.y - p2.pos.y;
+                const snapDz = oppData.z - p2.pos.z;
+                const snapSq = snapDx * snapDx + snapDy * snapDy + snapDz * snapDz;
+                if (snapSq > 25) {   // 5 米
+                    p2.pos.set(oppData.x, oppData.y, oppData.z);
+                    if (p2._netTargetPos) p2._netTargetPos.set(oppData.x, oppData.y, oppData.z);
+                    if (p2._netTargetYaw !== undefined) p2._netTargetYaw = oppData.yaw;
+
+                    p2._prevStepX = p2.pos.x;
+                    p2._prevStepZ = p2.pos.z;
+                    p2._stepAccum = 0;
+                    p2._prevOnGround = true;
+                    p2._vyBeforeLand = 0;
+                }
+            }
+
             p2.pitch = oppData.pitch;
+
+            // ★ 新增：同步远端玩家的 onGround 状态
+            //   用于客户端本地检测房主的起跳/落地。
+            //   加了这一步后，客户端 updateFootsteps(p2, dt, now, true) 里的
+            //   justLanded 检测才能生效，进而触发落地音效。
+            if (oppData.onGround !== undefined) {
+                p2.onGround = !!oppData.onGround;
+            }
 
             p2.hp = oppData.hp;
             p2.armor = oppData.armor;
@@ -421,8 +622,8 @@ function handleHostState(data) {
             }
         }
     } else if (NET.role === 'spectator') {
-        NET.spectatorBlueData = data.bluePlayer;
-        NET.spectatorRedData  = data.redPlayer;
+        NET.spectatorBlueData = bluePlayer;
+        NET.spectatorRedData  = redPlayer;
     }
 }
 
@@ -695,6 +896,13 @@ function handleRoundEvent(data) {
         if (typeof clearAllSmokes === 'function') clearAllSmokes();
         if (typeof clearAllFlashes === 'function') clearAllFlashes();
         if (typeof clearAllBulletHoles === 'function') clearAllBulletHoles();
+
+        // ★ 新增：恢复油桶（与房主 startRound() 里做的事保持一致）
+        if (typeof window.resetBarrels === 'function') window.resetBarrels();
+
+        // ★ 新增：清空弹壳（与房主 startRound() 里做的事保持一致）
+        if (typeof clearAllShellCasings === 'function') clearAllShellCasings();
+
         if (typeof p1 !== 'undefined' && p1) p1.flashUntil = 0;
         if (typeof p2 !== 'undefined' && p2) p2.flashUntil = 0;
 
@@ -705,6 +913,10 @@ function handleRoundEvent(data) {
             if (typeof p1 !== 'undefined' && p1) { p1.deadUntil = 0; p1.hp = 100; p1.baseVisible = true; }
             if (typeof p2 !== 'undefined' && p2) { p2.deadUntil = 0; p2.hp = 100; p2.baseVisible = true; }
         }
+
+        // ★ 回合重置 → 客户端 baseline 也重置，等下一次全量
+        _clientPlayerState.blue = null;
+        _clientPlayerState.red  = null;
     }
 }
 

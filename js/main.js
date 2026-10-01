@@ -456,6 +456,7 @@ function loop() {
 
             if (typeof p2 !== 'undefined' && p2) {
                 interpolateRemotePlayer(p2, dt);
+                updateFootsteps(p2, dt, now, true);
             }
 
             if (typeof updateThirdPersonWeapon === 'function'

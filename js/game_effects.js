@@ -313,9 +313,20 @@ window.spawnSparks = spawnSparks;
 // ===== 投掷轨迹线 =====
 let smokeTrajLine = null;
 let flashTrajLine = null;
-const SMOKE_TRAJ_STEPS = 60;
-const SMOKE_TRAJ_DT = 0.04;
 
+// ★ 提高时间步精度、保持总时长
+//   SMOKE_TRAJ_DT = 1/60，与 cannon.js 的 FIXED_STEP 一致
+//   STEPS = 144，总时长 = 144 / 60 = 2.4 秒
+const SMOKE_TRAJ_STEPS = 144;
+const SMOKE_TRAJ_DT = 1 / 60;
+
+// ============================================================
+// ★ 投掷轨迹模拟（与 cannon.js 物理世界对齐）
+//   · 重力：使用配置里的 gravity（已在 config.js 改为 GRAV = 22）
+//   · 空气阻尼：cannon.js 里 linearDamping = 0.05
+//   · 碰撞高度：球体半径 SMOKE_PROJ_RADIUS = 0.09
+//   · 时间步：1/60，与物理世界一致
+// ============================================================
 function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounces, friction, steps, dt) {
     const pts = [];
     const vel = dir.clone().multiplyScalar(throwSpeed);
@@ -325,15 +336,28 @@ function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounc
     let stopped = false;
     let restX = pos.x, restY = pos.y, restZ = pos.z;
 
+    // ★ 与 cannon.js 保持一致：
+    //   1. 空气阻尼（physics.js 里 createProjectileBody 设的 linearDamping = 0.05）
+    //   2. 地面高度用球体半径（cannon.js 里投掷物是 Sphere(SMOKE_PROJ_RADIUS)）
+    const LINEAR_DAMPING = 0.05;
+    const GROUND_Y = (typeof SMOKE_PROJ_RADIUS !== 'undefined') ? SMOKE_PROJ_RADIUS : 0.09;
+    const dampFactor = Math.pow(1 - LINEAR_DAMPING, dt);
+
     for (let i = 0; i < steps; i++) {
-        if (stopped) { pts.push(new THREE.Vector3(restX, restY, restZ)); continue; }
+        if (stopped) {
+            pts.push(new THREE.Vector3(restX, restY, restZ));
+            continue;
+        }
         pts.push(pos.clone());
+
+        // ★ 空气阻尼（cannon.js 每步施加，这里对齐）
+        vel.multiplyScalar(dampFactor);
 
         vel.y -= gravity * dt;
         pos.addScaledVector(vel, dt);
 
-        if (pos.y <= SMOKE_PROJ_HALF_H) {
-            pos.y = SMOKE_PROJ_HALF_H;
+        if (pos.y <= GROUND_Y) {
+            pos.y = GROUND_Y;
             if (Math.abs(vel.y) > 0.8) {
                 vel.y = -vel.y * bounces;
                 vel.x *= friction;
@@ -347,8 +371,14 @@ function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounc
                 }
             }
         }
-        if (Math.abs(pos.x) > ARENA - 0.5) { pos.x = Math.sign(pos.x) * (ARENA - 0.5); vel.x *= -0.3; }
-        if (Math.abs(pos.z) > ARENA - 0.5) { pos.z = Math.sign(pos.z) * (ARENA - 0.5); vel.z *= -0.3; }
+        if (Math.abs(pos.x) > ARENA - 0.5) {
+            pos.x = Math.sign(pos.x) * (ARENA - 0.5);
+            vel.x *= -0.3;
+        }
+        if (Math.abs(pos.z) > ARENA - 0.5) {
+            pos.z = Math.sign(pos.z) * (ARENA - 0.5);
+            vel.z *= -0.3;
+        }
     }
     return pts;
 }

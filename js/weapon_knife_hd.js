@@ -712,9 +712,15 @@
         // -------- 整体旋转：+X → -Z（刀尖朝前） --------
         gun.rotation.y = Math.PI / 2;
 
-        gun.userData.muzzlePoint = muzzlePoint;
+                gun.userData.muzzlePoint = muzzlePoint;
         gun.userData.bladeTip    = bladeTip;
         gun.userData.attackPoint = attackPoint;
+
+        // ★ 风险 5 修复：世界模型规范变换
+        gun.userData.basePos = new THREE.Vector3(0, 0, 0);
+        gun.userData.baseRot = new THREE.Euler(0, Math.PI / 2, 0);
+        gun.userData.adsPos  = gun.userData.basePos.clone();
+        gun.userData.adsRot  = gun.userData.baseRot.clone();
 
         gun.updateMatrixWorld(true);
         return gun;

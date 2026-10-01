@@ -291,6 +291,59 @@ function clearBarrels() {
 }
 window.clearBarrels = clearBarrels;
 
+// ============================================================
+// ★ 联机客户端：按坐标查找并隐藏油桶
+//   房主广播 barrelExplode 时只带坐标（没有稳定 ID），
+//   客户端用半径 1m 的容差在 activeBarrels 里匹配。
+//   找到后走一套"纯客户端侧"的爆炸表现（隐藏 + 视觉 + 音效），
+//   不动伤害逻辑（伤害永远由房主计算）。
+// ============================================================
+function hideBarrelAt(x, y, z) {
+    for (const b of activeBarrels) {
+        if (b.exploded) continue;
+        const dx = b.x - x;
+        const dz = b.z - z;
+        if (dx * dx + dz * dz < 1.0) {
+            _applyBarrelExplosionClientSide(b);
+            return true;
+        }
+    }
+    return false;
+}
+window.hideBarrelAt = hideBarrelAt;
+
+function _applyBarrelExplosionClientSide(barrel) {
+    if (barrel.exploded) return;
+    barrel.exploded = true;
+
+    // 隐藏 mesh
+    if (barrel.mesh) {
+        barrel.mesh.visible = false;
+    }
+
+    // 从各列表移除
+    if (typeof colliders !== 'undefined') {
+        const ci = colliders.indexOf(barrel.collider);
+        if (ci >= 0) colliders.splice(ci, 1);
+    }
+    if (typeof wallMeshes !== 'undefined') {
+        const wi = wallMeshes.indexOf(barrel.mesh);
+        if (wi >= 0) wallMeshes.splice(wi, 1);
+    }
+    if (typeof crateMeshes !== 'undefined') {
+        const cri = crateMeshes.indexOf(barrel.mesh);
+        if (cri >= 0) crateMeshes.splice(cri, 1);
+    }
+
+    if (typeof window.markShotTargetsDirty === 'function') {
+        window.markShotTargetsDirty();
+    }
+
+    // 视觉 + 音效
+    spawnExplosionVisual(barrel.x, barrel.y, barrel.z);
+    if (typeof sExplosion === 'function') sExplosion();
+}
+
 // 启动时初始化特效池
 if (typeof scene !== 'undefined' && scene) {
     initExplosionPool();

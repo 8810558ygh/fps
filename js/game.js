@@ -69,6 +69,8 @@ function resetPlayer(p, now) {
     p.mat.opacity = 1;
     p._prevStepX = p.spawn.x; p._prevStepZ = p.spawn.z;
     p._stepAccum = 0;
+    p._prevOnGround = true;
+    p._vyBeforeLand = 0;
     p.equipEnd = 0;
     p.meleeCombo = 0; p.meleeEnd = 0; p.meleeRecovery = 0;
     p.meleeIsHeavy = false; p.lastMeleeTime = 0;

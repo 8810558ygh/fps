@@ -322,9 +322,6 @@ function handleRoomMessage(fromId, data) {
             }
             break;
 
-        // ============================================================
-        // ★ 新增：房主宣布返回房间，客户端跟随返回
-        // ============================================================
         case 'returnToRoom':
             if (!NET.isHost && typeof window.returnToOnlineRoom === 'function') {
                 window.returnToOnlineRoom(true);
@@ -359,6 +356,27 @@ function handleRoomMessage(fromId, data) {
                 );
             }
             break;
+
+        // ★ 新增：油桶爆炸（房主 → 客户端）
+        //   客户端隐藏本地油桶 + 播爆炸视觉/音效，不做伤害计算。
+        case 'barrelExplode':
+            if (!NET.isHost && typeof window.hideBarrelAt === 'function') {
+                window.hideBarrelAt(data.x, data.y, data.z);
+            }
+            break;
+
+        // ★ 新增：房主告知客户端"你打中了"（命中反馈）
+        //   客户端的 tryFire 是"只发曳光弹、不做命中判定"，
+        //   命中检测完全在房主侧完成，需要房主回传一个 hitmark 触发消息。
+        case 'hitmarkForClient':
+            if (!NET.isHost
+                && typeof hitmark === 'function'
+                && typeof p1 !== 'undefined' && p1) {
+                hitmark(p1);
+                if (typeof sHit === 'function') sHit(1);
+            }
+            break;
+
         case 'smokeSpawn':
             if (!NET.isHost) handleSmokeSpawn(data); break;
         case 'flashSpawn':

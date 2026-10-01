@@ -32,6 +32,11 @@ const ai = {
 
     lastVisibilityCheck: 0,
     lastVisibilityResult: false,
+
+    // ★ 风险 6 修复：本回合 AI 的"预留武器"。
+    //   兜底恢复时用它，而不是每次随机重选。
+    //   保证回合内武器一致性（AI 不会被意外切到刀后随机换枪）。
+    reservedWeaponKey: 'rifle',
 };
 
 const AI_WEAPON_POOL = ['rifle', 'rifle', 'sniper', 'shotgun', 'odin'];
@@ -53,6 +58,12 @@ const _aiQ2      = new THREE.Quaternion();
 
 function aiResetRound(now) {
     const key = AI_WEAPON_POOL[Math.floor(Math.random() * AI_WEAPON_POOL.length)];
+
+    // ★ 风险 6 修复：记录本回合 AI 的预留武器。
+    //   后续若 AI 因任何原因被切到刀 / 烟雾 / 闪光，
+    //   兜底逻辑会恢复到这把枪（而不是随机重选）。
+    ai.reservedWeaponKey = key;
+
     setWeapon(p2, key);
     p2.isMelee = false;
     p2.equipEnd = 0;
@@ -230,11 +241,25 @@ function aiUpdate(dt, now) {
     }
     p2.baseVisible = true;
 
-    if (p2.isMelee) {
-        const key = AI_WEAPON_POOL[Math.floor(Math.random() * AI_WEAPON_POOL.length)];
+    // ★ 风险 6 修复：
+    //   原实现每帧都跑，且命中后"重新随机"武器 —— 会破坏回合内武器一致性。
+    //   现在改为：
+    //     · 只在检测到意外状态（刀 / 烟雾 / 闪光）时触发
+    //     · 恢复到 ai.reservedWeaponKey（本回合预留武器）
+    //     · 顺便清理近战 / 投掷物残留状态
+    //   正常情况下这一步只是一次布尔读取，几乎零开销。
+    if (p2.isMelee || p2.isSmoke || p2.isFlash) {
+        const key = (WEAPONS[ai.reservedWeaponKey]) ? ai.reservedWeaponKey : 'rifle';
         setWeapon(p2, key);
-        p2.isMelee = false;
+
+        // 清掉近战 / 投掷物残留状态，避免动画和引信卡住
         p2.equipEnd = 0;
+        p2.meleeEnd = 0;
+        p2.meleeRecovery = 0;
+        p2.meleeIsHeavy = false;
+        p2.throwFuseActive = false;
+        p2.throwFuseType = null;
+        p2.throwFuseInHand = false;
     }
 
     if (p2.reloadEnd > 0 && now >= p2.reloadEnd) {
@@ -346,6 +371,7 @@ function aiUpdate(dt, now) {
     p2.prevY = p2.pos.y;
     p2.vy -= GRAV * dt;
     p2.pos.y += p2.vy * dt;
+    p2._vyBeforeLand = p2.vy;
     collideWorld(p2);
     if (p2.pos.y <= 0) {
         p2.pos.y = 0;

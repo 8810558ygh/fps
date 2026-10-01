@@ -201,25 +201,34 @@
 
     // ============================================================
     // 真实场景整体 shader 编译
+    //
+    //   ★ 方案 C（非破坏性预热）：
+    //     克隆一份临时副本放进场景，模板本体从始至终不被触碰。
+    //     相比"先改位置、渲染完再改回来"的补丁式做法，这里从源头
+    //     避免了"共享单例被污染"的问题 —— 模板永远是干净的。
     // ============================================================
     function compileSceneShaders() {
         if (typeof renderer === 'undefined' || !renderer) return;
         if (typeof scene === 'undefined' || !scene) return;
 
         withWarmupCamera(() => {
-            const attached = [];
+            const tempObjects = [];
+
             ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(type => {
                 try {
                     const w = (typeof _getWorldTemplate === 'function') ? _getWorldTemplate(type) : null;
                     const v = (typeof _getViewTemplate  === 'function') ? _getViewTemplate(type)  : null;
                     [w, v].forEach(tpl => {
                         if (!tpl) return;
-                        if (tpl.parent) tpl.parent.remove(tpl);
-                        tpl.position.set(0, 0.5, 0);
-                        tpl.visible = true;
-                        tpl.traverse(o => { o.visible = true; });
-                        scene.add(tpl);
-                        attached.push(tpl);
+
+                        // ★ 方案 C：clone 一份临时副本，模板本体完全不动
+                        const clone = tpl.clone(true);
+                        clone.position.set(0, 0.5, 0);
+                        clone.visible = true;
+                        clone.traverse(o => { o.visible = true; });
+
+                        scene.add(clone);
+                        tempObjects.push(clone);
                     });
                 } catch (e) {}
             });
@@ -244,7 +253,9 @@
                 console.warn('[loading] scene render failed:', e);
             }
 
-            attached.forEach(o => {
+            // ★ 直接丢弃临时副本；模板本体从头到尾没被碰过
+            //   注意：不 dispose 几何/材质 —— clone 共享引用，dispose 会影响到模板
+            tempObjects.forEach(o => {
                 if (o.parent === scene) scene.remove(o);
             });
         });
@@ -277,17 +288,11 @@
                 }
                 if (!vmClone) continue;
 
-                // 挂到玩家自己的 viewmodel（相机局部空间）
                 p1.vm.add(vmClone);
 
-                // 渲染一帧（用主相机、主场景、主光照）
                 try { renderer.render(scene, p1.cam); } catch (e) {}
 
-                // 卸下并清理（共享材质/几何不 dispose）
                 p1.vm.remove(vmClone);
-                vmClone.traverse(o => {
-                    // 只清理不是共享的：这里不 dispose，因为 clone 共享几何/材质
-                });
             }
 
             // 也预热一下第三人称模型（p2.gunHolder）
@@ -496,7 +501,6 @@
             fn: () => compileSceneShaders(),
         });
 
-        // ★ 改为真实 viewmodel 预热
         tasks.push({
             name: '预热武器视图模型',
             weight: 8,

@@ -590,9 +590,18 @@
         part(new THREE.TorusGeometry(0.0085, 0.0018, 6, IS_TOUCH_LOW ? 12 : 16), MAT.steel,
              0.030, 0.024, 0.026, 0, R, 0);
 
-        // ★ 让枪管从本地 +X 转到世界 -Z（正前方）
+               // ★ 让枪管从本地 +X 转到世界 -Z（正前方）
         gun.rotation.y = Math.PI / 2;
         gun.updateMatrixWorld(true);
+
+        // ★ 风险 5 修复：显式记录世界模型的规范变换。
+        //   若这里不写，loading.js 预热后模板会残留 (0, 0.5, 0)，
+        //   clone 出的世界模型会挂到玩家头顶（联机对手视角可见）。
+        gun.userData.basePos = new THREE.Vector3(0, 0, 0);
+        gun.userData.baseRot = new THREE.Euler(0, Math.PI / 2, 0);
+        gun.userData.adsPos  = gun.userData.basePos.clone();
+        gun.userData.adsRot  = gun.userData.baseRot.clone();
+
         return gun;
     }
 
