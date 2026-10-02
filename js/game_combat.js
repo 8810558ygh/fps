@@ -14,6 +14,8 @@ const _rcUp       = new THREE.Vector3(0, 1, 0);
 const _rcAxis     = new THREE.Vector3();
 const _rcQ1       = new THREE.Quaternion();
 const _rcQ2       = new THREE.Quaternion();
+const _rcRecoilPos = new THREE.Vector3();   // ★ 新增：狙击后坐力复用临时向量
+const _rcRecoilRot = new THREE.Euler();     // ★ 新增：狙击后坐力复用临时欧拉
 
 // ============================================================
 // 命中部位 → 伤害解析
@@ -511,20 +513,21 @@ function updateSniperViewmodel(p, dt, now) {
 
         const recoil = computeSniperRecoil(p, now);
 
-        const targetPos = vm.userData.basePos.clone();
-        targetPos.y += recoil * 0.16;
-        targetPos.z += recoil * 0.13;
+        // ★ 修改：复用模块级临时对象，避免每帧 .clone() 产生垃圾
+        _rcRecoilPos.copy(vm.userData.basePos);
+        _rcRecoilPos.y += recoil * 0.16;
+        _rcRecoilPos.z += recoil * 0.13;
 
-        const targetRot = vm.userData.baseRot.clone();
-        targetRot.z += recoil * 0.45;
+        _rcRecoilRot.copy(vm.userData.baseRot);
+        _rcRecoilRot.z += recoil * 0.45;
 
         const k = Math.min(1, dt * 16);
-        vm.position.x += (targetPos.x - vm.position.x) * k;
-        vm.position.y += (targetPos.y - vm.position.y) * k;
-        vm.position.z += (targetPos.z - vm.position.z) * k;
-        vm.rotation.x += (targetRot.x - vm.rotation.x) * k;
-        vm.rotation.y += (targetRot.y - vm.rotation.y) * k;
-        vm.rotation.z += (targetRot.z - vm.rotation.z) * k;
+        vm.position.x += (_rcRecoilPos.x - vm.position.x) * k;
+        vm.position.y += (_rcRecoilPos.y - vm.position.y) * k;
+        vm.position.z += (_rcRecoilPos.z - vm.position.z) * k;
+        vm.rotation.x += (_rcRecoilRot.x - vm.rotation.x) * k;
+        vm.rotation.y += (_rcRecoilRot.y - vm.rotation.y) * k;
+        vm.rotation.z += (_rcRecoilRot.z - vm.rotation.z) * k;
 
         return;
     }

@@ -378,27 +378,6 @@ function hostBroadcastTick() {
         bluePlayer: bluePayload,
         redPlayer: redPayload
     };
-
-    // ============================================================
-    // ★ 统计本次广播的字节数
-    // ============================================================
-    try {
-        const bytes = JSON.stringify(packet).length;
-        window._netStats = window._netStats || {
-            count: 0,
-            totalBytes: 0,
-            fullCount: 0,
-            deltaCount: 0
-        };
-        window._netStats.count++;
-        window._netStats.totalBytes += bytes;
-        if (bluePayload.full) window._netStats.fullCount++;
-        else window._netStats.deltaCount++;
-    } catch (e) {}
-
-    // ============================================================
-    // ★ 广播
-    // ============================================================
     broadcast(packet);
 }
 

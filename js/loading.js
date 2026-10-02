@@ -1,4 +1,4 @@
-// ===== js/loading.js – 加载页面（含真实 Viewmodel 预热） =====
+// ===== js/loading.js – 加载页面（含真实 Viewmodel 预热 · 强化版） =====
 
 (function () {
     'use strict';
@@ -200,12 +200,21 @@
     }
 
     // ============================================================
+    // 武器列表（统一管理，改一处全局生效）
+    // ============================================================
+    const ALL_WEAPON_TYPES = ['rifle', 'sniper', 'shotgun', 'odin', 'knife', 'smoke', 'flash'];
+
+    const WEAPON_NAMES = {
+        rifle: '狂徒', sniper: '冥驹', shotgun: '判官',
+        odin: '奥丁', knife: '军刀',
+        smoke: '烟雾弹', flash: '闪光弹',
+    };
+
+    // ============================================================
     // 真实场景整体 shader 编译
     //
     //   ★ 方案 C（非破坏性预热）：
     //     克隆一份临时副本放进场景，模板本体从始至终不被触碰。
-    //     相比"先改位置、渲染完再改回来"的补丁式做法，这里从源头
-    //     避免了"共享单例被污染"的问题 —— 模板永远是干净的。
     // ============================================================
     function compileSceneShaders() {
         if (typeof renderer === 'undefined' || !renderer) return;
@@ -214,14 +223,12 @@
         withWarmupCamera(() => {
             const tempObjects = [];
 
-            ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(type => {
+            ALL_WEAPON_TYPES.forEach(type => {
                 try {
                     const w = (typeof _getWorldTemplate === 'function') ? _getWorldTemplate(type) : null;
                     const v = (typeof _getViewTemplate  === 'function') ? _getViewTemplate(type)  : null;
                     [w, v].forEach(tpl => {
                         if (!tpl) return;
-
-                        // ★ 方案 C：clone 一份临时副本，模板本体完全不动
                         const clone = tpl.clone(true);
                         clone.position.set(0, 0.5, 0);
                         clone.visible = true;
@@ -253,8 +260,6 @@
                 console.warn('[loading] scene render failed:', e);
             }
 
-            // ★ 直接丢弃临时副本；模板本体从头到尾没被碰过
-            //   注意：不 dispose 几何/材质 —— clone 共享引用，dispose 会影响到模板
             tempObjects.forEach(o => {
                 if (o.parent === scene) scene.remove(o);
             });
@@ -262,10 +267,49 @@
     }
 
     // ============================================================
-    // ★ 真实 Viewmodel 预热
-    //   直接模拟一次真实换枪：
-    //     · clone 模板 → 挂到 p1.vm → 主相机渲染一帧 → 卸下
-    //   覆盖：新 mesh 实例 + 相机局部空间 + 主场景光照
+    // ★ 强制上传所有武器的纹理到 GPU
+    //
+    //   每个 weapon_*_hd.js 都暴露 preload(renderer)，
+    //   内部会：
+    //     1. renderer.initTexture() 上传纹理到显存
+    //     2. 用 dummy mesh 跑一遍 compile + render
+    // ============================================================
+    function forceUploadAllTextures() {
+        if (typeof renderer === 'undefined' || !renderer) return;
+        if (typeof renderer.initTexture !== 'function') return;
+
+        const preloadMap = {
+            rifle:   () => window.__HD_RIFLE   && window.__HD_RIFLE.preload,
+            sniper:  () => window.__HD_SNIPER  && window.__HD_SNIPER.preload,
+            shotgun: () => window.__HD_SHOTGUN && window.__HD_SHOTGUN.preload,
+            odin:    () => window.__HD_ODIN    && window.__HD_ODIN.preload,
+            knife:   () => window.__HD_KNIFE   && window.__HD_KNIFE.preload,
+            smoke:   () => window.__HD_SMOKE   && window.__HD_SMOKE.preload,
+            flash:   () => window.__HD_FLASH   && window.__HD_FLASH.preload,
+        };
+
+        for (const type of ALL_WEAPON_TYPES) {
+            const getter = preloadMap[type];
+            if (!getter) continue;
+            const preloadFn = getter();
+            if (typeof preloadFn !== 'function') continue;
+
+            try {
+                preloadFn(renderer);
+            } catch (e) {
+                console.warn('[loading] preload 失败:', type, e);
+            }
+        }
+    }
+
+    // ============================================================
+    // ★ 真实 Viewmodel 预热（强化版）
+    //
+    //   核心改进：
+    //     1. 每个武器渲染 3 次（不是 1 次）—— 覆盖 PBR shader 多程序变体
+    //     2. 模拟"挂载 → 渲染 → 卸载 → 再挂载 → 再渲染"完整循环
+    //     3. 第三人称模型同样多次渲染
+    //     4. 最终统一调 renderer.compile() 兜底
     // ============================================================
     function warmupViewmodelsReal() {
         if (typeof renderer === 'undefined' || !renderer) return;
@@ -275,44 +319,80 @@
             return;
         }
 
+        const REPEAT = 3;   // ★ 每个武器渲染次数
+
         withWarmupCamera(() => {
-            const allTypes = ['rifle', 'sniper', 'shotgun', 'odin', 'knife'];
+            // ============================================
+            // 阶段 1：第一人称 viewmodel 预热
+            // ============================================
+            for (const type of ALL_WEAPON_TYPES) {
+                for (let i = 0; i < REPEAT; i++) {
+                    let vmClone = null;
+                    try {
+                        vmClone = window.makeViewmodel(type, p1.mat);
+                    } catch (e) {
+                        console.warn('[loading] makeViewmodel 失败:', type, e);
+                        break;
+                    }
+                    if (!vmClone) break;
 
-            for (const type of allTypes) {
-                let vmClone = null;
-                try {
-                    vmClone = window.makeViewmodel(type, p1.mat);
-                } catch (e) {
-                    console.warn('[loading] makeViewmodel 失败:', type, e);
-                    continue;
+                    p1.vm.add(vmClone);
+
+                    try {
+                        // ★ 关键：renderer.compile() 只编译当前场景的可见物体，
+                        //   而 viewmodel 挂在相机上，必须在挂载后才 compile
+                        renderer.compile(scene, p1.cam);
+                        renderer.render(scene, p1.cam);
+                    } catch (e) {}
+
+                    p1.vm.remove(vmClone);
                 }
-                if (!vmClone) continue;
-
-                p1.vm.add(vmClone);
-
-                try { renderer.render(scene, p1.cam); } catch (e) {}
-
-                p1.vm.remove(vmClone);
             }
 
-            // 也预热一下第三人称模型（p2.gunHolder）
+            // ============================================
+            // 阶段 2：第三人称世界模型预热
+            // ============================================
             if (typeof window.makeWeaponModel === 'function' &&
                 typeof p2 !== 'undefined' && p2 && p2.gunHolder) {
 
-                for (const type of allTypes) {
-                    let worldClone = null;
-                    try {
-                        worldClone = window.makeWeaponModel(type, p2.mat);
-                    } catch (e) {
-                        continue;
-                    }
-                    if (!worldClone) continue;
+                for (const type of ALL_WEAPON_TYPES) {
+                    for (let i = 0; i < REPEAT; i++) {
+                        let worldClone = null;
+                        try {
+                            worldClone = window.makeWeaponModel(type, p2.mat);
+                        } catch (e) {
+                            break;
+                        }
+                        if (!worldClone) break;
 
-                    p2.gunHolder.add(worldClone);
-                    try { renderer.render(scene, p1.cam); } catch (e) {}
-                    p2.gunHolder.remove(worldClone);
+                        p2.gunHolder.add(worldClone);
+                        try {
+                            renderer.compile(scene, p1.cam);
+                            renderer.render(scene, p1.cam);
+                        } catch (e) {}
+                        p2.gunHolder.remove(worldClone);
+                    }
                 }
             }
+
+            // ============================================
+            // 阶段 3：把所有武器一次性挂到场景，做最终 compile
+            //   （覆盖渲染状态切换时可能触发的额外编译）
+            // ============================================
+            const finalGroup = new THREE.Group();
+            for (const type of ALL_WEAPON_TYPES) {
+                try {
+                    const vm = window.makeViewmodel(type, p1.mat);
+                    if (vm) { vm.visible = true; finalGroup.add(vm); }
+                } catch (e) {}
+            }
+            scene.add(finalGroup);
+            finalGroup.updateMatrixWorld(true);
+            try {
+                renderer.compile(scene, p1.cam);
+                renderer.render(scene, p1.cam);
+            } catch (e) {}
+            scene.remove(finalGroup);
         });
     }
 
@@ -465,11 +545,6 @@
     // ============================================================
     // 构建加载任务列表
     // ============================================================
-    const WEAPON_NAMES = {
-        rifle: '狂徒', sniper: '冥驹', shotgun: '判官',
-        odin: '奥丁', knife: '军刀',
-    };
-
     function buildGameLoadTasks(mapId) {
         const tasks = [];
 
@@ -483,8 +558,8 @@
             },
         });
 
-        // 只构建模板
-        ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(type => {
+        // 构建所有武器模板
+        ALL_WEAPON_TYPES.forEach(type => {
             tasks.push({
                 name: '载入武器：' + (WEAPON_NAMES[type] || type),
                 weight: 2,
@@ -495,15 +570,23 @@
             });
         });
 
+        // ★ 强制上传所有武器的纹理到 GPU
+        tasks.push({
+            name: '上传武器纹理',
+            weight: 5,
+            fn: () => forceUploadAllTextures(),
+        });
+
         tasks.push({
             name: '编译场景着色器',
             weight: 10,
             fn: () => compileSceneShaders(),
         });
 
+        // ★ 强化版的 viewmodel 预热
         tasks.push({
             name: '预热武器视图模型',
-            weight: 8,
+            weight: 20,
             fn: () => warmupViewmodelsReal(),
         });
 

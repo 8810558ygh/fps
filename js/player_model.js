@@ -81,6 +81,11 @@ function _getWorldTemplate(type) {
             tpl = window.__HD_ODIN.buildWorld();
         } else if (type === 'knife' && window.__HD_KNIFE && window.__HD_KNIFE.buildWorld) {
             tpl = window.__HD_KNIFE.buildWorld();
+        } else if (type === 'smoke' && window.__HD_SMOKE && window.__HD_SMOKE.buildWorld) {
+            tpl = window.__HD_SMOKE.buildWorld();
+        } else if (type === 'flash' && window.__HD_FLASH && window.__HD_FLASH.buildWorld) {
+            // ★ 新增：闪光弹 HD 世界模型
+            tpl = window.__HD_FLASH.buildWorld();
         }
     } catch (e) {
         console.warn('[player_model] HD 世界模型模板构建失败:', type, e);
@@ -104,6 +109,11 @@ function _getViewTemplate(type) {
             tpl = window.__HD_ODIN.buildViewmodel();
         } else if (type === 'knife' && window.__HD_KNIFE && window.__HD_KNIFE.buildViewmodel) {
             tpl = window.__HD_KNIFE.buildViewmodel();
+        } else if (type === 'smoke' && window.__HD_SMOKE && window.__HD_SMOKE.buildViewmodel) {
+            tpl = window.__HD_SMOKE.buildViewmodel();
+        } else if (type === 'flash' && window.__HD_FLASH && window.__HD_FLASH.buildViewmodel) {
+            // ★ 新增：闪光弹 HD 第一人称视图模型
+            tpl = window.__HD_FLASH.buildViewmodel();
         }
     } catch (e) {
         console.warn('[player_model] HD 视图模型模板构建失败:', type, e);
@@ -113,7 +123,8 @@ function _getViewTemplate(type) {
 }
 
 function preloadHdWeaponTemplates() {
-    ['rifle', 'sniper', 'shotgun', 'odin', 'knife'].forEach(t => {
+    // ★ 新增 'smoke' 和 'flash'
+    ['rifle', 'sniper', 'shotgun', 'odin', 'knife', 'smoke', 'flash'].forEach(t => {
         _getWorldTemplate(t);
         _getViewTemplate(t);
     });
@@ -124,8 +135,10 @@ window.preloadHdWeaponTemplates = preloadHdWeaponTemplates;
 // makeWeaponModel
 // ============================================================
 function makeWeaponModel(type, mat) {
+    // ★ 新增 'smoke' 和 'flash'
     if (type === 'rifle' || type === 'sniper' || type === 'shotgun'
-        || type === 'odin' || type === 'knife') {
+        || type === 'odin' || type === 'knife' || type === 'smoke'
+        || type === 'flash') {
         const tpl = _getWorldTemplate(type);
         if (tpl) return _cloneHdTemplate(tpl);
     }
@@ -222,8 +235,10 @@ function makeWeaponModel(type, mat) {
 // makeViewmodel
 // ============================================================
 function makeViewmodel(type, mat) {
+    // ★ 新增 'smoke' 和 'flash'
     if (type === 'rifle' || type === 'sniper' || type === 'shotgun'
-        || type === 'odin' || type === 'knife') {
+        || type === 'odin' || type === 'knife' || type === 'smoke'
+        || type === 'flash') {
         const tpl = _getViewTemplate(type);
         if (tpl) return _cloneHdTemplate(tpl);
     }

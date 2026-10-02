@@ -12,6 +12,12 @@
     let mapSize = 320;
     let dpr = 1;
 
+    // ★ 新增：视野扇形径向渐变的缓存
+    //   原先每帧 createRadialGradient，其实只有 radius 变化时才需要重建；
+    //   而 radius 只跟 mapSize 挂钩，几乎不变。
+    let _viewFovGrad = null;
+    let _viewFovGradRadius = -1;
+
     function resize() {
         const isTouch = window.matchMedia('(pointer: coarse)').matches;
         mapSize = isTouch ? 210 : 320;
@@ -26,6 +32,10 @@
         staticCanvas.width = mapSize * dpr;
         staticCanvas.height = mapSize * dpr;
         staticCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        // ★ 尺寸变了，缓存作废
+        _viewFovGrad = null;
+        _viewFovGradRadius = -1;
 
         drawStatic();
     }
@@ -209,10 +219,16 @@
         ctx.moveTo(0, 0);
         ctx.arc(0, 0, radius, -Math.PI / 2 - hFov / 2, -Math.PI / 2 + hFov / 2);
         ctx.closePath();
-        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
-        grad.addColorStop(0, 'rgba(107, 179, 255, 0.35)');
-        grad.addColorStop(1, 'rgba(107, 179, 255, 0)');
-        ctx.fillStyle = grad;
+
+        // ★ 修改：径向渐变按需创建、之后复用
+        //   radius 只跟 mapSize 挂钩，几乎不变，没必要每帧重建。
+        if (!_viewFovGrad || _viewFovGradRadius !== radius) {
+            _viewFovGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+            _viewFovGrad.addColorStop(0, 'rgba(107, 179, 255, 0.35)');
+            _viewFovGrad.addColorStop(1, 'rgba(107, 179, 255, 0)');
+            _viewFovGradRadius = radius;
+        }
+        ctx.fillStyle = _viewFovGrad;
         ctx.fill();
 
         // 玩家三角

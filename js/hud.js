@@ -39,6 +39,11 @@ const _hudState = {
     crossOpacity: '',
     adsRetDisplay: '',
     cdDisplay: '',
+    hintDisplay: '',      // ★ 准备阶段提示行缓存
+    cdIcon: '',           // ★ 投掷倒计时图标缓存
+    cdLabel: '',          // ★ 投掷倒计时标签缓存
+    cdTime: '',           // ★ 投掷倒计时数字缓存
+    cdTimeColor: '',      // ★ 投掷倒计时颜色缓存
 };
 
 let combatReportEl = null;
@@ -318,13 +323,14 @@ function updateHUD(now) {
     if (_cdEl) {
         if (running && gameState === 'combat' && p.throwFuseActive && p.throwFuseType) {
             const remain = Math.max(0, p.throwFuseEnd - now);
+            const isSmoke = (p.throwFuseType === 'smoke');
 
-            if (_cdIconEl)  _cdIconEl.textContent  = (p.throwFuseType === 'smoke') ? '💨' : '⚡';
-            if (_cdLabelEl) _cdLabelEl.textContent = (p.throwFuseType === 'smoke') ? '烟雾倒计时' : '闪光倒计时';
-            if (_cdTimeEl) {
-                _cdTimeEl.textContent = (remain / 1000).toFixed(1) + 's';
-                _cdTimeEl.style.color = remain > 0 ? '#ffd24a' : '#7ee08a';
-            }
+            // ★ 修改：图标 / 标签 / 颜色都走缓存，只有时间数字必须每帧写
+            _setText(_cdIconEl,  isSmoke ? '💨' : '⚡', 'cdIcon');
+            _setText(_cdLabelEl, isSmoke ? '烟雾倒计时' : '闪光倒计时', 'cdLabel');
+            _setText(_cdTimeEl,  (remain / 1000).toFixed(1) + 's', 'cdTime');
+            _setStyle(_cdTimeEl, 'color', remain > 0 ? '#ffd24a' : '#7ee08a', 'cdTimeColor');
+
             if (_hudState.cdDisplay !== 'flex') {
                 _cdEl.style.display = 'flex';
                 _hudState.cdDisplay = 'flex';
@@ -355,8 +361,14 @@ function updateHUD(now) {
         if (running && left <= 0) endMatch(p1.score === p2.score ? null : (p1.score > p2.score ? p1 : p2));
     }
 
-    if (h.hint) h.hint.style.display =
-        (running && gameState === 'prep' && document.pointerLockElement !== renderer.domElement && !isOver()) ? 'block' : 'none';
+    // ★ 准备阶段提示行走缓存
+    const hintDisplay = (
+        running
+        && gameState === 'prep'
+        && document.pointerLockElement !== renderer.domElement
+        && !isOver()
+    ) ? 'block' : 'none';
+    _setStyle(h.hint, 'display', hintDisplay, 'hintDisplay');
 
     const isRedDotADS = running && gameState === 'combat'
         && p1.aiming
