@@ -14,8 +14,8 @@ const _rcUp       = new THREE.Vector3(0, 1, 0);
 const _rcAxis     = new THREE.Vector3();
 const _rcQ1       = new THREE.Quaternion();
 const _rcQ2       = new THREE.Quaternion();
-const _rcRecoilPos = new THREE.Vector3();   // ★ 新增：狙击后坐力复用临时向量
-const _rcRecoilRot = new THREE.Euler();     // ★ 新增：狙击后坐力复用临时欧拉
+const _rcRecoilPos = new THREE.Vector3();
+const _rcRecoilRot = new THREE.Euler();
 
 // ============================================================
 // 命中部位 → 伤害解析
@@ -160,7 +160,6 @@ function tryFire(p, now) {
     p.muzzle.intensity = 2.2;
     if (p.id === 1) p.vmMuzzle.intensity = 2.2;
 
-    // ★ 抛壳
     if (typeof window.spawnShellCasing === 'function') {
         window.spawnShellCasing(p, now);
     }
@@ -197,7 +196,6 @@ function tryFire(p, now) {
 
     const isOnlineHost = (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost);
 
-    // ★ 一枪只发一次 hitmark 广播（霰弹枪 10 颗弹丸只触发一次）
     let hitmarkSent = false;
 
     for (let i = 0; i < pellets; i++) {
@@ -302,22 +300,43 @@ function damage(victim, dmg, from) {
 
 // ============================================================
 // kill
+//
+// ★ 修复：防止自杀（from === victim）时给自己加分
+//   场景：玩家开枪击中油桶、油桶爆炸把自己炸死。
+//   处理：受害者就是攻击者时，分数归对手，播报改为"自我击杀"。
 // ============================================================
 function kill(victim, from, now) {
-    from.score++;
+    const isSuicide = (from === victim);
+
+    // 谁应该加分？
+    //   · 正常击杀 → 攻击者（from）
+    //   · 自杀     → 对手（other(victim)）
+    const scoringPlayer = isSuicide ? other(victim) : from;
+
+    if (scoringPlayer) scoringPlayer.score++;
+
     victim.hp = 0;
     victim.deadUntil = Infinity;
+
     const emptyDmg = { body: 0, head: 0, leg: 0, total: 0 };
-    const dmgByAttacker = from.damageDealt[victim.id] || emptyDmg;
-    const dmgByVictim   = victim.damageDealt[from.id] || emptyDmg;
-    lastKillReport = { attacker: from, victim: victim, dmgByAttacker, dmgByVictim };
+    const dmgByAttacker = scoringPlayer.damageDealt[victim.id] || emptyDmg;
+    const dmgByVictim   = victim.damageDealt[scoringPlayer.id] || emptyDmg;
+    lastKillReport = { attacker: scoringPlayer, victim: victim, dmgByAttacker, dmgByVictim };
 
     let killerSeat = null, victimSeat = null;
     if (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost) {
         const hostSeat  = (NET.mySeat === 'red') ? 'red' : 'blue';
         const otherSeat = (hostSeat === 'blue')  ? 'red' : 'blue';
-        killerSeat = (from   === p1) ? hostSeat : otherSeat;
-        victimSeat = (victim === p1) ? hostSeat : otherSeat;
+
+        if (isSuicide) {
+            // ★ 自杀：killerSeat 与 victimSeat 相同，客户端据此识别"自杀"
+            const suicideSeat = (victim === p1) ? hostSeat : otherSeat;
+            killerSeat = suicideSeat;
+            victimSeat = suicideSeat;
+        } else {
+            killerSeat = (scoringPlayer === p1) ? hostSeat : otherSeat;
+            victimSeat = (victim === p1) ? hostSeat : otherSeat;
+        }
 
         if (typeof NET_sendKillEvent === 'function') {
             NET_sendKillEvent(
@@ -330,24 +349,36 @@ function kill(victim, from, now) {
 
     if (window.showRoundReport) {
         window.showRoundReport(
-            roundNumber, from, victim,
+            roundNumber, scoringPlayer, victim,
             dmgByAttacker, dmgByVictim,
             killerSeat, victimSeat
         );
     }
 
+    // 清理伤害统计（from 可能就是 victim 自己，两行 delete 都不会出错）
     delete from.damageDealt[victim.id];
     delete victim.damageDealt[from.id];
 
-    feed(victim, `被 <b style="color:${from.id===1?'#6db3ff':'#ff7a6d'}">玩家${from.id}</b> 击杀`);
-    feed(from, `<b style="color:#ffd24a">击杀 玩家${victim.id}！</b>  +1`);
+    // ============================================================
+    // 击杀播报
+    // ============================================================
+    if (isSuicide) {
+        feed(victim, `<b style="color:#ff7a6d">自我击杀</b>（自爆）`);
+    } else {
+        feed(victim, `被 <b style="color:${from.id===1?'#6db3ff':'#ff7a6d'}">玩家${from.id}</b> 击杀`);
+        feed(from, `<b style="color:#ffd24a">击杀 玩家${victim.id}！</b>  +1`);
+    }
+
     sDeath();
-    sKill(from.id);
+    sKill(scoringPlayer.id);
 
-    if (gameMode === 'ai' && from.id === 2 && typeof aiTaunt === 'function') aiTaunt();
-    if (gameMode === 'ai' && from.id === 1 && typeof resetAiStreakOnPlayerKill === 'function') resetAiStreakOnPlayerKill();
+    // AI 相关：只在非自杀时才触发
+    if (gameMode === 'ai' && !isSuicide) {
+        if (from.id === 2 && typeof aiTaunt === 'function') aiTaunt();
+        if (from.id === 1 && typeof resetAiStreakOnPlayerKill === 'function') resetAiStreakOnPlayerKill();
+    }
 
-    if (from.score >= TARGET_KILLS) { endMatch(from); return; }
+    if (scoringPlayer.score >= TARGET_KILLS) { endMatch(scoringPlayer); return; }
     gameState = 'roundEnd';
     stateEndTime = now + ROUND_END_MS;
     if (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost) {
@@ -513,7 +544,6 @@ function updateSniperViewmodel(p, dt, now) {
 
         const recoil = computeSniperRecoil(p, now);
 
-        // ★ 修改：复用模块级临时对象，避免每帧 .clone() 产生垃圾
         _rcRecoilPos.copy(vm.userData.basePos);
         _rcRecoilPos.y += recoil * 0.16;
         _rcRecoilPos.z += recoil * 0.13;
@@ -649,7 +679,7 @@ function updateThirdPersonWeapon(p, dt, now) {
 window.updateThirdPersonWeapon = updateThirdPersonWeapon;
 
 // ============================================================
-// updatePlayer（物理驱动移动 —— 手写物理保留）
+// updatePlayer
 // ============================================================
 function updatePlayer(p, dt, now) {
     if (now < p.deadUntil) {
@@ -710,7 +740,6 @@ function updatePlayer(p, dt, now) {
     if (p.height < HEIGHT_STAND - 0.1) spd = SPEED_CROUCH * wMul;
     if (p.aiming && !p.isMelee && !p.isSmoke && !p.isFlash) spd *= p.weapon.adsSpeedMul;
 
-    // 手写物理
     const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
     const rx = Math.cos(p.yaw),  rz = -Math.sin(p.yaw);
     p.pos.x += (fx * f + rx * s) * spd * dt;
@@ -722,7 +751,6 @@ function updatePlayer(p, dt, now) {
     p.vy -= GRAV * dt;
     p.pos.y += p.vy * dt;
 
-    // ★ 记录落地前垂直速度（供落地音效使用）
     p._vyBeforeLand = p.vy;
 
     collideWorld(p);
@@ -731,7 +759,6 @@ function updatePlayer(p, dt, now) {
     if (p.pos.y < _gh) { p.pos.y = _gh; p.vy = 0; p.onGround = true; }
     collidePlayers();
 
-    // 同步 KINEMATIC 影子刚体
     if (window.PHYSICS && window.PHYSICS.isReady()) {
         window.PHYSICS.syncPlayerToBody(p, dt);
     }

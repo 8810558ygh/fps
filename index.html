@@ -155,6 +155,23 @@
     <canvas id="minimap" style="display:none;"></canvas>
     <div id="timer" class="timer">5:00</div>
 
+    <!-- ===== ★ TAB 战绩面板 ===== -->
+    <div id="scorePanel">
+        <div class="sp-title">战 绩</div>
+        <div class="sp-divider"></div>
+        <div class="sp-row sp-header">
+            <span class="sp-label"></span>
+            <span class="sp-team sp-blue-label" id="spBlueName">蓝方</span>
+            <span class="sp-team sp-red-label"  id="spRedName">红方</span>
+        </div>
+        <div class="sp-row">
+            <span class="sp-label">比分</span>
+            <span class="sp-val sp-blue-val" id="spBlueScore">0</span>
+            <span class="sp-val sp-red-val"  id="spRedScore">0</span>
+        </div>
+        <div class="sp-hint">按住 TAB 显示 · 松开关闭</div>
+    </div>
+
     <div id="throwCountdown" class="throw-countdown">
         <span class="throw-cd-icon" id="throwCountdownIcon">💨</span>
         <span class="throw-cd-label" id="throwCountdownLabel">烟雾倒计时</span>

@@ -122,15 +122,10 @@ canvas {
     transition: opacity .35s;
 }
 
+/* ★ 顶部比分已改为 TAB 面板显示，此处隐藏避免与计时器重合 */
 .score {
-    position: absolute;
-    top: 14px; left: 50%;
-    transform: translateX(-50%);
-    font-size: 34px;
-    font-weight: 700;
-    text-shadow: 0 2px 6px #000;
+    display: none !important;
 }
-#hud1 .score { color: #6db3ff; }
 
 .timer {
     position: fixed;
@@ -614,4 +609,126 @@ body.online-mode #opponentInfo {
         font-size: 12px;
         letter-spacing: 1px;
     }
+}
+
+/* ============================================================
+   ★ TAB 战绩面板
+   ============================================================ */
+#scorePanel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.96);
+    z-index: 18;
+    min-width: 360px;
+    padding: 22px 34px 16px;
+    background: rgba(13, 19, 30, 0.94);
+    border: 1px solid rgba(255, 210, 74, 0.45);
+    border-radius: 14px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.85),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: #fff;
+    font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+    opacity: 0;
+    transition: opacity 0.12s ease-out, transform 0.12s ease-out;
+    display: none;
+}
+#scorePanel.visible {
+    display: block;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+}
+
+#scorePanel .sp-title {
+    text-align: center;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 8px;
+    color: #ffd24a;
+    margin-bottom: 14px;
+    text-shadow: 0 2px 10px rgba(255, 210, 74, 0.5);
+}
+#scorePanel .sp-divider {
+    height: 1px;
+    background: linear-gradient(90deg,
+        rgba(255, 210, 74, 0) 0%,
+        rgba(255, 210, 74, 0.55) 50%,
+        rgba(255, 210, 74, 0) 100%);
+    margin-bottom: 14px;
+}
+#scorePanel .sp-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 1fr;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 0;
+}
+#scorePanel .sp-header {
+    padding-bottom: 12px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+#scorePanel .sp-label {
+    font-size: 13px;
+    color: #9fb2c8;
+    letter-spacing: 2px;
+}
+#scorePanel .sp-team {
+    text-align: center;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#scorePanel .sp-team.sp-blue-label { color: #6db3ff; }
+#scorePanel .sp-team.sp-red-label  { color: #ff7a6d; }
+
+#scorePanel .sp-val {
+    text-align: center;
+    font-size: 28px;
+    font-weight: 800;
+    font-family: Consolas, "Courier New", monospace;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+    letter-spacing: 2px;
+    position: relative;
+}
+#scorePanel .sp-val.sp-blue-val { color: #6db3ff; }
+#scorePanel .sp-val.sp-red-val  { color: #ff7a6d; }
+#scorePanel .sp-val.leading::after {
+    content: '★';
+    position: absolute;
+    top: -10px;
+    right: -2px;
+    font-size: 12px;
+    color: #ffd24a;
+    text-shadow: 0 0 6px rgba(255, 210, 74, 0.9);
+}
+
+#scorePanel .sp-hint {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    text-align: center;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.35);
+    letter-spacing: 2px;
+}
+
+@media (pointer: coarse) {
+    #scorePanel {
+        min-width: 280px;
+        padding: 18px 22px 14px;
+    }
+    #scorePanel .sp-title { font-size: 18px; letter-spacing: 6px; margin-bottom: 10px; }
+    #scorePanel .sp-val { font-size: 22px; }
+    #scorePanel .sp-row { grid-template-columns: 60px 1fr 1fr; gap: 8px; }
+    #scorePanel .sp-label { font-size: 12px; letter-spacing: 1px; }
+    #scorePanel .sp-team { font-size: 13px; }
 }

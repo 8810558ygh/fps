@@ -303,7 +303,7 @@ function serializePlayer(p) {
         crouching: p.height < HEIGHT_STAND - 0.15,
         dead: p.hp <= 0 || p.deadUntil > now,
         visible: p.baseVisible,
-        onGround: !!p.onGround,                       // ★ 新增：用于远端落地检测
+        onGround: !!p.onGround,
         aiming: !!p.aiming,
         aimStage: p.aimStage || 0,
         isMelee: !!p.isMelee,
@@ -363,9 +363,6 @@ function hostBroadcastTick() {
     const redPayload = _buildPlayerPayload(redPlayer, _lastSentRed, forceFull);
     _lastSentRed = redPlayer;
 
-    // ============================================================
-    // ★ 打包成一个对象（原本直接传给 broadcast 的内容）
-    // ============================================================
     const packet = {
         type: 'hostState',
         tick: NET.tick++,
@@ -537,8 +534,6 @@ function handleHostState(data) {
             }
 
             // ★ 远端瞬移检测
-            //   远端复活 / 硬重同步 / 房间重进时，oppData 位置会和 p2.pos 差很远。
-            //   直接 snap 并清空脚步累积，避免插值飘移过程中触发一整串脚步。
             {
                 const snapDx = oppData.x - p2.pos.x;
                 const snapDy = oppData.y - p2.pos.y;
@@ -559,16 +554,13 @@ function handleHostState(data) {
 
             p2.pitch = oppData.pitch;
 
-            // ★ 新增：同步远端玩家的 onGround 状态
-            //   用于客户端本地检测房主的起跳/落地。
-            //   加了这一步后，客户端 updateFootsteps(p2, dt, now, true) 里的
-            //   justLanded 检测才能生效，进而触发落地音效。
             if (oppData.onGround !== undefined) {
                 p2.onGround = !!oppData.onGround;
             }
 
             p2.hp = oppData.hp;
             p2.armor = oppData.armor;
+            p2.score = oppData.score;               // ★ 同步对手分数
             p2.baseVisible = oppData.visible;
             p2.height = oppData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
             p2.aiming = !!oppData.aiming;
@@ -656,7 +648,9 @@ function updateSpectatorView(dt) {
     p2.yaw = otherData.yaw; p2.pitch = otherData.pitch;
     p2.mesh.position.copy(p2.pos);
     p2.mesh.rotation.y = otherData.yaw;
-    p2.hp = otherData.hp; p2.armor = otherData.armor;
+    p2.hp = otherData.hp;
+    p2.armor = otherData.armor;
+    p2.score = otherData.score;                 // ★ 观战视角同步对手分数
     p2.baseVisible = otherData.visible;
     p2.height = otherData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
     p2.mesh.scale.y = p2.height / HEIGHT_STAND;
@@ -772,13 +766,17 @@ function getPlayerNameBySeat(seat) {
     return (m && m.name) || (seat === 'blue' ? '蓝方' : '红方');
 }
 
+// ============================================================
+// ★ handleKillEvent：支持"自杀"播报（killerSeat === victimSeat）
+// ============================================================
 function handleKillEvent(data) {
     if (typeof sKill  === 'function') sKill(1);
     if (typeof sDeath === 'function') sDeath();
 
     const mySeat     = NET.mySeat;
     const isMePlayer = (mySeat === 'blue' || mySeat === 'red');
-    const iAmKiller  = isMePlayer && (data.killerSeat === mySeat);
+    const isSuicide  = (data.killerSeat && data.killerSeat === data.victimSeat);
+    const iAmKiller  = isMePlayer && !isSuicide && (data.killerSeat === mySeat);
     const iAmVictim  = isMePlayer && (data.victimSeat === mySeat);
 
     if (NET.role === 'spectator') {
@@ -815,13 +813,21 @@ function handleKillEvent(data) {
         p2.flashUntil = 0;
     }
 
-    const killerName = getPlayerNameBySeat(data.killerSeat);
-    const victimName = getPlayerNameBySeat(data.victimSeat);
-    const kc = data.killerSeat === 'blue' ? '#6db3ff' : '#ff7a6d';
-    const vc = data.victimSeat === 'blue' ? '#6db3ff' : '#ff7a6d';
-    const html = `<b style="color:${kc}">${killerName}</b> 击杀了 <b style="color:${vc}">${victimName}</b>`;
-    if (typeof feed === 'function' && typeof p1 !== 'undefined' && p1) {
-        feed(p1, html);
+    // ---- 播报（区分自杀） ----
+    if (isSuicide) {
+        const victimName = getPlayerNameBySeat(data.victimSeat);
+        if (typeof feed === 'function' && typeof p1 !== 'undefined' && p1) {
+            feed(p1, `<b style="color:#ff7a6d">${victimName}</b> 自我击杀（自爆）`);
+        }
+    } else {
+        const killerName = getPlayerNameBySeat(data.killerSeat);
+        const victimName = getPlayerNameBySeat(data.victimSeat);
+        const kc = data.killerSeat === 'blue' ? '#6db3ff' : '#ff7a6d';
+        const vc = data.victimSeat === 'blue' ? '#6db3ff' : '#ff7a6d';
+        const html = `<b style="color:${kc}">${killerName}</b> 击杀了 <b style="color:${vc}">${victimName}</b>`;
+        if (typeof feed === 'function' && typeof p1 !== 'undefined' && p1) {
+            feed(p1, html);
+        }
     }
 
     if (typeof showRoundReport === 'function'
@@ -871,15 +877,59 @@ function handleRoundEvent(data) {
         }
     }
 
+    // ============================================================
+    // ★ 比赛结束（房主广播 gameState: 'idle'）
+    // ============================================================
+    if (data.gameState === 'idle' && prevState !== 'idle') {
+        if (typeof running !== 'undefined' && running
+            && typeof endMatch === 'function') {
+
+            // --- 同步最终比分 ---
+            if (data.blueScore !== undefined && data.redScore !== undefined
+                && typeof NET !== 'undefined') {
+
+                if (NET.role === 'spectator') {
+                    const p1IsBlue = (NET.spectatorTarget === 'blue');
+                    if (p1IsBlue) {
+                        if (typeof p1 !== 'undefined' && p1) p1.score = data.blueScore;
+                        if (typeof p2 !== 'undefined' && p2) p2.score = data.redScore;
+                    } else {
+                        if (typeof p1 !== 'undefined' && p1) p1.score = data.redScore;
+                        if (typeof p2 !== 'undefined' && p2) p2.score = data.blueScore;
+                    }
+                } else {
+                    // 玩家（客户端）
+                    if (NET.mySeat === 'blue') {
+                        if (typeof p1 !== 'undefined' && p1) p1.score = data.blueScore;
+                        if (typeof p2 !== 'undefined' && p2) p2.score = data.redScore;
+                    } else {
+                        if (typeof p1 !== 'undefined' && p1) p1.score = data.redScore;
+                        if (typeof p2 !== 'undefined' && p2) p2.score = data.blueScore;
+                    }
+                }
+            }
+
+            // --- 判断本地哪个玩家对象是胜方 ---
+            let winner = null;
+            if (typeof p1 !== 'undefined' && typeof p2 !== 'undefined') {
+                if (p1.score > p2.score) winner = p1;
+                else if (p2.score > p1.score) winner = p2;
+            }
+
+            endMatch(winner);
+        }
+        return;   // ★ idle 状态不再往下走 reset 分支
+    }
+
     if (data.reset) {
         if (typeof clearAllSmokes === 'function') clearAllSmokes();
         if (typeof clearAllFlashes === 'function') clearAllFlashes();
         if (typeof clearAllBulletHoles === 'function') clearAllBulletHoles();
 
-        // ★ 新增：恢复油桶（与房主 startRound() 里做的事保持一致）
+        // ★ 恢复油桶（与房主 startRound() 里做的事保持一致）
         if (typeof window.resetBarrels === 'function') window.resetBarrels();
 
-        // ★ 新增：清空弹壳（与房主 startRound() 里做的事保持一致）
+        // ★ 清空弹壳（与房主 startRound() 里做的事保持一致）
         if (typeof clearAllShellCasings === 'function') clearAllShellCasings();
 
         if (typeof p1 !== 'undefined' && p1) p1.flashUntil = 0;
@@ -923,9 +973,23 @@ window.NET_sendKillEvent = function (killerSeat, victimSeat, round, dmgByKiller,
     });
 };
 
-window.NET_sendRoundEvent = function (gameStateStr, remain, reset, roundNum) {
+// ============================================================
+// ★ 支持附带最终比分（比赛结束时由 endMatch 传入）
+// ============================================================
+window.NET_sendRoundEvent = function (gameStateStr, remain, reset, roundNum, extra) {
     if (!NET.isHost) return;
-    broadcast({ type: 'roundEvent', gameState: gameStateStr, remain, reset, roundNumber: roundNum });
+    const packet = {
+        type: 'roundEvent',
+        gameState: gameStateStr,
+        remain,
+        reset,
+        roundNumber: roundNum,
+    };
+    if (extra) {
+        if (extra.blueScore !== undefined) packet.blueScore = extra.blueScore;
+        if (extra.redScore  !== undefined) packet.redScore  = extra.redScore;
+    }
+    broadcast(packet);
 };
 
 window.NET_sendClientInput = function () {

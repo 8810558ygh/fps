@@ -160,16 +160,71 @@ function endPrep(now) {
     }
 }
 
+// ============================================================
+// ★ 修复：endMatch 支持联机模式下的颜色/比分正确映射
+// ============================================================
 function endMatch(winner) {
     running = false; gameState = 'idle';
     if (document.pointerLockElement) document.exitPointerLock();
     if (window.closeCombatReport) window.closeCombatReport();
     if (typeof closeChat === 'function') closeChat();
 
+    // ============================================================
+    // ★ 联机模式下 p1 / p2 与"蓝方 / 红方"不固定对应，
+    //   必须根据座位或观战目标来推导"胜方颜色"。
+    // ============================================================
+    const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online'
+                      && typeof NET !== 'undefined' && NET.roomId);
+
+    let winningColor = null;   // 'blue' | 'red' | null（平局）
+    if (winner) {
+        if (isOnline) {
+            if (NET.role === 'spectator') {
+                const p1IsBlue = (NET.spectatorTarget === 'blue');
+                const winnerIsP1 = (winner === p1);
+                winningColor = (winnerIsP1 === p1IsBlue) ? 'blue' : 'red';
+            } else {
+                // 玩家（房主 / 客户端）：p1 代表自己的座位
+                const mySeat  = NET.mySeat;                       // 'blue' | 'red'
+                const oppSeat = (mySeat === 'blue') ? 'red' : 'blue';
+                winningColor = (winner === p1) ? mySeat : oppSeat;
+            }
+        } else {
+            winningColor = (winner.id === 1) ? 'blue' : 'red';
+        }
+    }
+
+    // ============================================================
+    // ★ 比分统一按"蓝方 : 红方"顺序显示
+    // ============================================================
+    let blueScore, redScore;
+    if (isOnline) {
+        if (NET.role === 'spectator') {
+            const p1IsBlue = (NET.spectatorTarget === 'blue');
+            blueScore = p1IsBlue ? p1.score : p2.score;
+            redScore  = p1IsBlue ? p2.score : p1.score;
+        } else {
+            if (NET.mySeat === 'blue') {
+                blueScore = p1.score;
+                redScore  = p2.score;
+            } else {
+                blueScore = p2.score;
+                redScore  = p1.score;
+            }
+        }
+    } else {
+        blueScore = p1.score;
+        redScore  = p2.score;
+    }
+
     const el = document.getElementById('endOverlay');
-    document.getElementById('endTitle').innerHTML = winner ?
-        `<span class="${winner.id===1?'b':'r'}">${winner.id===1?'蓝色':'红色'}</span>玩家获胜！` : '平局！';
-    document.getElementById('endScore').textContent = `${p1.score} : ${p2.score}`;
+    const titleColor = winningColor === 'blue' ? 'b' : 'r';
+    const titleName  = winningColor === 'blue' ? '蓝色' : '红色';
+
+    document.getElementById('endTitle').innerHTML = winningColor
+        ? `<span class="${titleColor}">${titleName}</span>玩家获胜！`
+        : '平局！';
+    document.getElementById('endScore').textContent = `${blueScore} : ${redScore}`;
 
     const againBtn = document.getElementById('againBtn');
     if (againBtn) {
@@ -192,8 +247,17 @@ function endMatch(winner) {
 
     if (flashOverlayEl) flashOverlayEl.style.opacity = '0';
 
-    if (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost) {
-        if (typeof NET_sendRoundEvent === 'function') NET_sendRoundEvent('idle', 0, false, roundNumber);
+    // ============================================================
+    // ★ 房主广播比赛结束时，附带最终比分
+    //   （客户端 handleRoundEvent 会用它同步本地分数并显示结局）
+    // ============================================================
+    if (isOnline && NET.isHost) {
+        if (typeof NET_sendRoundEvent === 'function') {
+            NET_sendRoundEvent('idle', 0, false, roundNumber, {
+                blueScore: blueScore,
+                redScore:  redScore,
+            });
+        }
     }
 }
 
