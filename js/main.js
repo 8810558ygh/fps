@@ -323,8 +323,6 @@ function updateScopePip() {
 
 // ============================================================
 // ★ 预热 PiP 瞄准镜资源（供 loading.js 调用）
-//   · 提前创建 scopeCam + scopeRT + scopeMat
-//   · 用 scopeCam 渲染一帧到 RT，确保 GPU 资源真的分配过
 // ============================================================
 window.warmupScopePip = function () {
     ensureScopeResources();
@@ -432,6 +430,9 @@ function loop() {
     requestAnimationFrame(loop);
     const dt = Math.min(clock.getDelta(), 0.05);
     const now = performance.now();
+
+    // ★ 新增：每帧同步音频监听器到相机位置（HRTF 听声辨位）
+    if (typeof updateAudioListener === 'function') updateAudioListener();
 
     if (typeof desertGrassTime !== 'undefined') desertGrassTime.value = now / 1000;
 

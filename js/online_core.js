@@ -357,17 +357,14 @@ function handleRoomMessage(fromId, data) {
             }
             break;
 
-        // ★ 新增：油桶爆炸（房主 → 客户端）
-        //   客户端隐藏本地油桶 + 播爆炸视觉/音效，不做伤害计算。
+        // ★ 油桶爆炸（房主 → 客户端）
         case 'barrelExplode':
             if (!NET.isHost && typeof window.hideBarrelAt === 'function') {
                 window.hideBarrelAt(data.x, data.y, data.z);
             }
             break;
 
-        // ★ 新增：房主告知客户端"你打中了"（命中反馈）
-        //   客户端的 tryFire 是"只发曳光弹、不做命中判定"，
-        //   命中检测完全在房主侧完成，需要房主回传一个 hitmark 触发消息。
+        // ★ 命中反馈
         case 'hitmarkForClient':
             if (!NET.isHost
                 && typeof hitmark === 'function'
@@ -384,6 +381,13 @@ function handleRoomMessage(fromId, data) {
         case 'flashEvent':
             if (!NET.isHost && typeof p1 !== 'undefined' && p1) {
                 p1.flashUntil = performance.now() + (data.durationMs || FLASH.flashDurationMs);
+            }
+            break;
+
+        // ★ 新增：客户端收到主机的世界声音广播（HRTF 本地重放）
+        case 'worldSound':
+            if (!NET.isHost && typeof handleRemoteWorldSound === 'function') {
+                handleRemoteWorldSound(data);
             }
             break;
 

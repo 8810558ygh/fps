@@ -55,13 +55,16 @@ function _cloneHdTemplate(tpl) {
     clone.rotation.copy(dst.baseRot);
 
     // 按 name 重新绑定关键锚点
-    dst.muzzlePoint = _findByName(clone, 'muzzlePoint');
-    dst.boltGroup   = _findByName(clone, 'boltGroup');
-    dst.scopeCenter = _findByName(clone, 'scopeCenter');
-    dst.lensMeshF   = _findByName(clone, 'scopeLensFront');
-    dst.lensMeshB   = _findByName(clone, 'scopeLensBack');
-    dst.bladeTip    = _findByName(clone, 'bladeTip');
-    dst.attackPoint = _findByName(clone, 'attackPoint');
+    dst.muzzlePoint  = _findByName(clone, 'muzzlePoint');
+    dst.boltGroup    = _findByName(clone, 'boltGroup');
+    dst.scopeCenter  = _findByName(clone, 'scopeCenter');
+    dst.lensMeshF    = _findByName(clone, 'scopeLensFront');
+    dst.lensMeshB    = _findByName(clone, 'scopeLensBack');
+    dst.bladeTip     = _findByName(clone, 'bladeTip');
+    dst.attackPoint  = _findByName(clone, 'attackPoint');
+
+    // ★ 新增：弹匣组（供换弹动画使用）
+    dst.magazineGroup = _findByName(clone, 'magazineGroup');
 
     return clone;
 }

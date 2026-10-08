@@ -263,7 +263,7 @@ function spawnFlashBurst(pos) {
 }
 
 // ============================================================
-// 闪光判定（正常投掷后命中判定用）
+// 闪光判定
 // ============================================================
 function checkFlashHit(target, flashPos, now) {
     if (!target) return false;
@@ -317,7 +317,12 @@ function checkFlashHit(target, flashPos, now) {
 
 function detonateFlash(pos, now) {
     spawnFlashBurst(pos);
-    if (typeof sFlashDetonate === 'function') sFlashDetonate();
+    // ★ 空间化：闪光弹爆炸音效（从爆炸点发出）
+    if (typeof emitWorldSound === 'function') {
+        emitWorldSound('flashDetonate', pos.x, pos.y, pos.z, false);
+    } else if (typeof sFlashDetonate === 'function') {
+        sFlashDetonate();
+    }
 
     if (checkFlashHit(p1, pos, now)) {
         p1.flashUntil = now + FLASH.flashDurationMs;
@@ -369,7 +374,12 @@ function updateSmokes(dt, now) {
                 s.state = 'expanding';
                 s.expandStart = now;
 
-                if (typeof sSmokePop === 'function') sSmokePop();
+                // ★ 空间化：烟雾弹起烟音效（从烟雾生成点发出）
+                if (typeof emitWorldSound === 'function') {
+                    emitWorldSound('smokePop', s.pos.x, s.pos.y, s.pos.z, false);
+                } else if (typeof sSmokePop === 'function') {
+                    sSmokePop();
+                }
             }
         } else if (s.state === 'expanding') {
             const t = Math.min(1, (now - s.expandStart) / SMOKE.growMs);
@@ -440,7 +450,12 @@ function updateFlashes(dt, now) {
                     detonateFlash(s.pos.clone(), now);
                 } else {
                     spawnFlashBurst(s.pos.clone());
-                    if (typeof sFlashDetonate === 'function') sFlashDetonate();
+                    // ★ 空间化：客户端本地表现 + HRTF
+                    if (typeof emitWorldSound === 'function') {
+                        emitWorldSound('flashDetonate', s.pos.x, s.pos.y, s.pos.z, false);
+                    } else if (typeof sFlashDetonate === 'function') {
+                        sFlashDetonate();
+                    }
                 }
                 activeFlashes.splice(i, 1);
             }
@@ -648,24 +663,21 @@ function dropFuseInPlace(p) {
 window.dropFuseInPlace = dropFuseInPlace;
 
 // ============================================================
-// ★ 手里爆炸（修复：位置放在"手"上，让 checkFlashHit 的近距离兜底生效）
+// 手里爆炸（近距离自爆）
 // ============================================================
 function detonateInHand(p, type, now) {
-    // ★ 位置：玩家"手"的位置（眼睛前方偏右下）
-    //   距离眼睛约 0.45m → checkFlashHit 里 dist < 0.6 的兜底直接命中自己
     const eyePos  = p.cam.getWorldPosition(new THREE.Vector3());
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(p.cam.quaternion);
     const right   = new THREE.Vector3(1, 0, 0).applyQuaternion(p.cam.quaternion);
 
     const origin = eyePos.clone()
-        .addScaledVector(forward, 0.40)      // 前方 0.4m
-        .addScaledVector(right,   -0.10)     // 略偏左（跟视图模型的右手位置相反）
-        .add(new THREE.Vector3(0, -0.20, 0)); // 略向下
+        .addScaledVector(forward, 0.40)
+        .addScaledVector(right,   -0.10)
+        .add(new THREE.Vector3(0, -0.20, 0));
 
     const vel = new THREE.Vector3(0, 0, 0);
 
     if (type === 'smoke') {
-        // 烟雾弹手里炸：走正常流程（生成烟雾云，不影响谁）
         spawnSmokeProjectile(origin, vel, 0, now);
         if (typeof sSmokeThrow === 'function') sSmokeThrow();
         if (gameMode === 'online'
@@ -680,8 +692,6 @@ function detonateInHand(p, type, now) {
             });
         }
     } else if (type === 'flash') {
-        // ★ 闪光弹手里炸：走正常引爆流程，位置在"手"上
-        //   距离眼睛约 0.45m → checkFlashHit 的 dist<0.6 兜底直接命中自己
         spawnFlashProjectile(origin, vel, 0, now);
         if (typeof sFlashThrow === 'function') sFlashThrow();
         if (gameMode === 'online'
@@ -712,7 +722,12 @@ function throwSmoke(p, now, fuseMs) {
     vel.y += SMOKE.throwUpBias * SMOKE.throwSpeed;
 
     spawnSmokeProjectile(origin, vel, effectiveFuseMs, now);
-    if (typeof sSmokeThrow === 'function') sSmokeThrow();
+    // ★ 空间化：烟雾弹投掷音效（从玩家位置发出，isSelf 依据 p.id 判断）
+    if (typeof emitWorldSound === 'function') {
+        emitWorldSound('smokeThrow', p.pos.x, p.pos.y + p.eyeH, p.pos.z, p.id === 1);
+    } else if (typeof sSmokeThrow === 'function') {
+        sSmokeThrow();
+    }
 
     if (gameMode === 'online'
         && typeof NET !== 'undefined'
@@ -742,7 +757,12 @@ function throwFlash(p, now, fuseMs) {
     vel.y += FLASH.throwUpBias * FLASH.throwSpeed;
 
     spawnFlashProjectile(origin, vel, effectiveFuseMs, now);
-    if (typeof sFlashThrow === 'function') sFlashThrow();
+    // ★ 空间化：闪光弹投掷音效
+    if (typeof emitWorldSound === 'function') {
+        emitWorldSound('flashThrow', p.pos.x, p.pos.y + p.eyeH, p.pos.z, p.id === 1);
+    } else if (typeof sFlashThrow === 'function') {
+        sFlashThrow();
+    }
 
     if (gameMode === 'online'
         && typeof NET !== 'undefined'

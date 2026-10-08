@@ -1,44 +1,73 @@
-// ===== js/sound.js – 世界空间化声音系统（HRTF 听声辨位） =====
+// ===== js/sound.js – 世界空间化声音系统（HRTF 听声辨位 · 原生 PannerNode） =====
 //
-// 核心：
-//   · AudioListener 全局唯一，每帧同步到 p1.cam（本地耳朵）
-//   · 每个声音事件以世界坐标创建 PannerNode（HRTF）
-//   · 距离衰减由 distanceModel='inverse' 原生处理
-//   · 前后左右上下由 HRTF 卷积处理
+// 依赖：
+//   · audio.js（音效合成函数需支持 dest 参数）
+//   · 全局 AC / masterGain
+//   · p1.cam（本地相机，作为"耳朵"）
 //
-// 联机：
-//   · 主机权威 → 主机产生声音后广播 → 客户端本地用自己耳朵重放
+// 调用：
+//   emitWorldSound('rifle', x, y, z, isSelf, extra)
 //
+// 需要在 main.js 的 loop() 里每帧调用 updateAudioListener()
 
+// ============================================================
+// ★ 全局世界音量增益
+//   HRTF 卷积会损耗约 -6~-10dB 的能量，
+//   统一在这里补回来。想整体调大/调小，只改这一个数就行。
+// ============================================================
+const WORLD_GAIN = 2.2;
+
+// ============================================================
+// 1. 声音定义表
+//   ★ 本次调整：
+//     · 枪声 baseVol 从 1.6~1.8 提到 3.6~4.0（再叠加 WORLD_GAIN）
+//     · 保持 footstep / landing 参数不变（之前已调好）
+// ============================================================
 const SOUND_DEFS = {
-    //                    maxDist  rolloff  refDist  baseVol
-    rifle:        { maxDist: 120, rolloff: 1.6, refDist: 3, baseVol: 1.00 },
-    sniper:       { maxDist: 160, rolloff: 1.3, refDist: 3, baseVol: 1.00 },
-    shotgun:      { maxDist: 100, rolloff: 1.6, refDist: 3, baseVol: 1.00 },
-    odin:         { maxDist: 100, rolloff: 1.6, refDist: 3, baseVol: 0.70 },
+    //                 maxDist  rolloff  refDist  baseVol
+    rifle:        { maxDist: 45,  rolloff: 3.2, refDist: 5,   baseVol: 3.60 },
+    sniper:       { maxDist: 60,  rolloff: 2.8, refDist: 5,   baseVol: 4.00 },
+    shotgun:      { maxDist: 42,  rolloff: 3.2, refDist: 5,   baseVol: 3.60 },
+    odin:         { maxDist: 45,  rolloff: 3.2, refDist: 5,   baseVol: 2.60 },
 
-    footstep:     { maxDist: 22,  rolloff: 2.2, refDist: 1, baseVol: 1.00 },
+    // 脚步：中距离可闻
+    footstep:     { maxDist: 25,  rolloff: 1.2, refDist: 2.5, baseVol: 4.50 },
 
-    hit:          { maxDist: 25,  rolloff: 2.2, refDist: 1, baseVol: 1.00 },
-    kill:         { maxDist: 60,  rolloff: 1.6, refDist: 2, baseVol: 1.00 },
-    death:        { maxDist: 80,  rolloff: 1.5, refDist: 2, baseVol: 1.00 },
+    // 落地：音量比脚步再大 33%，且近距离更冲
+    landing:      { maxDist: 30,  rolloff: 1.3, refDist: 1.8, baseVol: 6.00 },
 
-    reload:       { maxDist: 15,  rolloff: 2.2, refDist: 1, baseVol: 1.00 },
-    empty:        { maxDist: 12,  rolloff: 2.2, refDist: 1, baseVol: 1.00 },
-    pickup:       { maxDist: 15,  rolloff: 2.2, refDist: 1, baseVol: 1.00 },
-    melee:        { maxDist: 20,  rolloff: 2.2, refDist: 1, baseVol: 1.00 },
+    hit:          { maxDist: 25,  rolloff: 2.2, refDist: 1,   baseVol: 1.00 },
+    kill:         { maxDist: 60,  rolloff: 1.6, refDist: 2,   baseVol: 1.00 },
+    death:        { maxDist: 80,  rolloff: 1.5, refDist: 2,   baseVol: 1.00 },
 
-    smokeThrow:   { maxDist: 30,  rolloff: 2.0, refDist: 1, baseVol: 1.00 },
-    smokePop:     { maxDist: 45,  rolloff: 1.8, refDist: 2, baseVol: 1.00 },
-    flashThrow:   { maxDist: 30,  rolloff: 2.0, refDist: 1, baseVol: 1.00 },
-    flashDetonate:{ maxDist: 70,  rolloff: 1.6, refDist: 2, baseVol: 1.00 },
-    explosion:    { maxDist: 200, rolloff: 1.1, refDist: 5, baseVol: 1.00 },
+    reload:       { maxDist: 15,  rolloff: 2.2, refDist: 1,   baseVol: 1.00 },
+    empty:        { maxDist: 12,  rolloff: 2.2, refDist: 1,   baseVol: 1.00 },
+    pickup:       { maxDist: 15,  rolloff: 2.2, refDist: 1,   baseVol: 1.00 },
+    melee:        { maxDist: 20,  rolloff: 2.2, refDist: 1,   baseVol: 1.00 },
 
-    win:          { maxDist: 200, rolloff: 1.0, refDist: 5, baseVol: 1.00 },
+    smokeThrow:   { maxDist: 30,  rolloff: 2.0, refDist: 1,   baseVol: 1.00 },
+    smokePop:     { maxDist: 45,  rolloff: 1.8, refDist: 2,   baseVol: 1.00 },
+    flashThrow:   { maxDist: 30,  rolloff: 2.0, refDist: 1,   baseVol: 1.00 },
+    flashDetonate:{ maxDist: 70,  rolloff: 1.6, refDist: 2,   baseVol: 1.00 },
+    explosion:    { maxDist: 200, rolloff: 1.1, refDist: 5,   baseVol: 1.00 },
+
+    win:          { maxDist: 200, rolloff: 1.0, refDist: 5,   baseVol: 1.00 },
+};
+
+// 自己发出的声音的音量修正系数
+//   ★ 本次调整：枪声系数从 0.75 降到 0.50，
+//     避免 WORLD_GAIN 提升后自己的枪声太震耳
+const SELF_GAIN = {
+    footstep: 0.22,
+    landing:  0.40,
+    rifle: 0.50, sniper: 0.50, shotgun: 0.50, odin: 0.50,
+    hit: 0.55, kill: 0.55,
+    reload: 0.85, empty: 0.85, pickup: 0.85,
+    melee: 0.80, smokeThrow: 0.80, flashThrow: 0.80,
 };
 
 // ============================================================
-// 临时向量
+// 2. 临时向量（复用）
 // ============================================================
 const _lstPos = new THREE.Vector3();
 const _lstQ   = new THREE.Quaternion();
@@ -47,7 +76,7 @@ const _lstUp  = new THREE.Vector3();
 const _sndTmp = new THREE.Vector3();
 
 // ============================================================
-// 每帧同步 AudioListener 到本地玩家的摄像机
+// 3. 每帧同步 AudioListener 到 p1.cam
 // ============================================================
 function updateAudioListener() {
     if (typeof AC === 'undefined' || !AC) return;
@@ -61,7 +90,7 @@ function updateAudioListener() {
 
     const L = AC.listener;
     const t = AC.currentTime;
-    const k = 0.02;   // 平滑时间常数（20ms）
+    const k = 0.02;
 
     if (L.positionX) {
         L.positionX.setTargetAtTime(_lstPos.x, t, k);
@@ -76,7 +105,6 @@ function updateAudioListener() {
         L.upY.setTargetAtTime(_lstUp.y, t, k);
         L.upZ.setTargetAtTime(_lstUp.z, t, k);
     } else {
-        // 旧 API 回退（Safari < 14.1）
         L.setPosition(_lstPos.x, _lstPos.y, _lstPos.z);
         L.setOrientation(
             _lstFwd.x, _lstFwd.y, _lstFwd.z,
@@ -87,13 +115,11 @@ function updateAudioListener() {
 window.updateAudioListener = updateAudioListener;
 
 // ============================================================
-// 世界声音发射
+// 4. 播放世界声音
 // ============================================================
 function emitWorldSound(name, x, y, z, isSelf, extra) {
-    // 本地播放
     _playWorldSoundLocal(name, x, y, z, isSelf, extra);
 
-    // 联机广播（仅主机）
     if (typeof gameMode !== 'undefined' && gameMode === 'online'
         && typeof NET !== 'undefined' && NET.isHost
         && typeof NET_broadcast === 'function') {
@@ -114,7 +140,7 @@ function emitWorldSound(name, x, y, z, isSelf, extra) {
 window.emitWorldSound = emitWorldSound;
 
 // ============================================================
-// 本地播放（距离粗筛 + PannerNode 创建）
+// 5. 本地播放
 // ============================================================
 function _playWorldSoundLocal(name, x, y, z, isSelf, extra) {
     const def = SOUND_DEFS[name];
@@ -122,7 +148,7 @@ function _playWorldSoundLocal(name, x, y, z, isSelf, extra) {
     if (typeof AC === 'undefined' || !AC) return;
     if (typeof p1 === 'undefined' || !p1 || !p1.cam) return;
 
-    // 距离粗筛：避免远距离白创建 PannerNode
+    // 距离粗筛：超过 maxDist 直接跳过，避免白创建 PannerNode
     p1.cam.getWorldPosition(_sndTmp);
     const dx = x - _sndTmp.x;
     const dy = y - _sndTmp.y;
@@ -130,26 +156,15 @@ function _playWorldSoundLocal(name, x, y, z, isSelf, extra) {
     const d2 = dx * dx + dy * dy + dz * dz;
     if (d2 > def.maxDist * def.maxDist) return;
 
-    // 自己声音的音量修正
-    let selfGain = 1.0;
-    if (isSelf) {
-        switch (name) {
-            case 'footstep':                                     selfGain = 0.25; break;
-            case 'rifle': case 'sniper':
-            case 'shotgun': case 'odin':                         selfGain = 0.75; break;
-            case 'hit': case 'kill':                             selfGain = 0.55; break;
-            case 'reload': case 'empty': case 'pickup':          selfGain = 0.85; break;
-            case 'melee':
-            case 'smokeThrow': case 'flashThrow':                selfGain = 0.80; break;
-        }
-    }
+    const selfGain = isSelf ? (SELF_GAIN[name] || 1.0) : 1.0;
 
     const out = _createSpatialOutput(x, y, z, def, selfGain);
+
     _dispatchSound(name, out, extra);
 }
 
 // ============================================================
-// 创建 PannerNode + HRTF
+// 6. 创建 PannerNode（含全局增益）
 // ============================================================
 function _createSpatialOutput(x, y, z, def, selfGain) {
     const ac = audio();
@@ -173,16 +188,17 @@ function _createSpatialOutput(x, y, z, def, selfGain) {
     }
 
     const g = ac.createGain();
-    g.gain.value = (def.baseVol || 1) * selfGain;
+    // ★ 三层增益：基础音量 × 自己/对手系数 × 全局增益
+    g.gain.value = (def.baseVol || 1) * selfGain * WORLD_GAIN;
 
     g.connect(panner);
-    panner.connect(masterGain);
+    panner.connect(ac.destination);
 
     return g;
 }
 
 // ============================================================
-// 声音分发
+// 7. 声音分发
 // ============================================================
 function _dispatchSound(name, out, extra) {
     switch (name) {
@@ -191,6 +207,7 @@ function _dispatchSound(name, out, extra) {
         case 'shotgun':       sShootShotgun(out);                        break;
         case 'odin':          sShootOdin(out);                           break;
         case 'footstep':      sFootstep(out);                            break;
+        case 'landing':       sLanding(out, extra && extra.impactNorm);  break;
         case 'hit':           sHit(out);                                 break;
         case 'kill':          sKill(out);                                break;
         case 'death':         sDeath(out);                               break;
@@ -208,16 +225,13 @@ function _dispatchSound(name, out, extra) {
 }
 
 // ============================================================
-// 联机：客户端收到主机广播
+// 8. 联机：客户端收到主机广播
 // ============================================================
 function handleRemoteWorldSound(data) {
     if (!data || !data.name) return;
     if (typeof NET === 'undefined') return;
-
-    // 自己发出的声音已在本地播放过，跳过
     if (data.sourceSeat && data.sourceSeat === NET.mySeat) return;
 
-    // 观战者：只听，不判断 isSelf
     _playWorldSoundLocal(
         data.name,
         data.x, data.y, data.z,

@@ -46,10 +46,33 @@ function resetPlayer(p, now) {
     p.height = HEIGHT_STAND; p.eyeH = EYE_STAND;
     p.mesh.scale.y = 1;
     p.hp = HP_MAX; p.armor = ARMOR_MAX;
-    if (!p.isMelee && !p.isSmoke && !p.isFlash) {
+
+    // ============================================================
+    // ★ 修复：不管当前手持什么武器，都按"主武器"重置弹药
+    //
+    //   原代码：
+    //     if (!p.isMelee && !p.isSmoke && !p.isFlash) {
+    //         p.ammo = p.weapon.mag;
+    //         p.reserve = p.weapon.startReserve;
+    //     }
+    //   会导致：上一回合把枪打空 → 切刀/烟雾/闪光 → 进入下一回合时
+    //   p.isMelee 为 true，弹药重置被跳过，p.ammo 仍是 0。
+    //
+    //   primaryWeaponKey 是玩家当前"本命枪"的 key，切到刀/投掷物时
+    //   不会被改动，因此可以拿到正确的武器配置。
+    // ============================================================
+    const primaryW = (typeof WEAPONS !== 'undefined')
+        ? WEAPONS[p.primaryWeaponKey || 'rifle']
+        : null;
+    if (primaryW) {
+        p.ammo = primaryW.mag;
+        p.reserve = primaryW.startReserve;
+    } else if (p.weapon && p.weapon.mag !== undefined) {
+        // 兜底：极端情况下拿不到主武器配置，退回旧的按当前武器重置逻辑
         p.ammo = p.weapon.mag;
         p.reserve = p.weapon.startReserve;
     }
+
     p.reloadEnd = 0; p.nextShot = 0;
     p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
 

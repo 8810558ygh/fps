@@ -183,18 +183,15 @@ function explodeBarrel(barrel, from) {
     const ey = barrel.y;
     const ez = barrel.z;
 
-    // ★ 隐藏油桶 mesh（父节点是 currentMapGroup，scene.remove 无效）
     if (barrel.mesh) {
         barrel.mesh.visible = false;
     }
 
-    // 从碰撞表移除
     if (typeof colliders !== 'undefined') {
         const ci = colliders.indexOf(barrel.collider);
         if (ci >= 0) colliders.splice(ci, 1);
     }
 
-    // 从射线目标表移除（子弹打不中）
     if (typeof wallMeshes !== 'undefined') {
         const wi = wallMeshes.indexOf(barrel.mesh);
         if (wi >= 0) wallMeshes.splice(wi, 1);
@@ -211,7 +208,12 @@ function explodeBarrel(barrel, from) {
 
     // 视觉 + 音效
     spawnExplosionVisual(ex, ey, ez);
-    if (typeof sExplosion === 'function') sExplosion();
+    // ★ 空间化：油桶爆炸音效（从爆炸点发出）
+    if (typeof emitWorldSound === 'function') {
+        emitWorldSound('explosion', ex, ey, ez, false);
+    } else if (typeof sExplosion === 'function') {
+        sExplosion();
+    }
 
     // 爆炸伤害
     _applyExplosionDamageToPlayer(p1, ex, ey, ez, from);
@@ -264,14 +266,11 @@ function resetBarrels() {
             b.exploded = false;
             b.hp = b.maxHp;
 
-            // ★ 恢复可见
             if (b.mesh) b.mesh.visible = true;
 
-            // 恢复碰撞表
             if (typeof colliders !== 'undefined' && colliders.indexOf(b.collider) < 0) {
                 colliders.push(b.collider);
             }
-            // 恢复射线目标表
             if (typeof wallMeshes !== 'undefined' && wallMeshes.indexOf(b.mesh) < 0) {
                 wallMeshes.push(b.mesh);
             }
@@ -293,10 +292,6 @@ window.clearBarrels = clearBarrels;
 
 // ============================================================
 // ★ 联机客户端：按坐标查找并隐藏油桶
-//   房主广播 barrelExplode 时只带坐标（没有稳定 ID），
-//   客户端用半径 1m 的容差在 activeBarrels 里匹配。
-//   找到后走一套"纯客户端侧"的爆炸表现（隐藏 + 视觉 + 音效），
-//   不动伤害逻辑（伤害永远由房主计算）。
 // ============================================================
 function hideBarrelAt(x, y, z) {
     for (const b of activeBarrels) {
@@ -316,12 +311,10 @@ function _applyBarrelExplosionClientSide(barrel) {
     if (barrel.exploded) return;
     barrel.exploded = true;
 
-    // 隐藏 mesh
     if (barrel.mesh) {
         barrel.mesh.visible = false;
     }
 
-    // 从各列表移除
     if (typeof colliders !== 'undefined') {
         const ci = colliders.indexOf(barrel.collider);
         if (ci >= 0) colliders.splice(ci, 1);
@@ -341,7 +334,12 @@ function _applyBarrelExplosionClientSide(barrel) {
 
     // 视觉 + 音效
     spawnExplosionVisual(barrel.x, barrel.y, barrel.z);
-    if (typeof sExplosion === 'function') sExplosion();
+    // ★ 空间化：客户端本地 HRTF
+    if (typeof emitWorldSound === 'function') {
+        emitWorldSound('explosion', barrel.x, barrel.y, barrel.z, false);
+    } else if (typeof sExplosion === 'function') {
+        sExplosion();
+    }
 }
 
 // 启动时初始化特效池

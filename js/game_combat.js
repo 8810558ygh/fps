@@ -18,13 +18,28 @@ const _rcRecoilPos = new THREE.Vector3();
 const _rcRecoilRot = new THREE.Euler();
 
 // ============================================================
-// 命中部位 → 伤害解析
+// ★ 命中部位 → 伤害解析（新增 distance 参数，支持距离衰减）
 // ============================================================
-function _resolveDamage(weaponCfg, part) {
+function _resolveDamage(weaponCfg, part, distance) {
     if (!weaponCfg) return 0;
-    if (part === 'head') return weaponCfg.dmgHead || 0;
-    if (part === 'leg')  return weaponCfg.dmgLeg  || 0;
-    return weaponCfg.dmgBody || 0;
+
+    const useFar = (weaponCfg.falloffDistance !== undefined)
+        && (distance !== undefined)
+        && (distance > weaponCfg.falloffDistance);
+
+    if (part === 'head') {
+        const near = weaponCfg.dmgHead || 0;
+        const far  = (weaponCfg.dmgHeadFar !== undefined) ? weaponCfg.dmgHeadFar : near;
+        return useFar ? far : near;
+    }
+    if (part === 'leg') {
+        const near = weaponCfg.dmgLeg || 0;
+        const far  = (weaponCfg.dmgLegFar !== undefined) ? weaponCfg.dmgLegFar : near;
+        return useFar ? far : near;
+    }
+    const near = weaponCfg.dmgBody || 0;
+    const far  = (weaponCfg.dmgBodyFar !== undefined) ? weaponCfg.dmgBodyFar : near;
+    return useFar ? far : near;
 }
 window._resolveDamage = _resolveDamage;
 
@@ -64,7 +79,12 @@ function tryMelee(p, now, isHeavy) {
     p.meleeIsHeavy = isHeavy;
     p.lastMeleeTime = now;
 
-    sMelee(isHeavy);
+    // ★ 空间化：近战挥刀音效
+    emitWorldSound('melee',
+        p.pos.x, p.pos.y + p.eyeH, p.pos.z,
+        p.id === 1,
+        { isHeavy }
+    );
 
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) return;
 
@@ -97,7 +117,8 @@ function tryMelee(p, now, isHeavy) {
             } else if (isOnlineHost) {
                 NET_broadcast({ type: 'hitmarkForClient' });
             }
-            sHit(p.id);
+            // ★ 空间化：命中油桶
+            emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
         } else {
             const part = h.object.userData.part;
             if (part) {
@@ -113,7 +134,8 @@ function tryMelee(p, now, isHeavy) {
                 } else if (isOnlineHost) {
                     NET_broadcast({ type: 'hitmarkForClient' });
                 }
-                sHit(p.id);
+                // ★ 空间化：命中玩家
+                emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                 damage(o, dmg, p);
             } else {
                 spawnSparks(h.point, 0xffd28a);
@@ -131,15 +153,29 @@ function tryFire(p, now) {
 
     const w = p.weapon;
     if (now < p.nextShot || now < p.deadUntil || p.reloadEnd > now || now < p.boltEnd) return;
-    if (p.ammo <= 0) { sEmpty(p.id); p.nextShot = now + 300; startReload(p, now); return; }
+    if (p.ammo <= 0) {
+        // ★ 空间化：空弹提示音
+        emitWorldSound('empty', p.pos.x, p.pos.y + p.eyeH, p.pos.z, p.id === 1);
+        p.nextShot = now + 300;
+        startReload(p, now);
+        return;
+    }
     p.ammo--;
 
+    // ============================================================
+    // ★ 射速计算（含开镜满射速）
+    // ============================================================
     let currentFireMs = w.fireMs;
     if (w.spinUpMs && w.minFireMs) {
-        const since = now - (p.lastShotTime || 0);
-        if (since < 200) p.spinUpProgress = Math.min(1, (p.spinUpProgress || 0) + since / w.spinUpMs);
-        else p.spinUpProgress = 0;
-        currentFireMs = Math.max(w.minFireMs, w.fireMs - (w.fireMs - w.minFireMs) * p.spinUpProgress);
+        if (p.aiming) {
+            p.spinUpProgress = 1;
+            currentFireMs = w.minFireMs;
+        } else {
+            const since = now - (p.lastShotTime || 0);
+            if (since < 200) p.spinUpProgress = Math.min(1, (p.spinUpProgress || 0) + since / w.spinUpMs);
+            else p.spinUpProgress = 0;
+            currentFireMs = Math.max(w.minFireMs, w.fireMs - (w.fireMs - w.minFireMs) * p.spinUpProgress);
+        }
     }
     p.nextShot = now + currentFireMs;
     p.lastShotTime = now;
@@ -151,11 +187,14 @@ function tryFire(p, now) {
         if (p.id === 1) mouse.aim = false;
     }
 
+    // ★ 空间化：四种武器开火音效
+    const _fxEyeY = p.pos.y + p.eyeH;
+    const _fxIsSelf = (p.id === 1);
     switch (w.key) {
-        case 'sniper':  sShootSniper(p.id);  break;
-        case 'shotgun': sShootShotgun(p.id); break;
-        case 'odin':    sShootOdin(p.id);    break;
-        default:        sShootRifle(p.id);   break;
+        case 'sniper':  emitWorldSound('sniper',  p.pos.x, _fxEyeY, p.pos.z, _fxIsSelf); break;
+        case 'shotgun': emitWorldSound('shotgun', p.pos.x, _fxEyeY, p.pos.z, _fxIsSelf); break;
+        case 'odin':    emitWorldSound('odin',    p.pos.x, _fxEyeY, p.pos.z, _fxIsSelf); break;
+        default:        emitWorldSound('rifle',   p.pos.x, _fxEyeY, p.pos.z, _fxIsSelf); break;
     }
     p.muzzle.intensity = 2.2;
     if (p.id === 1) p.vmMuzzle.intensity = 2.2;
@@ -230,11 +269,13 @@ function tryFire(p, now) {
                     NET_broadcast({ type: 'hitmarkForClient' });
                     hitmarkSent = true;
                 }
-                sHit(p.id);
+                // ★ 空间化：命中油桶
+                emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
             } else {
                 const part = h.object.userData.part;
                 if (part) {
-                    const dmg = _resolveDamage(w, part);
+                    // ★ 传入命中距离，支持距离衰减（奥丁 30m 分档）
+                    const dmg = _resolveDamage(w, part, h.distance);
                     _addDamage(p, o.id, part, dmg);
 
                     spawnSparks(h.point, 0xff5040);
@@ -244,7 +285,8 @@ function tryFire(p, now) {
                         NET_broadcast({ type: 'hitmarkForClient' });
                         hitmarkSent = true;
                     }
-                    sHit(p.id);
+                    // ★ 空间化：命中玩家
+                    emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                     damage(o, dmg, p);
                 } else {
                     spawnSparks(h.point, 0xffd28a);
@@ -300,17 +342,10 @@ function damage(victim, dmg, from) {
 
 // ============================================================
 // kill
-//
-// ★ 修复：防止自杀（from === victim）时给自己加分
-//   场景：玩家开枪击中油桶、油桶爆炸把自己炸死。
-//   处理：受害者就是攻击者时，分数归对手，播报改为"自我击杀"。
 // ============================================================
 function kill(victim, from, now) {
     const isSuicide = (from === victim);
 
-    // 谁应该加分？
-    //   · 正常击杀 → 攻击者（from）
-    //   · 自杀     → 对手（other(victim)）
     const scoringPlayer = isSuicide ? other(victim) : from;
 
     if (scoringPlayer) scoringPlayer.score++;
@@ -329,7 +364,6 @@ function kill(victim, from, now) {
         const otherSeat = (hostSeat === 'blue')  ? 'red' : 'blue';
 
         if (isSuicide) {
-            // ★ 自杀：killerSeat 与 victimSeat 相同，客户端据此识别"自杀"
             const suicideSeat = (victim === p1) ? hostSeat : otherSeat;
             killerSeat = suicideSeat;
             victimSeat = suicideSeat;
@@ -355,7 +389,6 @@ function kill(victim, from, now) {
         );
     }
 
-    // 清理伤害统计（from 可能就是 victim 自己，两行 delete 都不会出错）
     delete from.damageDealt[victim.id];
     delete victim.damageDealt[from.id];
 
@@ -369,8 +402,11 @@ function kill(victim, from, now) {
         feed(from, `<b style="color:#ffd24a">击杀 玩家${victim.id}！</b>  +1`);
     }
 
-    sDeath();
-    sKill(scoringPlayer.id);
+    // ★ 空间化：死亡 / 击杀音效
+    const _vEyeY = victim.pos.y + victim.eyeH;
+    emitWorldSound('death', victim.pos.x, _vEyeY, victim.pos.z, victim.id === 1);
+    const _kEyeY = scoringPlayer.pos.y + scoringPlayer.eyeH;
+    emitWorldSound('kill', scoringPlayer.pos.x, _kEyeY, scoringPlayer.pos.z, scoringPlayer.id === 1);
 
     // AI 相关：只在非自杀时才触发
     if (gameMode === 'ai' && !isSuicide) {
@@ -401,13 +437,113 @@ function computeSniperRecoil(p, now) {
 }
 
 // ============================================================
-// 视图模型动画
+// ★ 第一人称换弹动画（步枪 · 拆弹匣 → 装新弹匣）
+//
+//   时间线（t 为 0 → 1 的进度）：
+//     0.00 - 0.12  静置（枪身下沉 + 侧倾）
+//     0.12 - 0.30  弹匣抬起脱离井口（★ 关键：让弹匣进入视野）
+//     0.30 - 0.50  弹匣快速下坠（滑出视野）
+//     0.50 - 0.65  空档（视野外）
+//     0.65 - 0.85  新弹匣从下方升起，回到井口
+//     0.85 - 1.00  弹匣轻微回落，嵌入井口
+// ============================================================
+function updateRifleReloadAnim(vm, p, now) {
+    const w = p.weapon;
+    const total = w.reloadMs || 2500;
+    const elapsed = total - (p.reloadEnd - now);
+    const t = Math.max(0, Math.min(1, elapsed / total));
+
+    if (!p._reloadAnimLogged) {
+        p._reloadAnimLogged = true;
+        console.log('[reload anim] 触发。magazineGroup =',
+            vm.userData.magazineGroup ? 'OK' : 'MISSING');
+    }
+
+    const bp = vm.userData.basePos;
+    const br = vm.userData.baseRot;
+
+    // ---------- 枪身姿态 ----------
+    let sink = 0;
+    if (t < 0.10) sink = t / 0.10;
+    else if (t < 0.90) sink = 1;
+    else sink = 1 - (t - 0.90) / 0.10;
+
+    const tilt   = sink * 0.22;   // 枪口上抬
+    const sinkY  = sink * 0.10;   // 枪身下沉
+    const rollZ  = sink * 0.25;   // ★ 侧倾加大（0.12→0.25），露出弹匣井
+    const wobble = Math.sin(t * Math.PI * 6) * 0.006 * sink;
+
+    vm.position.set(bp.x + wobble, bp.y - sinkY, bp.z);
+    vm.rotation.set(br.x + tilt, br.y, br.z + rollZ);
+
+    // ---------- 弹匣动画 ----------
+    const mag = vm.userData.magazineGroup;
+    if (!mag) return;
+
+    if (!mag.userData._basePos) {
+        mag.userData._basePos = {
+            x: mag.position.x,
+            y: mag.position.y,
+            z: mag.position.z
+        };
+    }
+    const mb = mag.userData._basePos;
+
+    let oy = 0;   // 本地 Y 偏移（世界：垂直方向）
+    let oz = 0;   // 本地 Z 偏移（世界：屏幕水平方向）
+
+    if (t < 0.12) {
+        // 静置
+        oy = 0; oz = 0;
+    } else if (t < 0.30) {
+        // ★ 抬起：弹匣脱离井口，向上抬起一点 + 微向右移
+        const mt = (t - 0.12) / 0.18;
+        const e = 1 - Math.pow(1 - mt, 2);        // 缓出
+        oy =  0.14 * e;
+        oz =  0.03 * e;
+    } else if (t < 0.50) {
+        // 下坠：从抬起位置快速滑出视野
+        const mt = (t - 0.30) / 0.20;
+        const e = mt * mt;                         // 缓入（越滑越快）
+        oy =  0.14 - 0.75 * e;
+        oz =  0.03 - 0.05 * e;
+    } else if (t < 0.65) {
+        // 视野外空档
+        oy = -0.61;
+        oz = -0.02;
+    } else if (t < 0.85) {
+        // 新弹匣升起：从下方滑上来，稍微超过井口一点点
+        const mt = (t - 0.65) / 0.20;
+        const e = 1 - Math.pow(1 - mt, 2);         // 缓出
+        oy = -0.61 + 0.65 * e;
+        oz = -0.02 * (1 - e);
+    } else {
+        // 就位：从 +0.04 回落到 0（嵌入井口）
+        const mt = (t - 0.85) / 0.15;
+        const e = 1 - Math.pow(1 - mt, 2);
+        oy = 0.04 * (1 - e);
+        oz = 0;
+    }
+
+    mag.position.set(mb.x, mb.y + oy, mb.z + oz);
+}
+
+// ============================================================
+// 第一人称视图模型动画
 // ============================================================
 function updateSniperViewmodel(p, dt, now) {
     if (!p.vm || p.vm.children.length === 0) return;
     const vm = p.vm.children[0];
     if (!vm.userData.basePos || !vm.userData.baseRot) return;
     const w = p.weapon;
+
+    // ★ 步枪换弹动画（最高优先级，覆盖所有其他分支）
+    if (w && w.key === 'rifle' && vm.userData.magazineGroup
+        && p.reloadEnd > now
+        && !p.isMelee && !p.isSmoke && !p.isFlash) {
+        updateRifleReloadAnim(vm, p, now);
+        return;
+    }
 
     if (w && vm.userData.adsPos
         && (w.key === 'rifle' || w.key === 'odin')
@@ -573,6 +709,11 @@ function updateSniperViewmodel(p, dt, now) {
     }
 }
 
+// ============================================================
+// ★★★ 第三人称动画（远端玩家看到的动画） ★★★
+//
+//   本次修改：换弹分支加入弹匣组的"抬起 → 下坠 → 升起 → 嵌入"四段动画
+// ============================================================
 function updateThirdPersonWeapon(p, dt, now) {
     if (!p.gunHolder) return;
     const gh = p.gunHolder;
@@ -587,6 +728,8 @@ function updateThirdPersonWeapon(p, dt, now) {
     const k = Math.min(1, dt * 14);
 
     const gun = gh.children.length > 0 ? gh.children[0] : null;
+
+    // ---- 狙击枪拉栓动画（第三人称） ----
     if (gun && gun.userData && gun.userData.boltGroup) {
         if (p.weapon && p.weapon.key === 'sniper' && p.weapon.boltMs && p.boltEnd > now) {
             const progress = 1 - (p.boltEnd - now) / p.weapon.boltMs;
@@ -607,6 +750,7 @@ function updateThirdPersonWeapon(p, dt, now) {
         }
     }
 
+    // ---- 近战动画 ----
     if (p.isMelee && p.meleeEnd > now) {
         const fireMs = p.meleeIsHeavy ? MELEE.heavyFireMs : MELEE.lightFireMs;
         const t = 1 - (p.meleeEnd - now) / fireMs;
@@ -651,17 +795,87 @@ function updateThirdPersonWeapon(p, dt, now) {
         return;
     }
 
+    // ============================================================
+    // ★★★ 换弹动画（第三人称）—— 带弹匣动作 ★★★
+    //
+    //   整枪下沉 + 侧倾，让弹匣井露出
+    //   弹匣组独立做"抬起 → 下坠 → 升起 → 嵌入"四段动画
+    // ============================================================
     if (p.reloadEnd > now && !p.isMelee && !p.isSmoke && !p.isFlash) {
         const w = p.weapon;
         const total = w.reloadMs || 2000;
         const t = 1 - (p.reloadEnd - now) / total;
-        const sink = Math.sin(Math.min(1, t * 1.2) * Math.PI) * 0.18;
-        const wobble = Math.sin(t * Math.PI * 6) * 0.05;
-        gh.position.set(bp.x + wobble * 0.4, bp.y - sink, bp.z + sink * 0.5);
-        gh.rotation.set(br.x + sink * 1.2, br.y + wobble * 1.5, br.z + sink * 0.6);
+
+        // ---------- 整枪姿态 ----------
+        let sink = 0;
+        if (t < 0.10) sink = t / 0.10;
+        else if (t < 0.90) sink = 1;
+        else sink = 1 - (t - 0.90) / 0.10;
+
+        const tilt   = sink * 0.22;
+        const sinkY  = sink * 0.10;
+        const rollZ  = sink * 0.22;
+        const wobble = Math.sin(t * Math.PI * 6) * 0.02 * sink;
+
+        gh.position.set(bp.x + wobble, bp.y - sinkY, bp.z);
+        gh.rotation.set(br.x + tilt, br.y, br.z + rollZ);
+
+        // ---------- 弹匣动画（第三人称版） ----------
+        if (gun && gun.userData && gun.userData.magazineGroup) {
+            const mag = gun.userData.magazineGroup;
+
+            if (!mag.userData._basePos) {
+                mag.userData._basePos = {
+                    x: mag.position.x,
+                    y: mag.position.y,
+                    z: mag.position.z
+                };
+            }
+            const mb = mag.userData._basePos;
+
+            let oy = 0;
+            let oz = 0;
+
+            if (t < 0.12) {
+                // 静置
+                oy = 0; oz = 0;
+            } else if (t < 0.30) {
+                // 抬起：弹匣脱离井口，让远端玩家也能看到
+                const mt = (t - 0.12) / 0.18;
+                const e = 1 - Math.pow(1 - mt, 2);
+                oy =  0.14 * e;
+                oz =  0.03 * e;
+            } else if (t < 0.50) {
+                // 下坠：从抬起位置快速滑出
+                const mt = (t - 0.30) / 0.20;
+                const e = mt * mt;
+                oy =  0.14 - 0.75 * e;
+                oz =  0.03 - 0.05 * e;
+            } else if (t < 0.65) {
+                // 视野外空档
+                oy = -0.61;
+                oz = -0.02;
+            } else if (t < 0.85) {
+                // 新弹匣升起
+                const mt = (t - 0.65) / 0.20;
+                const e = 1 - Math.pow(1 - mt, 2);
+                oy = -0.61 + 0.65 * e;
+                oz = -0.02 * (1 - e);
+            } else {
+                // 嵌入井口
+                const mt = (t - 0.85) / 0.15;
+                const e = 1 - Math.pow(1 - mt, 2);
+                oy = 0.04 * (1 - e);
+                oz = 0;
+            }
+
+            mag.position.set(mb.x, mb.y + oy, mb.z + oz);
+        }
+
         return;
     }
 
+    // ---- 其他枪栓动作（非狙击） ----
     if (p.boltEnd > now && p.weapon && p.weapon.boltMs && p.weapon.key !== 'sniper') {
         const total = p.weapon.boltMs;
         const t = 1 - (p.boltEnd - now) / total;
@@ -671,6 +885,7 @@ function updateThirdPersonWeapon(p, dt, now) {
         return;
     }
 
+    // ---- 默认：平滑回到 basePos ----
     gh.position.lerp(bp, k);
     gh.rotation.x += (br.x + p.pitch - gh.rotation.x) * k;
     gh.rotation.y += (br.y - gh.rotation.y) * k;

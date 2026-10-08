@@ -445,18 +445,25 @@
         part(roundedBoxX(0.054, 0.010, 0.046, 0.004), MAT.polymer, 0, -0.130, 0, 0, 0, 0, gripGroup);
         part(roundedBoxX(0.010, 0.030, 0.048, 0.004), MAT.grip,    0.026, -0.052, 0, 0, 0, 0, gripGroup);
 
-        // -------- 6. 弹匣 --------
-        part(roundedBoxX(0.062, 0.155, 0.042, 0.010), MAT.polymer, -0.014, -0.078, 0, 0, 0, 0.055);
+        // ============================================================
+        // -------- 6. 弹匣（★ 独立成组，供换弹动画使用） --------
+        // ============================================================
+        const magazineGroup = new THREE.Group();
+        magazineGroup.name = 'magazineGroup';
+        gun.add(magazineGroup);
+
+        part(roundedBoxX(0.062, 0.155, 0.042, 0.010), MAT.polymer,
+             -0.014, -0.078, 0, 0, 0, 0.055, magazineGroup);
         for (let i = 0; i < 4; i++) {
             part(roundedBoxX(0.064, 0.004, 0.044, 0.001), MAT.polymer,
-                 -0.012 + i * 0.0035, -0.020 - i * 0.036, 0, 0, 0, 0.055);
+                 -0.012 + i * 0.0035, -0.020 - i * 0.036, 0, 0, 0, 0.055, magazineGroup);
         }
         for (let i = 0; i < 3; i++) {
             part(new THREE.CylinderGeometry(0.0035, 0.0035, 0.048, 8), MAT.slotInner,
-                 -0.014, -0.060 - i * 0.038, 0, R, 0, 0);
+                 -0.014, -0.060 - i * 0.038, 0, R, 0, 0, magazineGroup);
         }
         part(roundedBoxX(0.070, 0.012, 0.048, 0.004), MAT.rubber,
-             -0.008, -0.158, 0, 0, 0, 0.055);
+             -0.008, -0.158, 0, 0, 0, 0.055, magazineGroup);
 
         // -------- 7. 皮卡汀尼导轨 --------
         part(roundedBoxX(0.480, 0.011, 0.038, 0.002), MAT.receiver, 0.080, 0.1195, 0);
@@ -655,5 +662,5 @@
         preload: function () { getMaterials(); getEnvMap(); },
     };
 
-    console.log('[weapon_rifle_hd] 高细节步枪已注册（含 ADS + PiP 镜片引用）');
+    console.log('[weapon_rifle_hd] 高细节步枪已注册（含 ADS + PiP 镜片引用 + 弹匣组）');
 })();

@@ -1,4 +1,4 @@
-// ===== js/audio.js – 程序化音效（含四种武器射击声 + 脚步声 + 近战挥刀 + 油桶爆炸） =====
+// ===== js/audio.js – 程序化音效（支持空间音频输出） =====
 let AC = null;
 let noiseBuf = null;
 const masterGain = {};
@@ -24,15 +24,27 @@ function audio() {
     return AC;
 }
 
+// ★ 核心：解析输出目标
+//   dest 可以是：
+//     · 数字 1 / 2 → 输出到对应的 masterGain（旧行为）
+//     · 音频节点   → 直接输出到该节点（空间音频）
+//     · undefined  → 默认 masterGain[1]
+function _resolveAudioDest(dest) {
+    if (typeof dest === 'number') return masterGain[dest] || masterGain[1];
+    if (dest && typeof dest.connect === 'function') return dest;
+    return masterGain[1];
+}
+
 function env(g, t, peak, dur) {
     g.gain.setValueAtTime(peak, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
 }
 
 // ---- 四种武器射击音效 ----
-
-function sShootRifle(id) {
+function sShootRifle(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
+
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -41,11 +53,8 @@ function sShootRifle(id) {
     f.Q.value = 0.7;
     const g = ac.createGain();
     env(g, t, 0.5, 0.12);
-    src.connect(f);
-    f.connect(g);
-    g.connect(masterGain[id]);
-    src.start(t);
-    src.stop(t + 0.13);
+    src.connect(f); f.connect(g); g.connect(dst);
+    src.start(t); src.stop(t + 0.13);
 
     const o = ac.createOscillator();
     o.type = 'square';
@@ -53,14 +62,14 @@ function sShootRifle(id) {
     o.frequency.exponentialRampToValueAtTime(60, t + 0.07);
     const g2 = ac.createGain();
     env(g2, t, 0.2, 0.08);
-    o.connect(g2);
-    g2.connect(masterGain[id]);
-    o.start(t);
-    o.stop(t + 0.08);
+    o.connect(g2); g2.connect(dst);
+    o.start(t); o.stop(t + 0.08);
 }
 
-function sShootSniper(id) {
+function sShootSniper(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
+
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -69,11 +78,8 @@ function sShootSniper(id) {
     f.Q.value = 0.4;
     const g = ac.createGain();
     env(g, t, 0.85, 0.25);
-    src.connect(f);
-    f.connect(g);
-    g.connect(masterGain[id]);
-    src.start(t);
-    src.stop(t + 0.26);
+    src.connect(f); f.connect(g); g.connect(dst);
+    src.start(t); src.stop(t + 0.26);
 
     const o = ac.createOscillator();
     o.type = 'sine';
@@ -81,14 +87,14 @@ function sShootSniper(id) {
     o.frequency.exponentialRampToValueAtTime(30, t + 0.3);
     const g2 = ac.createGain();
     env(g2, t, 0.4, 0.3);
-    o.connect(g2);
-    g2.connect(masterGain[id]);
-    o.start(t);
-    o.stop(t + 0.31);
+    o.connect(g2); g2.connect(dst);
+    o.start(t); o.stop(t + 0.31);
 }
 
-function sShootShotgun(id) {
+function sShootShotgun(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
+
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -97,11 +103,8 @@ function sShootShotgun(id) {
     f.Q.value = 1.2;
     const g = ac.createGain();
     env(g, t, 0.45, 0.18);
-    src.connect(f);
-    f.connect(g);
-    g.connect(masterGain[id]);
-    src.start(t);
-    src.stop(t + 0.19);
+    src.connect(f); f.connect(g); g.connect(dst);
+    src.start(t); src.stop(t + 0.19);
 
     for (let i = 0; i < 3; i++) {
         const o = ac.createOscillator();
@@ -109,15 +112,16 @@ function sShootShotgun(id) {
         o.frequency.value = 150 + Math.random() * 200;
         const g2 = ac.createGain();
         env(g2, t + i * 0.02, 0.08, 0.05);
-        o.connect(g2);
-        g2.connect(masterGain[id]);
+        o.connect(g2); g2.connect(dst);
         o.start(t + i * 0.02);
         o.stop(t + i * 0.02 + 0.06);
     }
 }
 
-function sShootOdin(id) {
+function sShootOdin(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
+
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -126,11 +130,8 @@ function sShootOdin(id) {
     f.Q.value = 1.5;
     const g = ac.createGain();
     env(g, t, 0.3, 0.05);
-    src.connect(f);
-    f.connect(g);
-    g.connect(masterGain[id]);
-    src.start(t);
-    src.stop(t + 0.06);
+    src.connect(f); f.connect(g); g.connect(dst);
+    src.start(t); src.stop(t + 0.06);
 
     const o = ac.createOscillator();
     o.type = 'square';
@@ -138,16 +139,22 @@ function sShootOdin(id) {
     o.frequency.exponentialRampToValueAtTime(100, t + 0.04);
     const g2 = ac.createGain();
     env(g2, t, 0.15, 0.04);
-    o.connect(g2);
-    g2.connect(masterGain[id]);
-    o.start(t);
-    o.stop(t + 0.05);
+    o.connect(g2); g2.connect(dst);
+    o.start(t); o.stop(t + 0.05);
 }
 
-// ★ 近战挥刀音效
-function sMelee(isHeavy) {
+// ★ 近战挥刀音效（兼容旧 sMelee(isHeavy) 与新 sMelee(dest, isHeavy)）
+function sMelee(destOrHeavy, isHeavy) {
+    let dest = 1;
+    if (typeof destOrHeavy === 'boolean') {
+        isHeavy = destOrHeavy;
+    } else {
+        dest = destOrHeavy;
+    }
+
     const ac = audio();
     const t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
 
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
@@ -160,11 +167,8 @@ function sMelee(isHeavy) {
     const vol = isHeavy ? 0.32 : 0.20;
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + (isHeavy ? 0.22 : 0.14));
-    src.connect(f);
-    f.connect(g);
-    g.connect(masterGain[1]);
-    src.start(t);
-    src.stop(t + 0.25);
+    src.connect(f); f.connect(g); g.connect(dst);
+    src.start(t); src.stop(t + 0.25);
 
     const o = ac.createOscillator();
     o.type = 'triangle';
@@ -173,122 +177,114 @@ function sMelee(isHeavy) {
     const g2 = ac.createGain();
     g2.gain.setValueAtTime(isHeavy ? 0.12 : 0.07, t);
     g2.gain.exponentialRampToValueAtTime(0.001, t + (isHeavy ? 0.15 : 0.1));
-    o.connect(g2);
-    g2.connect(masterGain[1]);
-    o.start(t);
-    o.stop(t + (isHeavy ? 0.18 : 0.12));
+    o.connect(g2); g2.connect(dst);
+    o.start(t); o.stop(t + (isHeavy ? 0.18 : 0.12));
 }
 
 // ---- 其他音效 ----
-function sHit(id) {
+function sHit(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
     const o = ac.createOscillator();
     o.type = 'sine';
     o.frequency.value = 1300;
     const g = ac.createGain();
     env(g, t, 0.3, 0.07);
-    o.connect(g);
-    g.connect(masterGain[id]);
-    o.start(t);
-    o.stop(t + 0.08);
+    o.connect(g); g.connect(dst);
+    o.start(t); o.stop(t + 0.08);
 }
 
-function sKill(id) {
+function sKill(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
     [880, 1320].forEach((fr, i) => {
         const o = ac.createOscillator();
         o.type = 'sine';
         o.frequency.value = fr;
         const g = ac.createGain();
         env(g, t + i * 0.07, 0.25, 0.12);
-        o.connect(g);
-        g.connect(masterGain[id]);
+        o.connect(g); g.connect(dst);
         o.start(t + i * 0.07);
         o.stop(t + i * 0.07 + 0.13);
     });
 }
 
-function sDeath() {
+function sDeath(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
     const o = ac.createOscillator();
     o.type = 'sawtooth';
     o.frequency.setValueAtTime(320, t);
     o.frequency.exponentialRampToValueAtTime(50, t + 0.5);
     const g = ac.createGain();
     env(g, t, 0.35, 0.5);
-    o.connect(g);
-    g.connect(masterGain[1]);
-    g.connect(masterGain[2]);
-    o.start(t);
-    o.stop(t + 0.5);
+    o.connect(g); g.connect(dst);
+    o.start(t); o.stop(t + 0.5);
 }
 
-function sReload(id) {
+function sReload(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
     [0, 0.16].forEach(dt => {
         const o = ac.createOscillator();
         o.type = 'square';
         o.frequency.value = 420;
         const g = ac.createGain();
         env(g, t + dt, 0.15, 0.04);
-        o.connect(g);
-        g.connect(masterGain[id]);
-        o.start(t + dt);
-        o.stop(t + dt + 0.05);
+        o.connect(g); g.connect(dst);
+        o.start(t + dt); o.stop(t + dt + 0.05);
     });
 }
 
-function sEmpty(id) {
+function sEmpty(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
     const o = ac.createOscillator();
     o.type = 'square';
     o.frequency.value = 240;
     const g = ac.createGain();
     env(g, t, 0.12, 0.04);
-    o.connect(g);
-    g.connect(masterGain[id]);
-    o.start(t);
-    o.stop(t + 0.05);
+    o.connect(g); g.connect(dst);
+    o.start(t); o.stop(t + 0.05);
 }
 
-function sPickup(id) {
+function sPickup(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
     [520, 780].forEach((fr, i) => {
         const o = ac.createOscillator();
         o.type = 'sine';
         o.frequency.value = fr;
         const g = ac.createGain();
         env(g, t + i * 0.06, 0.2, 0.1);
-        o.connect(g);
-        g.connect(masterGain[id]);
+        o.connect(g); g.connect(dst);
         o.start(t + i * 0.06);
         o.stop(t + i * 0.06 + 0.11);
     });
 }
 
-function sWin() {
+function sWin(dest) {
     const ac = audio(), t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
     [523, 659, 784, 1047].forEach((fr, i) => {
         const o = ac.createOscillator();
         o.type = 'triangle';
         o.frequency.value = fr;
         const g = ac.createGain();
         env(g, t + i * 0.13, 0.3, 0.22);
-        o.connect(g);
-        g.connect(masterGain[1]);
-        g.connect(masterGain[2]);
+        o.connect(g); g.connect(dst);
         o.start(t + i * 0.13);
         o.stop(t + i * 0.13 + 0.24);
     });
 }
 
-// ============================================================
-// 脚步声
-// ============================================================
-function sFootstepSelf() {
+// ---- 脚步（空间化版本 · 高频提升版） ----
+function sFootstep(dest) {
     const ac = audio();
     const t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
 
+    // 低频"咚"
     const o = ac.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(130 + Math.random() * 30, t);
@@ -296,11 +292,10 @@ function sFootstepSelf() {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.075, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-    o.connect(g);
-    g.connect(masterGain[1]);
-    o.start(t);
-    o.stop(t + 0.11);
+    o.connect(g); g.connect(dst);
+    o.start(t); o.stop(t + 0.11);
 
+    // 高频"啪"：增益提升，衰减稍长，让脚步更清晰、定位更准
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -308,56 +303,86 @@ function sFootstepSelf() {
     f.frequency.value = 2800;
     f.Q.value = 1.2;
     const g2 = ac.createGain();
-    g2.gain.setValueAtTime(0.035, t);
-    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-    src.connect(f);
-    f.connect(g2);
-    g2.connect(masterGain[1]);
-    src.start(t);
-    src.stop(t + 0.05);
+    g2.gain.setValueAtTime(0.065, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    src.connect(f); f.connect(g2); g2.connect(dst);
+    src.start(t); src.stop(t + 0.06);
 }
 
-function sFootstepEnemy(volume, pan) {
-    if (volume <= 0.005) return;
+// 本地自己的脚步声（旧的调用入口，保留）
+function sFootstepSelf() { sFootstep(1); }
+
+// ---- 落地（空间化 · 冲击感加强版） ----
+//   impactNorm 允许 > 1.0：
+//     1.0  ≈ 平地跳到落
+//     1.3  ≈ 从 2.5m 高台落下
+//     1.8  ≈ 从 5m 高台落下
+function sLanding(dest, impactNorm) {
+    impactNorm = Math.max(0, impactNorm || 0);
     const ac = audio();
     const t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
 
-    const panner = ac.createStereoPanner();
-    panner.pan.value = Math.max(-1, Math.min(1, pan));
-    panner.connect(AC.destination);
+    // ★ 核心：冲击系数从 0.22 起步，最大 0.57
+    const v = 0.22 + impactNorm * 0.22;
 
+    // 低频"砰"：主冲击
     const o = ac.createOscillator();
     o.type = 'sine';
-    o.frequency.setValueAtTime(125 + Math.random() * 35, t);
-    o.frequency.exponentialRampToValueAtTime(45, t + 0.09);
+    o.frequency.setValueAtTime(70 + impactNorm * 40, t);
+    o.frequency.exponentialRampToValueAtTime(28, t + 0.16);
     const g = ac.createGain();
-    g.gain.setValueAtTime(0.32 * volume, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-    o.connect(g);
-    g.connect(panner);
-    o.start(t);
-    o.stop(t + 0.11);
+    g.gain.setValueAtTime(v, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.connect(g); g.connect(dst);
+    o.start(t); o.stop(t + 0.2);
 
+    // 高频"沙"：鞋底/碎屑摩擦
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
     f.type = 'bandpass';
-    f.frequency.value = 3200;
-    f.Q.value = 1.4;
+    f.frequency.value = 1600;
+    f.Q.value = 0.9;
     const g2 = ac.createGain();
-    g2.gain.setValueAtTime(0.12 * volume, t);
-    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-    src.connect(f);
-    f.connect(g2);
-    g2.connect(panner);
-    src.start(t);
-    src.stop(t + 0.05);
+    g2.gain.setValueAtTime(v * 0.6, t);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+    src.connect(f); f.connect(g2); g2.connect(dst);
+    src.start(t); src.stop(t + 0.1);
+
+    // ★ 中频"啪"瞬态：落地瞬间"踩实"的感觉
+    const src2 = ac.createBufferSource();
+    src2.buffer = noiseBuf;
+    const f2 = ac.createBiquadFilter();
+    f2.type = 'bandpass';
+    f2.frequency.setValueAtTime(3000, t);
+    f2.frequency.exponentialRampToValueAtTime(1800, t + 0.04);
+    f2.Q.value = 1.5;
+    const g3 = ac.createGain();
+    g3.gain.setValueAtTime(v * 0.55, t);
+    g3.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
+    src2.connect(f2); f2.connect(g3); g3.connect(dst);
+    src2.start(t); src2.stop(t + 0.05);
 }
 
-// 烟雾弹投掷音效
-function sSmokeThrow() {
+// 本地自己的落地声（旧的调用入口，保留）
+function sLandingSelf(impactNorm) { sLanding(1, impactNorm); }
+
+// ★ 旧的 sFootstepEnemy / sLandingEnemy —— 保留签名，避免老代码报错
+function sFootstepEnemy(volume, pan) {
+    if (volume <= 0.005) return;
+    sFootstep(1);
+}
+function sLandingEnemy(volume, pan, impactNorm) {
+    if (volume <= 0.005) return;
+    sLanding(1, impactNorm);
+}
+
+// ---- 投掷物音效 ----
+function sSmokeThrow(dest) {
     const ac = audio();
     const t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
 
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
@@ -369,11 +394,8 @@ function sSmokeThrow() {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.15, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
-    src.connect(f);
-    f.connect(g);
-    g.connect(masterGain[1]);
-    src.start(t);
-    src.stop(t + 0.2);
+    src.connect(f); f.connect(g); g.connect(dst);
+    src.start(t); src.stop(t + 0.2);
 
     const o = ac.createOscillator();
     o.type = 'sine';
@@ -382,16 +404,14 @@ function sSmokeThrow() {
     const g2 = ac.createGain();
     g2.gain.setValueAtTime(0.08, t);
     g2.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
-    o.connect(g2);
-    g2.connect(masterGain[1]);
-    o.start(t);
-    o.stop(t + 0.15);
+    o.connect(g2); g2.connect(dst);
+    o.start(t); o.stop(t + 0.15);
 }
 
-// 烟雾弹展开音效
-function sSmokePop() {
+function sSmokePop(dest) {
     const ac = audio();
     const t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
 
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
@@ -404,11 +424,8 @@ function sSmokePop() {
     g.gain.setValueAtTime(0.001, t);
     g.gain.linearRampToValueAtTime(0.22, t + 0.1);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
-    src.connect(f);
-    f.connect(g);
-    g.connect(masterGain[1]);
-    src.start(t);
-    src.stop(t + 0.65);
+    src.connect(f); f.connect(g); g.connect(dst);
+    src.start(t); src.stop(t + 0.65);
 
     const o = ac.createOscillator();
     o.type = 'sine';
@@ -417,16 +434,15 @@ function sSmokePop() {
     const g2 = ac.createGain();
     g2.gain.setValueAtTime(0.15, t);
     g2.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-    o.connect(g2);
-    g2.connect(masterGain[1]);
-    o.start(t);
-    o.stop(t + 0.55);
+    o.connect(g2); g2.connect(dst);
+    o.start(t); o.stop(t + 0.55);
 }
 
-// 闪光弹投掷
-function sFlashThrow() {
+function sFlashThrow(dest) {
     const ac = audio();
     const t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
+
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -437,7 +453,7 @@ function sFlashThrow() {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.14, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
-    src.connect(f); f.connect(g); g.connect(masterGain[1]);
+    src.connect(f); f.connect(g); g.connect(dst);
     src.start(t); src.stop(t + 0.18);
 
     const o = ac.createOscillator();
@@ -447,14 +463,14 @@ function sFlashThrow() {
     const g2 = ac.createGain();
     g2.gain.setValueAtTime(0.07, t);
     g2.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
-    o.connect(g2); g2.connect(masterGain[1]);
+    o.connect(g2); g2.connect(dst);
     o.start(t); o.stop(t + 0.13);
 }
 
-// 闪光弹爆炸
-function sFlashDetonate() {
+function sFlashDetonate(dest) {
     const ac = audio();
     const t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
 
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
@@ -466,7 +482,7 @@ function sFlashDetonate() {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.35, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-    src.connect(f); f.connect(g); g.connect(masterGain[1]);
+    src.connect(f); f.connect(g); g.connect(dst);
     src.start(t); src.stop(t + 0.28);
 
     const o = ac.createOscillator();
@@ -476,7 +492,7 @@ function sFlashDetonate() {
     const g2 = ac.createGain();
     g2.gain.setValueAtTime(0.18, t);
     g2.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-    o.connect(g2); g2.connect(masterGain[1]);
+    o.connect(g2); g2.connect(dst);
     o.start(t); o.stop(t + 0.24);
 
     const o2 = ac.createOscillator();
@@ -486,16 +502,15 @@ function sFlashDetonate() {
     const g3 = ac.createGain();
     g3.gain.setValueAtTime(0.22, t);
     g3.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
-    o2.connect(g3); g3.connect(masterGain[1]);
+    o2.connect(g3); g3.connect(dst);
     o2.start(t); o2.stop(t + 0.4);
 }
 
-// ===== ★ 油桶爆炸音效 =====
-function sExplosion() {
+function sExplosion(dest) {
     const ac = audio();
     const t = ac.currentTime;
+    const dst = _resolveAudioDest(dest);
 
-    // 低频轰鸣
     const o = ac.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(120, t);
@@ -503,13 +518,9 @@ function sExplosion() {
     const g = ac.createGain();
     g.gain.setValueAtTime(0.5, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
-    o.connect(g);
-    g.connect(masterGain[1]);
-    g.connect(masterGain[2]);
-    o.start(t);
-    o.stop(t + 0.8);
+    o.connect(g); g.connect(dst);
+    o.start(t); o.stop(t + 0.8);
 
-    // 中频爆裂噪声
     const src = ac.createBufferSource();
     src.buffer = noiseBuf;
     const f = ac.createBiquadFilter();
@@ -520,14 +531,9 @@ function sExplosion() {
     const g2 = ac.createGain();
     g2.gain.setValueAtTime(0.4, t);
     g2.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
-    src.connect(f);
-    f.connect(g2);
-    g2.connect(masterGain[1]);
-    g2.connect(masterGain[2]);
-    src.start(t);
-    src.stop(t + 0.7);
+    src.connect(f); f.connect(g2); g2.connect(dst);
+    src.start(t); src.stop(t + 0.7);
 
-    // 高频碎裂
     const src2 = ac.createBufferSource();
     src2.buffer = noiseBuf;
     const f2 = ac.createBiquadFilter();
@@ -536,82 +542,6 @@ function sExplosion() {
     const g3 = ac.createGain();
     g3.gain.setValueAtTime(0.2, t);
     g3.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-    src2.connect(f2);
-    f2.connect(g3);
-    g3.connect(masterGain[1]);
-    g3.connect(masterGain[2]);
-    src2.start(t);
-    src2.stop(t + 0.3);
-}
-
-// ===== ★ 落地音效（自己） =====
-function sLandingSelf(impactNorm) {
-    const ac = audio();
-    const t = ac.currentTime;
-    const v = 0.10 + impactNorm * 0.10;
-
-    const o = ac.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(90 + impactNorm * 40, t);
-    o.frequency.exponentialRampToValueAtTime(30, t + 0.14);
-    const g = ac.createGain();
-    g.gain.setValueAtTime(v, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
-    o.connect(g);
-    g.connect(masterGain[1]);
-    o.start(t);
-    o.stop(t + 0.17);
-
-    const src = ac.createBufferSource();
-    src.buffer = noiseBuf;
-    const f = ac.createBiquadFilter();
-    f.type = 'bandpass';
-    f.frequency.value = 1600;
-    f.Q.value = 0.9;
-    const g2 = ac.createGain();
-    g2.gain.setValueAtTime(v * 0.55, t);
-    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-    src.connect(f);
-    f.connect(g2);
-    g2.connect(masterGain[1]);
-    src.start(t);
-    src.stop(t + 0.09);
-}
-
-// ===== ★ 落地音效（对手，带方位 + 距离衰减） =====
-function sLandingEnemy(volume, pan, impactNorm) {
-    if (volume <= 0.005) return;
-    const ac = audio();
-    const t = ac.currentTime;
-
-    const panner = ac.createStereoPanner();
-    panner.pan.value = Math.max(-1, Math.min(1, pan));
-    panner.connect(AC.destination);
-
-    const o = ac.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(80 + impactNorm * 40, t);
-    o.frequency.exponentialRampToValueAtTime(28, t + 0.18);
-    const g = ac.createGain();
-    g.gain.setValueAtTime(0.50 * volume, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.20);
-    o.connect(g);
-    g.connect(panner);
-    o.start(t);
-    o.stop(t + 0.22);
-
-    const src = ac.createBufferSource();
-    src.buffer = noiseBuf;
-    const f = ac.createBiquadFilter();
-    f.type = 'bandpass';
-    f.frequency.value = 1800;
-    f.Q.value = 1.0;
-    const g2 = ac.createGain();
-    g2.gain.setValueAtTime(0.20 * volume, t);
-    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.10);
-    src.connect(f);
-    f.connect(g2);
-    g2.connect(panner);
-    src.start(t);
-    src.stop(t + 0.11);
+    src2.connect(f2); f2.connect(g3); g3.connect(dst);
+    src2.start(t); src2.stop(t + 0.3);
 }

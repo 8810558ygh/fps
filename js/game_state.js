@@ -62,6 +62,7 @@ function collideWorld(p) {
     const r = 0.42;
     const h = p.height;
 
+    // ---- 循环 1：垂直碰撞（落地 / 顶头） ----
     for (const c of colliders) {
         if (p.pos.x + r <= c.x0 || p.pos.x - r >= c.x1 ||
             p.pos.z + r <= c.z0 || p.pos.z - r >= c.z1) continue;
@@ -75,6 +76,7 @@ function collideWorld(p) {
         }
     }
 
+    // ---- 循环 2：台阶上移 / 侧向推动 ----
     for (const c of colliders) {
         const top = c.top !== undefined ? c.top : 0;
         const bot = c.bottom || 0;
@@ -98,11 +100,41 @@ function collideWorld(p) {
         }
     }
 
+    // ---- 地形高度钳制 ----
     const gh = terrainGroundAt(p.pos.x, p.pos.z);
     if (p.pos.y < gh) {
         p.pos.y = gh;
         if (p.vy < 0) p.vy = 0;
         p.onGround = true;
+    }
+
+    // ============================================================
+    // ★ 新增：离开地面检测
+    //   如果玩家悬空超过 3cm（走下高台 / 走出平台边缘），
+    //   自动把 onGround 设为 false，让后续的落地检测能正确触发。
+    //
+    //   原理：
+    //     · 只在 onGround = true 时才检测（跳跃已经设 false，无需重测）
+    //     · 找出玩家当前最高的"支撑面"（地形 或 脚下的 collider 顶部）
+    //     · 如果玩家高于最高支撑面 3cm 以上，说明悬空了
+    // ============================================================
+    if (p.onGround) {
+        let highestSupport = gh;   // 地形是基础支撑面
+
+        for (const c of colliders) {
+            const top = c.top !== undefined ? c.top : 0;
+            // XZ 范围检查
+            if (p.pos.x + r <= c.x0 || p.pos.x - r >= c.x1 ||
+                p.pos.z + r <= c.z0 || p.pos.z - r >= c.z1) continue;
+            // 只考虑在玩家下方 3cm 内的 collider 顶部
+            if (top <= p.pos.y + 0.03 && top > highestSupport) {
+                highestSupport = top;
+            }
+        }
+
+        if (p.pos.y - highestSupport > 0.03) {
+            p.onGround = false;
+        }
     }
 }
 
@@ -143,8 +175,6 @@ function updateFootsteps(p, dt, now, isRemote) {
     p._prevOnGround = p.onGround;
     if (justLanded) {
         let impact = Math.abs(p._vyBeforeLand || 0);
-        // ★ 远端玩家：网络同步拿不到真实冲击速度（客户端 p2 是插值来的），
-        //   用固定值兜底，保证房主跳一次就能被听到一次落地声。
         if (isRemote && impact < 3.0) impact = JUMP_V * 0.7;
         if (impact > 3.0) {
             triggerLanding(p, impact, isRemote);
@@ -184,27 +214,26 @@ function updateFootsteps(p, dt, now, isRemote) {
         if (p.id === 1) {
             sFootstepSelf();
         } else {
+            // ★ 空间化：对手脚步（HRTF 自动处理方向与距离）
             const ex = p.pos.x - p1.pos.x;
             const ez = p.pos.z - p1.pos.z;
             const d = Math.hypot(ex, ez);
             if (d >= STEP_MAX_AUDIBLE) return;
-            const t = 1 - d / STEP_MAX_AUDIBLE;
-            const vol = t * t;
-            const yaw = p1.yaw;
-            const rightX = Math.cos(yaw), rightZ = -Math.sin(yaw);
-            const dotRight = ex * rightX + ez * rightZ;
-            const pan = d > 0.3 ? Math.max(-1, Math.min(1, dotRight / d)) : 0;
-            sFootstepEnemy(vol, pan);
+            emitWorldSound('footstep', p.pos.x, p.pos.y, p.pos.z, false);
         }
     }
 }
 
 // ============================================================
 // ★ 落地音效触发
+//   impactNorm 允许 > 1.0 以区分高度：
+//     · 平地跳 ≈ 1.0
+//     · 2.5m 高台 ≈ 1.3
+//     · 5m 高台 ≈ 1.8
 // ============================================================
 function triggerLanding(p, impact, isRemote) {
-    const impactNorm = Math.min(1, impact / JUMP_V);
-    const baseVol = 0.35 + impactNorm * 0.65;
+    const IMPACT_BASE = 8.0;
+    const impactNorm = Math.min(2.0, impact / IMPACT_BASE);
 
     if (p.id === 1) {
         sLandingSelf(impactNorm);
@@ -213,13 +242,7 @@ function triggerLanding(p, impact, isRemote) {
         const ez = p.pos.z - p1.pos.z;
         const d = Math.hypot(ex, ez);
         if (d >= STEP_MAX_AUDIBLE) return;
-        const t = 1 - d / STEP_MAX_AUDIBLE;
-        const vol = t * t * baseVol;
-        const yaw = p1.yaw;
-        const rightX = Math.cos(yaw), rightZ = -Math.sin(yaw);
-        const dotRight = ex * rightX + ez * rightZ;
-        const pan = d > 0.3 ? Math.max(-1, Math.min(1, dotRight / d)) : 0;
-        sLandingEnemy(vol, pan, impactNorm);
+        emitWorldSound('landing', p.pos.x, p.pos.y, p.pos.z, false, { impactNorm });
     }
 }
 
@@ -248,7 +271,8 @@ function startReload(p, now) {
     p.aimStage = 0; p.aiming = false;
     if (p.input) p.input.aim = false;
     if (p.id === 1) mouse.aim = false;
-    sReload(p.id);
+    // ★ 空间化：换弹音效
+    emitWorldSound('reload', p.pos.x, p.pos.y + p.eyeH, p.pos.z, p.id === 1);
 }
 
 // ===== 开镜切换 =====

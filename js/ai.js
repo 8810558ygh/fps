@@ -33,9 +33,6 @@ const ai = {
     lastVisibilityCheck: 0,
     lastVisibilityResult: false,
 
-    // ★ 风险 6 修复：本回合 AI 的"预留武器"。
-    //   兜底恢复时用它，而不是每次随机重选。
-    //   保证回合内武器一致性（AI 不会被意外切到刀后随机换枪）。
     reservedWeaponKey: 'rifle',
 };
 
@@ -59,9 +56,6 @@ const _aiQ2      = new THREE.Quaternion();
 function aiResetRound(now) {
     const key = AI_WEAPON_POOL[Math.floor(Math.random() * AI_WEAPON_POOL.length)];
 
-    // ★ 风险 6 修复：记录本回合 AI 的预留武器。
-    //   后续若 AI 因任何原因被切到刀 / 烟雾 / 闪光，
-    //   兜底逻辑会恢复到这把枪（而不是随机重选）。
     ai.reservedWeaponKey = key;
 
     setWeapon(p2, key);
@@ -136,31 +130,46 @@ function aiFire(now) {
 
     const w = p2.weapon;
     if (p2.ammo <= 0) {
-        sEmpty(p2.id);
+        // ★ 空间化：AI 空弹
+        emitWorldSound('empty', p2.pos.x, p2.pos.y + p2.eyeH, p2.pos.z, false);
         p2.nextShot = now + 300;
         aiStartReload(now);
         return;
     }
     p2.ammo--;
 
+    // ============================================================
+    // ★ 射速计算（与 tryFire 保持一致，含开镜满射速）
+    //
+    //   AI 目前不会主动开镜（p2.input.aim 一直为 false），
+    //   但保留该分支以便未来扩展，也保证行为一致。
+    // ============================================================
     let currentFireMs = w.fireMs;
     if (w.spinUpMs && w.minFireMs) {
-        const since = now - (p2.lastShotTime || 0);
-        if (since < 200) {
-            p2.spinUpProgress = Math.min(1, (p2.spinUpProgress || 0) + since / w.spinUpMs);
+        if (p2.aiming) {
+            // 开镜：直接满射速
+            p2.spinUpProgress = 1;
+            currentFireMs = w.minFireMs;
         } else {
-            p2.spinUpProgress = 0;
+            const since = now - (p2.lastShotTime || 0);
+            if (since < 200) {
+                p2.spinUpProgress = Math.min(1, (p2.spinUpProgress || 0) + since / w.spinUpMs);
+            } else {
+                p2.spinUpProgress = 0;
+            }
+            currentFireMs = Math.max(w.minFireMs, w.fireMs - (w.fireMs - w.minFireMs) * p2.spinUpProgress);
         }
-        currentFireMs = Math.max(w.minFireMs, w.fireMs - (w.fireMs - w.minFireMs) * p2.spinUpProgress);
     }
     p2.nextShot = now + currentFireMs;
     p2.lastShotTime = now;
 
+    // ★ 空间化：AI 开火音效（AI 是 p2，isSelf = false）
+    const _aiEyeY = p2.pos.y + p2.eyeH;
     switch (w.key) {
-        case 'sniper':  sShootSniper(p2.id);  break;
-        case 'shotgun': sShootShotgun(p2.id); break;
-        case 'odin':    sShootOdin(p2.id);    break;
-        default:        sShootRifle(p2.id);   break;
+        case 'sniper':  emitWorldSound('sniper',  p2.pos.x, _aiEyeY, p2.pos.z, false); break;
+        case 'shotgun': emitWorldSound('shotgun', p2.pos.x, _aiEyeY, p2.pos.z, false); break;
+        case 'odin':    emitWorldSound('odin',    p2.pos.x, _aiEyeY, p2.pos.z, false); break;
+        default:        emitWorldSound('rifle',   p2.pos.x, _aiEyeY, p2.pos.z, false); break;
     }
 
     p2.muzzle.intensity = 2.2;
@@ -202,9 +211,9 @@ function aiFire(now) {
             _aiEnd.copy(h.point);
             const part = h.object.userData.part;
             if (part) {
-                const dmg = _resolveDamage(w, part);
+                // ★ 传入命中距离，支持距离衰减（奥丁 30m 分档）
+                const dmg = _resolveDamage(w, part, h.distance);
 
-                // ★ 按部位分流统计（头 / 腿 / 身）
                 if (!p2.damageDealt[1]) {
                     p2.damageDealt[1] = { body: 0, head: 0, leg: 0, total: 0 };
                 }
@@ -215,7 +224,8 @@ function aiFire(now) {
 
                 spawnSparks(h.point, 0xff5040);
                 damage(p1, dmg, p2);
-                sHit(p2.id);
+                // ★ 空间化：AI 命中玩家
+                emitWorldSound('hit', h.point.x, h.point.y, h.point.z, false);
             } else {
                 spawnSparks(h.point, 0xffd28a);
                 if (typeof spawnBulletHole === 'function' && typeof getHitWorldNormal === 'function') {
@@ -241,18 +251,10 @@ function aiUpdate(dt, now) {
     }
     p2.baseVisible = true;
 
-    // ★ 风险 6 修复：
-    //   原实现每帧都跑，且命中后"重新随机"武器 —— 会破坏回合内武器一致性。
-    //   现在改为：
-    //     · 只在检测到意外状态（刀 / 烟雾 / 闪光）时触发
-    //     · 恢复到 ai.reservedWeaponKey（本回合预留武器）
-    //     · 顺便清理近战 / 投掷物残留状态
-    //   正常情况下这一步只是一次布尔读取，几乎零开销。
     if (p2.isMelee || p2.isSmoke || p2.isFlash) {
         const key = (WEAPONS[ai.reservedWeaponKey]) ? ai.reservedWeaponKey : 'rifle';
         setWeapon(p2, key);
 
-        // 清掉近战 / 投掷物残留状态，避免动画和引信卡住
         p2.equipEnd = 0;
         p2.meleeEnd = 0;
         p2.meleeRecovery = 0;

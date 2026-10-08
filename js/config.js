@@ -70,6 +70,11 @@ const FLASH = {
 //   · dmgHead —— 头部伤害（含面罩）
 //   · dmgBody —— 身体伤害（含手臂 / 手 / 背包）
 //   · dmgLeg  —— 腿部伤害（含脚）
+//
+// ★ 距离衰减（可选配置）：
+//   · falloffDistance —— 衰减阈值（米），命中距离 > 该值时走"远档"伤害
+//   · dmgHeadFar / dmgBodyFar / dmgLegFar —— 远档伤害
+//   未配置 falloffDistance 的武器，永远走近档（即原固定伤害逻辑）
 const WEAPONS = {
     rifle: {
         key: 'rifle', name: '狂徒',
@@ -95,10 +100,24 @@ const WEAPONS = {
         speedMul: 0.80, adsSpeedMul: 0.78,
         pellets: 10, spread: 0.08
     },
+    // ★★★ 奥丁：本次修改重点 ★★★
     odin: {
         key: 'odin', name: '奥丁机枪',
+
+        // ---- 近档伤害（命中距离 ≤ 30m）----
         dmgBody: 38, dmgHead: 95, dmgLeg: 32,
-        fireMs: 70, minFireMs: 55, spinUpMs: 500,
+        // ---- 远档伤害（命中距离 > 30m）----
+        dmgBodyFar: 31, dmgHeadFar: 77, dmgLegFar: 26,
+        // ---- 距离衰减阈值（米）----
+        falloffDistance: 30,
+
+        // ---- 射速对齐官方 ----
+        //   基础 12  发/秒 → 1000 / 12   ≈ 83.33ms
+        //   峰值 15.6发/秒 → 1000 / 15.6 ≈ 64.10ms
+        fireMs: 83.3,
+        minFireMs: 64.1,
+        spinUpMs: 500,
+
         mag: 100, reserveMax: 200, startReserve: 200, reloadMs: 5000,
         zoomFov: 60, scope: false,
         speedMul: 0.85, adsSpeedMul: 0.7
