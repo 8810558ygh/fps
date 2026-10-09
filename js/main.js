@@ -431,7 +431,7 @@ function loop() {
     const dt = Math.min(clock.getDelta(), 0.05);
     const now = performance.now();
 
-    // ★ 新增：每帧同步音频监听器到相机位置（HRTF 听声辨位）
+    // ★ 每帧同步音频监听器到相机位置（HRTF 听声辨位）
     if (typeof updateAudioListener === 'function') updateAudioListener();
 
     if (typeof desertGrassTime !== 'undefined') desertGrassTime.value = now / 1000;
@@ -473,10 +473,9 @@ function loop() {
             if (typeof NET_updateSpectatorView === 'function') NET_updateSpectatorView(dt);
         }
 
+        // ★ 只处理 AI 模式（'range' 分支已删除）
         if (gameMode === 'ai' && typeof aiUpdate === 'function') {
             aiUpdate(dt, now);
-        } else if (gameMode === 'range') {
-            updateTarget(p2, dt, now);
         }
 
         // 物理步进 + 同步
@@ -616,6 +615,12 @@ function enterGame(mode) {
         window.loadMap('battlefield');
     }
     window.GAME_setMode(mode);
+
+    // ★ 人机对战：每次进入默认开启 AI
+    if (mode === 'ai') {
+        aiEnabled = true;
+    }
+
     p2.gunHolder.visible = (mode === 'ai' || mode === 'online');
     document.getElementById('lobbyOverlay').style.display = 'none';
 
@@ -627,7 +632,7 @@ function enterGame(mode) {
 }
 window.enterGame = enterGame;
 
-document.getElementById('lobbyRangeBtn').addEventListener('click', () => enterGame('range'));
+// ★ 靶场按钮已删除
 document.getElementById('lobbyAiBtn').addEventListener('click', () => enterGame('ai'));
 
 document.getElementById('lobbyOnlineBtn').addEventListener('click', () => {

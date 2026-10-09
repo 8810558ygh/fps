@@ -1,4 +1,4 @@
-// ===== js/loading.js – 加载页面（含真实 Viewmodel 预热 · 强化版） =====
+// ===== js/loading.js – 深度预加载（真实渲染路径全覆蓋版） =====
 
 (function () {
     'use strict';
@@ -159,7 +159,7 @@
     }
 
     // ============================================================
-    // 预热相机
+    // 预热相机（不改动原逻辑）
     // ============================================================
     function withWarmupCamera(fn) {
         if (typeof p1 === 'undefined' || !p1 || !p1.cam) {
@@ -200,7 +200,7 @@
     }
 
     // ============================================================
-    // 武器列表（统一管理，改一处全局生效）
+    // 常量：全部武器
     // ============================================================
     const ALL_WEAPON_TYPES = ['rifle', 'sniper', 'shotgun', 'odin', 'knife', 'smoke', 'flash'];
 
@@ -211,16 +211,174 @@
     };
 
     // ============================================================
-    // 真实场景整体 shader 编译
-    //
-    //   ★ 方案 C（非破坏性预热）：
-    //     克隆一份临时副本放进场景，模板本体从始至终不被触碰。
+    // ★ 深度预热 1：音频系统（创建 + 所有音效 + HRTF Panner）
+    // ============================================================
+    function warmupAudioDeep() {
+        try {
+            if (typeof audio !== 'function') return;
+            const ac = audio();
+            if (!ac) return;
+
+            // 静音输出节点（0.0001 而非 0，避免某些浏览器短路）
+            const silent = ac.createGain();
+            silent.gain.value = 0.0001;
+            silent.connect(ac.destination);
+
+            // 每个音效函数跑一遍，触发所有节点的 JIT 编译
+            const soundFns = [
+                ['sShootRifle',    () => sShootRifle(silent)],
+                ['sShootSniper',   () => sShootSniper(silent)],
+                ['sShootShotgun',  () => sShootShotgun(silent)],
+                ['sShootOdin',     () => sShootOdin(silent)],
+                ['sMelee-light',   () => sMelee(silent, false)],
+                ['sMelee-heavy',   () => sMelee(silent, true)],
+                ['sHit',           () => sHit(silent)],
+                ['sKill',          () => sKill(silent)],
+                ['sDeath',         () => sDeath(silent)],
+                ['sReload',        () => sReload(silent)],
+                ['sEmpty',         () => sEmpty(silent)],
+                ['sPickup',        () => sPickup(silent)],
+                ['sWin',           () => sWin(silent)],
+                ['sFootstep',      () => sFootstep(silent)],
+                ['sLanding',       () => sLanding(silent, 1.0)],
+                ['sSmokeThrow',    () => sSmokeThrow(silent)],
+                ['sSmokePop',      () => sSmokePop(silent)],
+                ['sFlashThrow',    () => sFlashThrow(silent)],
+                ['sFlashDetonate', () => sFlashDetonate(silent)],
+                ['sExplosion',     () => sExplosion(silent)],
+            ];
+            for (const [name, fn] of soundFns) {
+                try { fn(); } catch (e) {
+                    console.warn('[loading] 音效预热失败:', name, e);
+                }
+            }
+
+            // HRTF PannerNode 首次连接会初始化卷积 IR
+            try {
+                const panner = ac.createPanner();
+                panner.panningModel = 'HRTF';
+                panner.distanceModel = 'inverse';
+                panner.refDistance = 1;
+                panner.maxDistance = 100;
+                panner.rolloffFactor = 1;
+                if (panner.positionX) {
+                    panner.positionX.value = 0;
+                    panner.positionY.value = 0;
+                    panner.positionZ.value = 0;
+                } else {
+                    panner.setPosition(0, 0, 0);
+                }
+                const g = ac.createGain();
+                g.gain.value = 0.0001;
+                g.connect(panner);
+                panner.connect(ac.destination);
+
+                const osc = ac.createOscillator();
+                osc.type = 'sine';
+                osc.frequency.value = 440;
+                osc.connect(g);
+                osc.start();
+                osc.stop(ac.currentTime + 0.02);
+
+                setTimeout(() => {
+                    try { osc.disconnect(); } catch (e) {}
+                    try { g.disconnect(); } catch (e) {}
+                    try { panner.disconnect(); } catch (e) {}
+                    try { silent.disconnect(); } catch (e) {}
+                }, 500);
+            } catch (e) {
+                console.warn('[loading] PannerNode 预热失败:', e);
+            }
+
+            console.log('[loading] 音频深度预热完成');
+        } catch (e) {
+            console.warn('[loading] 音频预热整体失败:', e);
+        }
+    }
+
+    // ============================================================
+    // ★ 深度预热 2：递归收集所有纹理 + 强制上传 GPU
+    // ============================================================
+    function collectTexturesFromMaterial(mat, set) {
+        if (!mat) return;
+
+        const keys = [
+            'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap',
+            'emissiveMap', 'envMap', 'alphaMap', 'lightMap', 'specularMap',
+            'displacementMap', 'bumpMap', 'clearcoatMap',
+            'clearcoatNormalMap', 'clearcoatRoughnessMap',
+            'sheenColorMap', 'sheenRoughnessMap',
+            'transmissionMap', 'thicknessMap',
+        ];
+        for (const k of keys) {
+            const t = mat[k];
+            if (t && t.isTexture) set.add(t);
+        }
+
+        // ShaderMaterial 的 uniforms 里可能藏纹理
+        if (mat.uniforms) {
+            for (const uk in mat.uniforms) {
+                const u = mat.uniforms[uk];
+                if (u && u.value && u.value.isTexture) set.add(u.value);
+            }
+        }
+    }
+
+    function collectTexturesFromObject(obj, set) {
+        if (!obj) return;
+        obj.traverse(o => {
+            if (!o.isMesh && !o.isPoints && !o.isLine) return;
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            mats.forEach(m => collectTexturesFromMaterial(m, set));
+        });
+    }
+
+    function forceUploadAllTextures() {
+        if (typeof renderer === 'undefined' || !renderer) return;
+        if (typeof renderer.initTexture !== 'function') {
+            console.warn('[loading] renderer.initTexture 不可用，跳过');
+            return;
+        }
+
+        const set = new Set();
+
+        // 遍历所有武器模板
+        for (const type of ALL_WEAPON_TYPES) {
+            try {
+                const w = (typeof _getWorldTemplate === 'function') ? _getWorldTemplate(type) : null;
+                const v = (typeof _getViewTemplate  === 'function') ? _getViewTemplate(type)  : null;
+                collectTexturesFromObject(w, set);
+                collectTexturesFromObject(v, set);
+            } catch (e) {}
+        }
+
+        // 遍历整个场景（地图、天空、地面、特效对象池）
+        try { collectTexturesFromObject(scene, set); } catch (e) {}
+
+        console.log('[loading] 准备上传纹理数量:', set.size);
+
+        let ok = 0, fail = 0;
+        set.forEach(tex => {
+            try {
+                renderer.initTexture(tex);
+                ok++;
+            } catch (e) {
+                fail++;
+            }
+        });
+
+        console.log('[loading] 纹理上传完成: ok =', ok, ', fail =', fail);
+    }
+
+    // ============================================================
+    // ★ 深度预热 3：整体场景编译（基础 shader）
     // ============================================================
     function compileSceneShaders() {
         if (typeof renderer === 'undefined' || !renderer) return;
         if (typeof scene === 'undefined' || !scene) return;
 
         withWarmupCamera(() => {
+            // 阶段 A：把每种武器的模板克隆都放进场景 → compile
             const tempObjects = [];
 
             ALL_WEAPON_TYPES.forEach(type => {
@@ -233,7 +391,6 @@
                         clone.position.set(0, 0.5, 0);
                         clone.visible = true;
                         clone.traverse(o => { o.visible = true; });
-
                         scene.add(clone);
                         tempObjects.push(clone);
                     });
@@ -248,6 +405,7 @@
                 console.warn('[loading] scene compile failed:', e);
             }
 
+            // 阶段 B：带阴影渲染一遍
             try {
                 const prevAuto  = renderer.shadowMap.autoUpdate;
                 const prevNeeds = renderer.shadowMap.needsUpdate;
@@ -267,198 +425,174 @@
     }
 
     // ============================================================
-    // ★ 强制上传所有武器的纹理到 GPU
-    //
-    //   每个 weapon_*_hd.js 都暴露 preload(renderer)，
-    //   内部会：
-    //     1. renderer.initTexture() 上传纹理到显存
-    //     2. 用 dummy mesh 跑一遍 compile + render
+    // ★ 深度预热 4：单个武器的 viewmodel 在 6 个动画状态下真实渲染
     // ============================================================
-    function forceUploadAllTextures() {
-        if (typeof renderer === 'undefined' || !renderer) return;
-        if (typeof renderer.initTexture !== 'function') return;
-
-        const preloadMap = {
-            rifle:   () => window.__HD_RIFLE   && window.__HD_RIFLE.preload,
-            sniper:  () => window.__HD_SNIPER  && window.__HD_SNIPER.preload,
-            shotgun: () => window.__HD_SHOTGUN && window.__HD_SHOTGUN.preload,
-            odin:    () => window.__HD_ODIN    && window.__HD_ODIN.preload,
-            knife:   () => window.__HD_KNIFE   && window.__HD_KNIFE.preload,
-            smoke:   () => window.__HD_SMOKE   && window.__HD_SMOKE.preload,
-            flash:   () => window.__HD_FLASH   && window.__HD_FLASH.preload,
-        };
-
-        for (const type of ALL_WEAPON_TYPES) {
-            const getter = preloadMap[type];
-            if (!getter) continue;
-            const preloadFn = getter();
-            if (typeof preloadFn !== 'function') continue;
-
-            try {
-                preloadFn(renderer);
-            } catch (e) {
-                console.warn('[loading] preload 失败:', type, e);
-            }
-        }
-    }
-
-    // ============================================================
-    // ★ 真实 Viewmodel 预热（强化版）
-    //
-    //   核心改进：
-    //     1. 每个武器渲染 3 次（不是 1 次）—— 覆盖 PBR shader 多程序变体
-    //     2. 模拟"挂载 → 渲染 → 卸载 → 再挂载 → 再渲染"完整循环
-    //     3. 第三人称模型同样多次渲染
-    //     4. 最终统一调 renderer.compile() 兜底
-    // ============================================================
-    function warmupViewmodelsReal() {
-        if (typeof renderer === 'undefined' || !renderer) return;
+    function warmupSingleViewmodel(type) {
+        if (typeof window.makeViewmodel !== 'function') return;
         if (typeof p1 === 'undefined' || !p1 || !p1.vm) return;
-        if (typeof window.makeViewmodel !== 'function') {
-            console.warn('[loading] makeViewmodel 未暴露，跳过 viewmodel 预热');
+
+        let vm = null;
+        try {
+            vm = window.makeViewmodel(type, p1.mat);
+        } catch (e) {
+            console.warn('[loading] makeViewmodel 失败:', type, e);
             return;
         }
+        if (!vm) return;
 
-        const REPEAT = 3;   // ★ 每个武器渲染次数
+        p1.vm.add(vm);
 
-        withWarmupCamera(() => {
-            // ============================================
-            // 阶段 1：第一人称 viewmodel 预热
-            // ============================================
-            for (const type of ALL_WEAPON_TYPES) {
-                for (let i = 0; i < REPEAT; i++) {
-                    let vmClone = null;
-                    try {
-                        vmClone = window.makeViewmodel(type, p1.mat);
-                    } catch (e) {
-                        console.warn('[loading] makeViewmodel 失败:', type, e);
-                        break;
-                    }
-                    if (!vmClone) break;
+        try {
+            // --- 状态 1：基础姿态 ---
+            renderer.compile(scene, p1.cam);
+            renderer.render(scene, p1.cam);
 
-                    p1.vm.add(vmClone);
-
-                    try {
-                        // ★ 关键：renderer.compile() 只编译当前场景的可见物体，
-                        //   而 viewmodel 挂在相机上，必须在挂载后才 compile
-                        renderer.compile(scene, p1.cam);
-                        renderer.render(scene, p1.cam);
-                    } catch (e) {}
-
-                    p1.vm.remove(vmClone);
-                }
-            }
-
-            // ============================================
-            // 阶段 2：第三人称世界模型预热
-            // ============================================
-            if (typeof window.makeWeaponModel === 'function' &&
-                typeof p2 !== 'undefined' && p2 && p2.gunHolder) {
-
-                for (const type of ALL_WEAPON_TYPES) {
-                    for (let i = 0; i < REPEAT; i++) {
-                        let worldClone = null;
-                        try {
-                            worldClone = window.makeWeaponModel(type, p2.mat);
-                        } catch (e) {
-                            break;
-                        }
-                        if (!worldClone) break;
-
-                        p2.gunHolder.add(worldClone);
-                        try {
-                            renderer.compile(scene, p1.cam);
-                            renderer.render(scene, p1.cam);
-                        } catch (e) {}
-                        p2.gunHolder.remove(worldClone);
-                    }
-                }
-            }
-
-            // ============================================
-            // 阶段 3：把所有武器一次性挂到场景，做最终 compile
-            //   （覆盖渲染状态切换时可能触发的额外编译）
-            // ============================================
-            const finalGroup = new THREE.Group();
-            for (const type of ALL_WEAPON_TYPES) {
-                try {
-                    const vm = window.makeViewmodel(type, p1.mat);
-                    if (vm) { vm.visible = true; finalGroup.add(vm); }
-                } catch (e) {}
-            }
-            scene.add(finalGroup);
-            finalGroup.updateMatrixWorld(true);
-            try {
-                renderer.compile(scene, p1.cam);
+            // --- 状态 2：ADS 姿态（有 adsPos 的武器） ---
+            if (vm.userData.adsPos && vm.userData.adsRot) {
+                vm.position.copy(vm.userData.adsPos);
+                vm.rotation.copy(vm.userData.adsRot);
                 renderer.render(scene, p1.cam);
-            } catch (e) {}
-            scene.remove(finalGroup);
-        });
-    }
-
-    // ============================================================
-    // 运行时特效预热
-    // ============================================================
-    const WARMUP_OBJ_POS = new THREE.Vector3(0, 54.5, 0);
-
-    function warmupSparks(color) {
-        if (typeof window.spawnSparks !== 'function') return;
-        withWarmupCamera(() => {
-            window.spawnSparks(WARMUP_OBJ_POS.clone(), color);
-            try { renderer.render(scene, p1.cam); } catch (e) {}
-        });
-    }
-
-    function warmupBulletHole() {
-        if (typeof window.spawnBulletHole !== 'function') return;
-        withWarmupCamera(() => {
-            const pos = WARMUP_OBJ_POS.clone();
-            const normal = new THREE.Vector3(0, 1, 0);
-            window.spawnBulletHole(pos, normal);
-            try { renderer.render(scene, p1.cam); } catch (e) {}
-        });
-    }
-
-    function warmupTracer() {
-        if (typeof window.spawnTracer !== 'function') return;
-        withWarmupCamera(() => {
-            const from = WARMUP_OBJ_POS.clone();
-            const to = from.clone().add(new THREE.Vector3(3, 0, 0));
-            window.spawnTracer(from, to);
-            try { renderer.render(scene, p1.cam); } catch (e) {}
-        });
-    }
-
-    function warmupShells() {
-        if (typeof window.spawnShellCasing !== 'function') return;
-        if (typeof updateShellCasings !== 'function') return;
-
-        withWarmupCamera(() => {
-            const fakeNow = performance.now();
-            if (typeof p1 !== 'undefined' && p1) {
-                window.spawnShellCasing(p1, fakeNow);
+                vm.position.copy(vm.userData.basePos);
+                vm.rotation.copy(vm.userData.baseRot);
             }
-            updateShellCasings(0.016, fakeNow + 16);
-            try { renderer.render(scene, p1.cam); } catch (e) {}
-            updateShellCasings(1.0, fakeNow + 5000);
-            try { renderer.render(scene, p1.cam); } catch (e) {}
-        });
+
+            // --- 状态 3：换弹动画（magazineGroup 抬起） ---
+            const mag = vm.userData.magazineGroup;
+            if (mag) {
+                const origPos = mag.position.clone();
+                mag.position.y += 0.14;
+                mag.position.z += 0.03;
+                renderer.render(scene, p1.cam);
+                mag.position.copy(origPos);
+            }
+
+            // --- 状态 4：拉栓动画（boltGroup 拉到底） ---
+            const bolt = vm.userData.boltGroup;
+            if (bolt) {
+                const origX = bolt.position.x;
+                bolt.position.x = -0.18;
+                renderer.render(scene, p1.cam);
+                bolt.position.x = origX;
+            }
+
+            // --- 状态 5：近战挥砍姿态（军刀） ---
+            if (type === 'knife') {
+                const bp = vm.userData.basePos;
+                const br = vm.userData.baseRot;
+                if (bp && br) {
+                    vm.position.set(bp.x + 0.22, bp.y + 0.10, bp.z + 0.10);
+                    vm.rotation.set(br.x + 0.18, br.y - 0.45, br.z + 0.45);
+                    renderer.render(scene, p1.cam);
+                    vm.position.set(bp.x - 0.72, bp.y - 0.10, bp.z - 0.18);
+                    vm.rotation.set(br.x - 0.04, br.y + 1.10, br.z - 0.70);
+                    renderer.render(scene, p1.cam);
+                    vm.position.copy(bp);
+                    vm.rotation.copy(br);
+                }
+            }
+
+            // --- 状态 6：投掷物抖动（烟雾 / 闪光） ---
+            if (type === 'smoke' || type === 'flash') {
+                const bp = vm.userData.basePos;
+                const br = vm.userData.baseRot;
+                if (bp && br) {
+                    vm.position.set(bp.x + 0.005, bp.y + 0.008, bp.z);
+                    vm.rotation.set(br.x + 0.03, br.y + 0.04, br.z);
+                    renderer.render(scene, p1.cam);
+                    vm.position.copy(bp);
+                    vm.rotation.copy(br);
+                }
+            }
+        } catch (e) {
+            console.warn('[loading] viewmodel 渲染失败:', type, e);
+        }
+
+        p1.vm.remove(vm);
     }
 
-    function warmupExplosion() {
-        if (typeof window.spawnExplosionVisual !== 'function') return;
-        if (typeof window.updateExplosionVisuals !== 'function') return;
+    // ============================================================
+    // ★ 深度预热 5：单个武器的 world model 真实渲染
+    // ============================================================
+    function warmupSingleWorldModel(type) {
+        if (typeof window.makeWeaponModel !== 'function') return;
+        if (typeof p2 === 'undefined' || !p2 || !p2.gunHolder) return;
 
-        withWarmupCamera(() => {
-            const fakeNow = performance.now();
-            window.spawnExplosionVisual(WARMUP_OBJ_POS.x, WARMUP_OBJ_POS.y, WARMUP_OBJ_POS.z);
-            window.updateExplosionVisuals(0.016, fakeNow + 250);
-            try { renderer.render(scene, p1.cam); } catch (e) {}
-            window.updateExplosionVisuals(1.0, fakeNow + 1000);
-            try { renderer.render(scene, p1.cam); } catch (e) {}
-        });
+        let wm = null;
+        try {
+            wm = window.makeWeaponModel(type, p2.mat);
+        } catch (e) {
+            return;
+        }
+        if (!wm) return;
+
+        p2.gunHolder.add(wm);
+
+        try {
+            renderer.compile(scene, p1.cam);
+            renderer.render(scene, p1.cam);
+        } catch (e) {}
+
+        p2.gunHolder.remove(wm);
     }
 
+    // ============================================================
+    // ★ 深度预热 6：运行时特效（弹痕 / 火花 / 曳光 / 弹壳）
+    // ============================================================
+    function warmupEffectMaterials() {
+        try {
+            // 弹痕：每次命中新建材质，必须真实渲染一次覆盖 shader
+            if (typeof window.spawnBulletHole === 'function') {
+                withWarmupCamera(() => {
+                    const pos = new THREE.Vector3(0, 54.5, 0);
+                    const normal = new THREE.Vector3(0, 1, 0);
+                    window.spawnBulletHole(pos, normal);
+                    try { renderer.render(scene, p1.cam); } catch (e) {}
+                });
+            }
+
+            // 火花
+            if (typeof window.spawnSparks === 'function') {
+                withWarmupCamera(() => {
+                    window.spawnSparks(new THREE.Vector3(0, 54.5, 0), 0xff5040);
+                    window.spawnSparks(new THREE.Vector3(0, 54.5, 0), 0xffd28a);
+                    try { renderer.render(scene, p1.cam); } catch (e) {}
+                });
+            }
+
+            // 曳光弹
+            if (typeof window.spawnTracer === 'function') {
+                withWarmupCamera(() => {
+                    const from = new THREE.Vector3(0, 54.5, 0);
+                    const to = new THREE.Vector3(5, 54.5, 0);
+                    window.spawnTracer(from, to);
+                    try { renderer.render(scene, p1.cam); } catch (e) {}
+                });
+            }
+
+            // 弹壳
+            if (typeof window.spawnShellCasing === 'function'
+                && typeof window.updateShellCasings === 'function') {
+                withWarmupCamera(() => {
+                    const fakeNow = performance.now();
+                    if (typeof p1 !== 'undefined' && p1) {
+                        window.spawnShellCasing(p1, fakeNow);
+                    }
+                    window.updateShellCasings(0.016, fakeNow + 16);
+                    try { renderer.render(scene, p1.cam); } catch (e) {}
+                    window.updateShellCasings(1.0, fakeNow + 5000);
+                    try { renderer.render(scene, p1.cam); } catch (e) {}
+                });
+            }
+
+            console.log('[loading] 特效材质预热完成');
+        } catch (e) {
+            console.warn('[loading] 特效材质预热失败:', e);
+        }
+    }
+
+    // ============================================================
+    // 烟雾云预热
+    // ============================================================
     function warmupSmokeCloud() {
         const buildFn = (typeof window.createSmokeCloud === 'function')
             ? window.createSmokeCloud
@@ -469,7 +603,7 @@
             let cloud = null;
             try {
                 cloud = buildFn(
-                    new THREE.Vector3(WARMUP_OBJ_POS.x, 0, WARMUP_OBJ_POS.z),
+                    new THREE.Vector3(0, 0, 0),
                     4.0, 4.5, 3.5
                 );
             } catch (e) { return; }
@@ -480,7 +614,7 @@
                     m.material.opacity = m.userData.baseOpacity || 0.5;
                 }
             }
-            cloud.position.set(WARMUP_OBJ_POS.x, WARMUP_OBJ_POS.y, WARMUP_OBJ_POS.z);
+            cloud.position.set(0, 54.5, 0);
 
             scene.add(cloud);
             try { renderer.render(scene, p1.cam); } catch (e) {}
@@ -495,13 +629,16 @@
         });
     }
 
+    // ============================================================
+    // 闪光爆发预热
+    // ============================================================
     function warmupFlashBurst() {
         if (typeof window.spawnFlashBurst !== 'function') return;
         if (typeof window.updateFlashBursts !== 'function') return;
 
         withWarmupCamera(() => {
             const fakeNow = performance.now();
-            window.spawnFlashBurst(WARMUP_OBJ_POS.clone());
+            window.spawnFlashBurst(new THREE.Vector3(0, 54.5, 0));
             window.updateFlashBursts(0.016, fakeNow + 200);
             try { renderer.render(scene, p1.cam); } catch (e) {}
             window.updateFlashBursts(1.0, fakeNow + 1000);
@@ -509,6 +646,26 @@
         });
     }
 
+    // ============================================================
+    // 油桶爆炸预热
+    // ============================================================
+    function warmupExplosion() {
+        if (typeof window.spawnExplosionVisual !== 'function') return;
+        if (typeof window.updateExplosionVisuals !== 'function') return;
+
+        withWarmupCamera(() => {
+            const fakeNow = performance.now();
+            window.spawnExplosionVisual(0, 54.5, 0);
+            window.updateExplosionVisuals(0.016, fakeNow + 250);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+            window.updateExplosionVisuals(1.0, fakeNow + 1000);
+            try { renderer.render(scene, p1.cam); } catch (e) {}
+        });
+    }
+
+    // ============================================================
+    // 闪光指示器预热
+    // ============================================================
     function warmupFlashIndicator() {
         if (typeof p1 === 'undefined' || !p1 || !p1.flashIndicator) return;
 
@@ -535,6 +692,9 @@
         });
     }
 
+    // ============================================================
+    // 瞄准镜 PiP 预热
+    // ============================================================
     function warmupScopePip() {
         if (typeof window.warmupScopePip !== 'function') return;
         try {
@@ -543,14 +703,141 @@
     }
 
     // ============================================================
-    // 构建加载任务列表
+    // ★ 深度预热 7：物理引擎（step + 创建/删除动态体）
+    // ============================================================
+    function warmupPhysicsDeep() {
+        if (!window.PHYSICS || !window.PHYSICS.isReady()) return;
+
+        try {
+            // 强制 solver warmstart
+            for (let i = 0; i < 5; i++) {
+                window.PHYSICS.stepPhysics(1 / 60);
+            }
+
+            const testPos = { x: 0, y: 50, z: 0 };
+            const testVel = { x: 0, y: 0, z: 0 };
+
+            // 投掷物 body
+            const smokeBody = window.PHYSICS.createProjectileBody(testPos, testVel, 'smoke');
+            const flashBody = window.PHYSICS.createProjectileBody(testPos, testVel, 'flash');
+            window.PHYSICS.stepPhysics(1 / 60);
+            window.PHYSICS.stepPhysics(1 / 60);
+            if (smokeBody) window.PHYSICS.removeProjectileBody(smokeBody);
+            if (flashBody) window.PHYSICS.removeProjectileBody(flashBody);
+
+            // 弹壳 body
+            const shellBody = window.PHYSICS.createShellBody(testPos, testVel);
+            window.PHYSICS.stepPhysics(1 / 60);
+            if (shellBody) window.PHYSICS.removeShellBody(shellBody);
+
+            console.log('[loading] 物理引擎深度预热完成');
+        } catch (e) {
+            console.warn('[loading] 物理预热失败:', e);
+        }
+    }
+
+    // ============================================================
+    // ★ 深度预热 8：HUD DOM 样式（触发浏览器样式计算 + layout）
+    // ============================================================
+    function warmupHudDom() {
+        try {
+            const ids = [
+                'hpText', 'armorText', 'timer', 'fpsCounter',
+                'throwCountdown', 'throwCountdownIcon',
+                'throwCountdownLabel', 'throwCountdownTime',
+                'adsReticle', 'scorePanel', 'aiToggle', 'exitBtn',
+            ];
+            for (const id of ids) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                void window.getComputedStyle(el).display;
+                void el.offsetWidth;
+            }
+
+            const selectors = [
+                '#hud1 .ammo', '#hud1 .hp-val', '#hud1 .armor-val',
+                '#hud1 .scope', '#hud1 .cross', '#hud1 .wtag',
+                '#hud1 .feed', '#hud1 .centermsg', '#hud1 .dmgflash',
+                '#hud1 .hitmark', '#hud1 .subhint',
+            ];
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el) {
+                    void window.getComputedStyle(el).display;
+                    void el.offsetWidth;
+                }
+            }
+
+            console.log('[loading] HUD DOM 预热完成');
+        } catch (e) {
+            console.warn('[loading] HUD DOM 预热失败:', e);
+        }
+    }
+
+    // ============================================================
+    // ★ 深度预热 9：最终整体渲染（所有武器一起 + 阴影）
+    // ============================================================
+    function finalSceneRender() {
+        if (typeof renderer === 'undefined' || !renderer) return;
+
+        withWarmupCamera(() => {
+            const finalGroup = new THREE.Group();
+
+            ALL_WEAPON_TYPES.forEach(type => {
+                try {
+                    const wm = window.makeWeaponModel ? window.makeWeaponModel(type, p1.mat) : null;
+                    if (wm) {
+                        wm.position.set(0, 0.5, 0);
+                        finalGroup.add(wm);
+                    }
+                    const vm = window.makeViewmodel ? window.makeViewmodel(type, p1.mat) : null;
+                    if (vm) {
+                        vm.position.set(0, 0.5, 0);
+                        finalGroup.add(vm);
+                    }
+                } catch (e) {}
+            });
+
+            scene.add(finalGroup);
+            finalGroup.updateMatrixWorld(true);
+
+            try {
+                renderer.compile(scene, p1.cam);
+                renderer.render(scene, p1.cam);
+            } catch (e) {}
+
+            scene.remove(finalGroup);
+        });
+
+        // 单独再跑一次带阴影的渲染
+        try {
+            const prevAuto = renderer.shadowMap.autoUpdate;
+            renderer.shadowMap.autoUpdate = false;
+            renderer.shadowMap.needsUpdate = true;
+            renderer.render(scene, p1.cam);
+            renderer.shadowMap.autoUpdate = prevAuto;
+        } catch (e) {}
+
+        console.log('[loading] 最终场景渲染完成');
+    }
+
+    // ============================================================
+    // 构建加载任务列表（深度强化版）
     // ============================================================
     function buildGameLoadTasks(mapId) {
         const tasks = [];
 
+        // 1. 音频系统
+        tasks.push({
+            name: '初始化音频系统',
+            weight: 3,
+            fn: () => warmupAudioDeep(),
+        });
+
+        // 2. 构建地图
         tasks.push({
             name: '构建地图',
-            weight: 4,
+            weight: 6,
             fn: () => {
                 if (typeof window.loadMap !== 'function') return;
                 const cur = (window.getCurrentMapId && window.getCurrentMapId()) || null;
@@ -558,11 +845,11 @@
             },
         });
 
-        // 构建所有武器模板
+        // 3. 构建所有武器模板
         ALL_WEAPON_TYPES.forEach(type => {
             tasks.push({
-                name: '载入武器：' + (WEAPON_NAMES[type] || type),
-                weight: 2,
+                name: '构建武器模板：' + (WEAPON_NAMES[type] || type),
+                weight: 3,
                 fn: () => {
                     if (typeof _getWorldTemplate === 'function') _getWorldTemplate(type);
                     if (typeof _getViewTemplate  === 'function') _getViewTemplate(type);
@@ -570,37 +857,100 @@
             });
         });
 
-        // ★ 强制上传所有武器的纹理到 GPU
+        // 4. 上传所有纹理到 GPU
         tasks.push({
-            name: '上传武器纹理',
-            weight: 5,
+            name: '上传全部纹理到 GPU',
+            weight: 8,
             fn: () => forceUploadAllTextures(),
         });
 
+        // 5. 基础场景 shader 编译
         tasks.push({
-            name: '编译场景着色器',
-            weight: 10,
+            name: '编译场景基础着色器',
+            weight: 6,
             fn: () => compileSceneShaders(),
         });
 
-        // ★ 强化版的 viewmodel 预热
-        tasks.push({
-            name: '预热武器视图模型',
-            weight: 20,
-            fn: () => warmupViewmodelsReal(),
+        // 6. 每个武器的 viewmodel 在 6 个状态下真实渲染
+        ALL_WEAPON_TYPES.forEach(type => {
+            tasks.push({
+                name: '渲染第一人称：' + (WEAPON_NAMES[type] || type),
+                weight: 4,
+                fn: () => warmupSingleViewmodel(type),
+            });
         });
 
-        // 特效预热
-        tasks.push({ name: '预热特效：火花', weight: 1, fn: () => warmupSparks(0xff5040) });
-        tasks.push({ name: '预热特效：火花', weight: 1, fn: () => warmupSparks(0xffd28a) });
-        tasks.push({ name: '预热特效：弹痕', weight: 1, fn: () => warmupBulletHole() });
-        tasks.push({ name: '预热特效：曳光弹', weight: 1, fn: () => warmupTracer() });
-        tasks.push({ name: '预热特效：弹壳', weight: 1, fn: () => warmupShells() });
-        tasks.push({ name: '预热特效：爆炸', weight: 1, fn: () => warmupExplosion() });
-        tasks.push({ name: '预热特效：烟雾云', weight: 2, fn: () => warmupSmokeCloud() });
-        tasks.push({ name: '预热特效：闪光爆发', weight: 1, fn: () => warmupFlashBurst() });
-        tasks.push({ name: '预热特效：闪光指示器', weight: 1, fn: () => warmupFlashIndicator() });
-        tasks.push({ name: '预热特效：瞄准镜PiP', weight: 1, fn: () => warmupScopePip() });
+        // 7. 每个武器的 world model 真实渲染
+        ALL_WEAPON_TYPES.forEach(type => {
+            tasks.push({
+                name: '渲染第三人称：' + (WEAPON_NAMES[type] || type),
+                weight: 3,
+                fn: () => warmupSingleWorldModel(type),
+            });
+        });
+
+        // 8. 特效材质（弹痕 / 火花 / 曳光 / 弹壳）
+        tasks.push({
+            name: '预热特效材质',
+            weight: 6,
+            fn: () => warmupEffectMaterials(),
+        });
+
+        // 9. 烟雾云
+        tasks.push({
+            name: '预热烟雾云',
+            weight: 3,
+            fn: () => warmupSmokeCloud(),
+        });
+
+        // 10. 闪光爆发
+        tasks.push({
+            name: '预热闪光爆发',
+            weight: 2,
+            fn: () => warmupFlashBurst(),
+        });
+
+        // 11. 油桶爆炸
+        tasks.push({
+            name: '预热油桶爆炸',
+            weight: 3,
+            fn: () => warmupExplosion(),
+        });
+
+        // 12. 闪光指示器
+        tasks.push({
+            name: '预热闪光指示器',
+            weight: 2,
+            fn: () => warmupFlashIndicator(),
+        });
+
+        // 13. 瞄准镜 PiP
+        tasks.push({
+            name: '预热瞄准镜 PiP',
+            weight: 3,
+            fn: () => warmupScopePip(),
+        });
+
+        // 14. 物理引擎
+        tasks.push({
+            name: '预热物理引擎',
+            weight: 4,
+            fn: () => warmupPhysicsDeep(),
+        });
+
+        // 15. HUD DOM 样式
+        tasks.push({
+            name: '预热 HUD 样式',
+            weight: 2,
+            fn: () => warmupHudDom(),
+        });
+
+        // 16. 最终整体渲染
+        tasks.push({
+            name: '最终场景渲染',
+            weight: 5,
+            fn: () => finalSceneRender(),
+        });
 
         return tasks;
     }
@@ -614,7 +964,7 @@
         const ll = document.getElementById('lobbyOverlay');
         if (ll) ll.style.display = 'none';
 
-        show(mode === 'range' ? '正在载入靶场' : '正在载入人机对战');
+        show('正在载入人机对战');
 
         const mapId = (window.getCurrentMapId && window.getCurrentMapId()) || 'battlefield';
         const tasks = buildGameLoadTasks(mapId);
@@ -808,8 +1158,7 @@
     }
 
     function installLobbyHooks() {
-        hijackClick('lobbyRangeBtn', () => beginSinglePlayerLoading('range'));
-        hijackClick('lobbyAiBtn',    () => beginSinglePlayerLoading('ai'));
+        hijackClick('lobbyAiBtn', () => beginSinglePlayerLoading('ai'));
     }
 
     window.LoadingManager = {
@@ -834,7 +1183,7 @@
     function init() {
         installLobbyHooks();
         installOnlineStartHook();
-        console.log('[loading] 加载页面已就绪');
+        console.log('[loading] 深度预加载管理器已就绪');
     }
 
     if (document.readyState === 'loading') {

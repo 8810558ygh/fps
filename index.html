@@ -72,7 +72,7 @@
         </div>
 
         <div class="lobby-buttons">
-            <button class="btn lobby-btn" id="lobbyRangeBtn">靶 场</button>
+            <!-- ★ 已删除"靶场"按钮 -->
             <button class="btn lobby-btn lobby-btn-ai" id="lobbyAiBtn">人 机 对 战</button>
             <button class="btn lobby-btn lobby-btn-online" id="lobbyOnlineBtn">联 机 对 战</button>
         </div>
@@ -199,6 +199,13 @@
     <div id="adsReticle"></div>
     <div id="fpsCounter">-- FPS</div>
     <div id="exitBtn" class="exit-btn">退 出</div>
+
+    <!-- ===== ★ AI 操纵开关（仅人机对战模式显示） ===== -->
+    <div id="aiToggle" class="ai-toggle" style="display:none;">
+        <span class="ai-toggle-icon">🤖</span>
+        <span class="ai-toggle-label">AI 操纵</span>
+        <span class="ai-toggle-state" id="aiToggleState">开</span>
+    </div>
 
     <div id="opponentInfo">
         <span class="op-dot"></span>

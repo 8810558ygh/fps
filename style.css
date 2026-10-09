@@ -61,7 +61,6 @@ canvas {
 }
 
 /* ---------- HUD ---------- */
-/* ★ 现在只有一个 HUD，宽度占满屏幕 */
 .hud {
     position: fixed;
     top: 0;
@@ -570,11 +569,13 @@ body.online-mode #opponentInfo {
 
 /* ============================================================
    ★ 退出按钮（仅单机模式显示）
+   —— 屏幕左侧，小地图正下方
    ============================================================ */
 .exit-btn {
     position: fixed;
-    top: 64px;
-    right: 14px;
+    top: 350px;              /* 桌面：小地图 320 高 + 14 顶 + 16 间距 */
+    left: 14px;
+    right: auto;
     z-index: 20;
     padding: 8px 18px;
     background: rgba(200, 40, 40, 0.85);
@@ -586,6 +587,7 @@ body.online-mode #opponentInfo {
     letter-spacing: 2px;
     cursor: pointer;
     user-select: none;
+    -webkit-user-select: none;
     display: none;
     transition: all 0.15s;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
@@ -601,14 +603,88 @@ body.online-mode #opponentInfo {
     transform: translateY(0) scale(0.97);
 }
 
+/* ============================================================
+   ★ AI 操纵开关（仅人机对战模式显示）
+   —— 屏幕左侧，退出键正下方
+   ============================================================ */
+.ai-toggle {
+    position: fixed;
+    top: 400px;              /* 桌面：退出键下方 50px */
+    left: 14px;
+    right: auto;
+    z-index: 20;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: rgba(13, 19, 30, 0.88);
+    border: 2px solid rgba(110, 231, 183, 0.6);
+    border-radius: 10px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: all 0.15s;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+    pointer-events: auto;
+    touch-action: manipulation;
+}
+.ai-toggle:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.75);
+}
+.ai-toggle:active {
+    transform: translateY(0) scale(0.97);
+}
+.ai-toggle.off {
+    border-color: rgba(255, 210, 74, 0.65);
+    background: rgba(35, 28, 10, 0.9);
+}
+.ai-toggle.on  .ai-toggle-state { color: #6ee7b7; }
+.ai-toggle.off .ai-toggle-state { color: #ffd24a; }
+
+.ai-toggle-icon  { font-size: 16px; line-height: 1; }
+.ai-toggle-label { letter-spacing: 2px; }
+
+.ai-toggle-state {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 2px 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    min-width: 44px;
+    text-align: center;
+    letter-spacing: 1px;
+}
+
+/* ============================================================
+   ★ 移动端 / 触屏：小地图为 210×210
+   ============================================================ */
 @media (pointer: coarse) {
     .exit-btn {
-        top: 54px;
-        right: 10px;
+        top: 235px;          /* 移动：小地图 210 高 + 10 顶 + 15 间距 */
+        left: 10px;
+        right: auto;
         padding: 6px 14px;
         font-size: 12px;
         letter-spacing: 1px;
     }
+
+    .ai-toggle {
+        top: 272px;          /* 移动：退出键下方 37px */
+        left: 10px;
+        right: auto;
+        padding: 6px 12px;
+        font-size: 12px;
+        gap: 6px;
+        border-radius: 8px;
+    }
+    .ai-toggle-icon  { font-size: 13px; }
+    .ai-toggle-state { font-size: 12px; padding: 1px 6px; min-width: 36px; }
 }
 
 /* ============================================================

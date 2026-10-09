@@ -25,7 +25,6 @@ function setWeapon(p, key) {
         p.gunHolder.add(makeWeaponModel('knife', p.mat));
         while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
         p.vm.add(makeViewmodel('knife', p.mat));
-        // ★ 切刀时不清空 ammo/reserve —— 保留枪的弹药，切回枪时恢复
         p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
@@ -45,7 +44,6 @@ function setWeapon(p, key) {
         p.gunHolder.add(makeWeaponModel('smoke', p.mat));
         while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
         p.vm.add(makeViewmodel('smoke', p.mat));
-        // ★ 切投掷物时不清空 ammo/reserve
         p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
@@ -63,7 +61,6 @@ function setWeapon(p, key) {
         p.gunHolder.add(makeWeaponModel('flash', p.mat));
         while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
         p.vm.add(makeViewmodel('flash', p.mat));
-        // ★ 切投掷物时不清空 ammo/reserve
         p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
@@ -80,8 +77,6 @@ function setWeapon(p, key) {
     const w = WEAPONS[key];
     if (!w) return;
 
-    // ★ 从刀/投掷物切回本命枪 → 保留弹药
-    //   从枪切到新枪（准备阶段换枪） → 重置弹药
     const comingBackFromNonGun = (p.isMelee || p.isSmoke || p.isFlash);
     const isPrimaryGun = (p.primaryWeaponKey === key);
     const shouldPreserveAmmo = comingBackFromNonGun && isPrimaryGun;
@@ -97,7 +92,6 @@ function setWeapon(p, key) {
         p.ammo = w.mag;
         p.reserve = w.startReserve;
     }
-    // 换弹状态始终清空（切枪取消换弹）
     p.reloadEnd = 0;
 
     p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
@@ -109,6 +103,16 @@ function setWeapon(p, key) {
     p.equipEnd = performance.now() + 500;
     p.meleeCombo = 0; p.meleeEnd = 0; p.meleeRecovery = 0;
     p.meleeIsHeavy = false;
+
+    // ★ 切枪时重置后坐力状态
+    if (p.recoil) {
+        p.recoil.offsetPitch = 0;
+        p.recoil.offsetYaw = 0;
+        p.recoil.bulletCount = 0;
+        p.recoil.lastShotTime = 0;
+        p.recoil.horizontalDir = 1;
+    }
+
     if (p._shadowDisabled) {
         p.gunHolder.traverse(o => { if (o.isMesh) o.castShadow = false; });
     }
@@ -367,6 +371,24 @@ function makePlayer(id, color, spawn, weaponKey) {
         throwFuseEnd: 0,
         throwFuseInHand: false,
         _shadowDisabled: false,
+
+        // ============================================================
+        // ★★★ 后坐力状态（独立于玩家基础瞄准 p.pitch / p.yaw）★★★
+        //
+        //   摄像机实际方向 = (p.pitch + recoil.offsetPitch,
+        //                     p.yaw   + recoil.offsetYaw)
+        //
+        //   鼠标输入只修改 p.pitch / p.yaw（基础瞄准）
+        //   后坐力只修改 recoil.offsetPitch / offsetYaw
+        //   松手后偏移量指数衰减回 0（见 updatePlayer 的恢复逻辑）
+        // ============================================================
+        recoil: {
+            offsetPitch: 0,          // 垂直后坐力累积（弧度，正值 = 向上看）
+            offsetYaw: 0,            // 水平后坐力累积（弧度，正值 = 向左偏）
+            bulletCount: 0,          // 当前连发子弹计数（决定后坐力强度）
+            lastShotTime: 0,         // 上次开火时间（用于判断连发/新序列）
+            horizontalDir: 1,        // 水平方向（1 = 右，-1 = 左）
+        },
 
         _netTargetPos: new THREE.Vector3(spawn.x, 0, spawn.z),
         _netTargetYaw: spawn.yaw,

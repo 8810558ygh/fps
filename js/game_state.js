@@ -3,7 +3,13 @@
 // ===== 游戏状态 =====
 let running = false;
 let matchStart = 0;
-let gameMode = 'range';
+// ★ gameMode 现在只有 'ai' 和 'online'（'range' 已删除）
+let gameMode = 'ai';
+
+// ★ AI 操纵开关（仅人机对战模式有效）
+//   true  = AI 正常战斗（移动 / 瞄准 / 开火）
+//   false = 站桩靶子模式（只受重力，不移动 / 不射击）
+let aiEnabled = true;
 
 let gameState = 'idle';
 let stateEndTime = 0;
@@ -112,21 +118,14 @@ function collideWorld(p) {
     // ★ 新增：离开地面检测
     //   如果玩家悬空超过 3cm（走下高台 / 走出平台边缘），
     //   自动把 onGround 设为 false，让后续的落地检测能正确触发。
-    //
-    //   原理：
-    //     · 只在 onGround = true 时才检测（跳跃已经设 false，无需重测）
-    //     · 找出玩家当前最高的"支撑面"（地形 或 脚下的 collider 顶部）
-    //     · 如果玩家高于最高支撑面 3cm 以上，说明悬空了
     // ============================================================
     if (p.onGround) {
         let highestSupport = gh;   // 地形是基础支撑面
 
         for (const c of colliders) {
             const top = c.top !== undefined ? c.top : 0;
-            // XZ 范围检查
             if (p.pos.x + r <= c.x0 || p.pos.x - r >= c.x1 ||
                 p.pos.z + r <= c.z0 || p.pos.z - r >= c.z1) continue;
-            // 只考虑在玩家下方 3cm 内的 collider 顶部
             if (top <= p.pos.y + 0.03 && top > highestSupport) {
                 highestSupport = top;
             }

@@ -61,6 +61,109 @@ function _addDamage(p, targetId, part, dmg) {
 }
 
 // ============================================================
+// ★★★ 后坐力系统 ★★★
+// ============================================================
+
+// 判断玩家是否正在移动（用于移动开火倍率）
+function _isPlayerMoving(p) {
+    if (!p || !p.input) return false;
+    return (Math.abs(p.input.forward || 0) > 0.1)
+        || (Math.abs(p.input.right   || 0) > 0.1);
+}
+
+// ============================================================
+// 应用后坐力：每次开火后调用（★ 必须在弹丸发射完成之后）
+//
+//   ★ 时序说明：
+//     1. 弹丸沿"当前 cam 方向"射出（此时不含本发后坐力）
+//     2. 所有弹丸处理完之后，才调用本函数累积偏移
+//     3. 因此第一枪永远精准，从第二发开始上抬
+// ============================================================
+function applyRecoil(p, w, now) {
+    const cfg = w.recoil;
+    if (!cfg) return;
+    if (!p.recoil) return;
+
+    const r = p.recoil;
+
+    // ---- 判断是否是新连发序列 ----
+    const timeSinceLastShot = now - r.lastShotTime;
+    if (timeSinceLastShot > 250) {
+        r.bulletCount = 0;
+        r.horizontalDir = Math.random() < 0.5 ? 1 : -1;
+    }
+    r.lastShotTime = now;
+    r.bulletCount++;
+
+    const shotIdx = r.bulletCount - 1;   // 0-based
+
+    // ---- 垂直后坐力（每发递增，到上限后稳定）----
+    const vertRaw    = cfg.vertFirst + shotIdx * cfg.vertPerShot;
+    const vertAmount = Math.min(vertRaw, cfg.vertMax);
+
+    // ---- 水平后坐力（前 N 发保护）----
+    let horizAmount = 0;
+    if (r.bulletCount > cfg.horizStart) {
+        if (Math.random() < cfg.horizSwitchRate) {
+            r.horizontalDir *= -1;
+        }
+        const horizIdx    = r.bulletCount - cfg.horizStart;
+        const horizGrowth = Math.min(1, horizIdx / 8);
+        horizAmount = cfg.horizMax * horizGrowth * r.horizontalDir;
+    }
+
+    // ---- 姿态倍率 ----
+    let mul = 1.0;
+    if (p.input && p.input.crouch) mul *= cfg.crouchMul;
+    if (p.aiming)                  mul *= cfg.adsMul;
+    if (_isPlayerMoving(p))        mul *= cfg.moveMul;
+
+    // ---- 施加到后坐力偏移（不污染 p.pitch / p.yaw）----
+    r.offsetPitch += vertAmount * mul;
+    r.offsetYaw   += horizAmount * mul;
+
+    // ---- 上限钳制 ----
+    if (r.offsetPitch > cfg.maxOffsetPitch) r.offsetPitch = cfg.maxOffsetPitch;
+    if (r.offsetYaw > cfg.maxOffsetYaw)     r.offsetYaw   = cfg.maxOffsetYaw;
+    if (r.offsetYaw < -cfg.maxOffsetYaw)    r.offsetYaw   = -cfg.maxOffsetYaw;
+
+    // ---- 立即更新摄像机，让下一发子弹方向正确 ----
+    if (p.cam) {
+        p.cam.rotation.x = p.pitch + r.offsetPitch;
+        p.cam.rotation.y = p.yaw   + r.offsetYaw;
+        p.cam.updateMatrixWorld(true);
+    }
+}
+
+// ============================================================
+// 更新后坐力恢复（每帧调用）
+// ============================================================
+function updateRecoilRecovery(p, dt, now) {
+    if (!p || !p.recoil) return;
+
+    const r = p.recoil;
+    const timeSinceLastShot = now - r.lastShotTime;
+
+    // 未到恢复延迟，或正在开火，直接跳过
+    if (timeSinceLastShot < RECOIL_RECOVER_DELAY_MS) return;
+
+    // 指数衰减
+    const decay = 1 - Math.exp(-RECOIL_RECOVER_RATE * dt);
+
+    r.offsetPitch *= (1 - decay);
+    r.offsetYaw   *= (1 - decay);
+
+    // 低于阈值时归零
+    if (Math.abs(r.offsetPitch) < RECOIL_MIN_THRESHOLD) r.offsetPitch = 0;
+    if (Math.abs(r.offsetYaw)   < RECOIL_MIN_THRESHOLD) r.offsetYaw   = 0;
+
+    // 完全恢复后重置连发计数
+    if (r.offsetPitch === 0 && r.offsetYaw === 0) {
+        r.bulletCount = 0;
+    }
+}
+
+// ============================================================
 // 近战攻击（含油桶命中）
 // ============================================================
 function tryMelee(p, now, isHeavy) {
@@ -79,7 +182,6 @@ function tryMelee(p, now, isHeavy) {
     p.meleeIsHeavy = isHeavy;
     p.lastMeleeTime = now;
 
-    // ★ 空间化：近战挥刀音效
     emitWorldSound('melee',
         p.pos.x, p.pos.y + p.eyeH, p.pos.z,
         p.id === 1,
@@ -117,7 +219,6 @@ function tryMelee(p, now, isHeavy) {
             } else if (isOnlineHost) {
                 NET_broadcast({ type: 'hitmarkForClient' });
             }
-            // ★ 空间化：命中油桶
             emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
         } else {
             const part = h.object.userData.part;
@@ -134,7 +235,6 @@ function tryMelee(p, now, isHeavy) {
                 } else if (isOnlineHost) {
                     NET_broadcast({ type: 'hitmarkForClient' });
                 }
-                // ★ 空间化：命中玩家
                 emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                 damage(o, dmg, p);
             } else {
@@ -145,7 +245,12 @@ function tryMelee(p, now, isHeavy) {
 }
 
 // ============================================================
-// 开火（含油桶命中 + 弹壳抛射）
+// 开火（含油桶命中 + 弹壳抛射 + 后坐力）
+//
+// ★ 后坐力时序（关键修复）：
+//   1. 用「当前 cam 方向」发射所有弹丸（不含本发后坐力）
+//   2. 所有弹丸处理完毕后，才调用 applyRecoil 累积偏移
+//   3. 因此第一枪永远精准，从第二发开始才上抬
 // ============================================================
 function tryFire(p, now) {
     if (gameState !== 'combat') return;
@@ -154,7 +259,6 @@ function tryFire(p, now) {
     const w = p.weapon;
     if (now < p.nextShot || now < p.deadUntil || p.reloadEnd > now || now < p.boltEnd) return;
     if (p.ammo <= 0) {
-        // ★ 空间化：空弹提示音
         emitWorldSound('empty', p.pos.x, p.pos.y + p.eyeH, p.pos.z, p.id === 1);
         p.nextShot = now + 300;
         startReload(p, now);
@@ -163,7 +267,7 @@ function tryFire(p, now) {
     p.ammo--;
 
     // ============================================================
-    // ★ 射速计算（含开镜满射速）
+    // 射速计算（含开镜惩罚 + 奥丁 spin-up）
     // ============================================================
     let currentFireMs = w.fireMs;
     if (w.spinUpMs && w.minFireMs) {
@@ -172,10 +276,18 @@ function tryFire(p, now) {
             currentFireMs = w.minFireMs;
         } else {
             const since = now - (p.lastShotTime || 0);
-            if (since < 200) p.spinUpProgress = Math.min(1, (p.spinUpProgress || 0) + since / w.spinUpMs);
-            else p.spinUpProgress = 0;
-            currentFireMs = Math.max(w.minFireMs, w.fireMs - (w.fireMs - w.minFireMs) * p.spinUpProgress);
+            if (since < 200) {
+                p.spinUpProgress = Math.min(1, (p.spinUpProgress || 0) + since / w.spinUpMs);
+            } else {
+                p.spinUpProgress = 0;
+            }
+            currentFireMs = Math.max(
+                w.minFireMs,
+                w.fireMs - (w.fireMs - w.minFireMs) * p.spinUpProgress
+            );
         }
+    } else if (p.aiming && w.adsFireRateMul) {
+        currentFireMs = currentFireMs / w.adsFireRateMul;
     }
     p.nextShot = now + currentFireMs;
     p.lastShotTime = now;
@@ -187,7 +299,7 @@ function tryFire(p, now) {
         if (p.id === 1) mouse.aim = false;
     }
 
-    // ★ 空间化：四种武器开火音效
+    // ---- 音效 ----
     const _fxEyeY = p.pos.y + p.eyeH;
     const _fxIsSelf = (p.id === 1);
     switch (w.key) {
@@ -203,7 +315,11 @@ function tryFire(p, now) {
         window.spawnShellCasing(p, now);
     }
 
-    // ---- 联机客户端：只发射曳光弹 ----
+    // ============================================================
+    // 联机客户端：只发射曳光弹
+    //   ★ 先发射（用当前 cam 方向，不含本发后坐力）
+    //   ★ 发射完之后再应用后坐力（影响下一发）
+    // ============================================================
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) {
         p.cam.getWorldPosition(_rcOrigin);
         _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
@@ -216,10 +332,19 @@ function tryFire(p, now) {
         _rcEnd.copy(_rcOrigin).addScaledVector(_rcDir, 100);
         if (hitsLocal.length > 0) _rcEnd.copy(hitsLocal[0].point);
         spawnTracer(muzzleWorld(p, _rcMuzzle), _rcEnd);
+
+        // ★ 发射后应用后坐力（只影响下一发）
+        if (w.recoil) {
+            applyRecoil(p, w, now);
+        }
         return;
     }
 
-    // ---- 本地/房主：完整射击逻辑 ----
+    // ============================================================
+    // 本地/房主：完整射击逻辑
+    //   ★ 关键：这里用当前 cam 方向（不含本发后坐力），
+    //     因为 applyRecoil 还没被调用
+    // ============================================================
     p.cam.getWorldPosition(_rcOrigin);
     _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
 
@@ -237,6 +362,7 @@ function tryFire(p, now) {
 
     let hitmarkSent = false;
 
+    // ---------- 弹丸循环（每个弹丸都用同一"当前朝向"）----------
     for (let i = 0; i < pellets; i++) {
         _rcRandDir.copy(_rcDir);
         if (pellets > 1) {
@@ -269,12 +395,10 @@ function tryFire(p, now) {
                     NET_broadcast({ type: 'hitmarkForClient' });
                     hitmarkSent = true;
                 }
-                // ★ 空间化：命中油桶
                 emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
             } else {
                 const part = h.object.userData.part;
                 if (part) {
-                    // ★ 传入命中距离，支持距离衰减（奥丁 30m 分档）
                     const dmg = _resolveDamage(w, part, h.distance);
                     _addDamage(p, o.id, part, dmg);
 
@@ -285,7 +409,6 @@ function tryFire(p, now) {
                         NET_broadcast({ type: 'hitmarkForClient' });
                         hitmarkSent = true;
                     }
-                    // ★ 空间化：命中玩家
                     emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                     damage(o, dmg, p);
                 } else {
@@ -314,6 +437,14 @@ function tryFire(p, now) {
                 });
             }
         }
+    }
+
+    // ============================================================
+    // ★★★ 所有弹丸都射完了，才应用后坐力 ★★★
+    //   —— 只影响下一发的方向，本次开火方向保持不变
+    // ============================================================
+    if (w.recoil) {
+        applyRecoil(p, w, now);
     }
 }
 
@@ -392,9 +523,6 @@ function kill(victim, from, now) {
     delete from.damageDealt[victim.id];
     delete victim.damageDealt[from.id];
 
-    // ============================================================
-    // 击杀播报
-    // ============================================================
     if (isSuicide) {
         feed(victim, `<b style="color:#ff7a6d">自我击杀</b>（自爆）`);
     } else {
@@ -402,13 +530,11 @@ function kill(victim, from, now) {
         feed(from, `<b style="color:#ffd24a">击杀 玩家${victim.id}！</b>  +1`);
     }
 
-    // ★ 空间化：死亡 / 击杀音效
     const _vEyeY = victim.pos.y + victim.eyeH;
     emitWorldSound('death', victim.pos.x, _vEyeY, victim.pos.z, victim.id === 1);
     const _kEyeY = scoringPlayer.pos.y + scoringPlayer.eyeH;
     emitWorldSound('kill', scoringPlayer.pos.x, _kEyeY, scoringPlayer.pos.z, scoringPlayer.id === 1);
 
-    // AI 相关：只在非自杀时才触发
     if (gameMode === 'ai' && !isSuicide) {
         if (from.id === 2 && typeof aiTaunt === 'function') aiTaunt();
         if (from.id === 1 && typeof resetAiStreakOnPlayerKill === 'function') resetAiStreakOnPlayerKill();
@@ -438,14 +564,6 @@ function computeSniperRecoil(p, now) {
 
 // ============================================================
 // ★ 第一人称换弹动画（步枪 · 拆弹匣 → 装新弹匣）
-//
-//   时间线（t 为 0 → 1 的进度）：
-//     0.00 - 0.12  静置（枪身下沉 + 侧倾）
-//     0.12 - 0.30  弹匣抬起脱离井口（★ 关键：让弹匣进入视野）
-//     0.30 - 0.50  弹匣快速下坠（滑出视野）
-//     0.50 - 0.65  空档（视野外）
-//     0.65 - 0.85  新弹匣从下方升起，回到井口
-//     0.85 - 1.00  弹匣轻微回落，嵌入井口
 // ============================================================
 function updateRifleReloadAnim(vm, p, now) {
     const w = p.weapon;
@@ -462,21 +580,19 @@ function updateRifleReloadAnim(vm, p, now) {
     const bp = vm.userData.basePos;
     const br = vm.userData.baseRot;
 
-    // ---------- 枪身姿态 ----------
     let sink = 0;
     if (t < 0.10) sink = t / 0.10;
     else if (t < 0.90) sink = 1;
     else sink = 1 - (t - 0.90) / 0.10;
 
-    const tilt   = sink * 0.22;   // 枪口上抬
-    const sinkY  = sink * 0.10;   // 枪身下沉
-    const rollZ  = sink * 0.25;   // ★ 侧倾加大（0.12→0.25），露出弹匣井
+    const tilt   = sink * 0.22;
+    const sinkY  = sink * 0.10;
+    const rollZ  = sink * 0.25;
     const wobble = Math.sin(t * Math.PI * 6) * 0.006 * sink;
 
     vm.position.set(bp.x + wobble, bp.y - sinkY, bp.z);
     vm.rotation.set(br.x + tilt, br.y, br.z + rollZ);
 
-    // ---------- 弹匣动画 ----------
     const mag = vm.userData.magazineGroup;
     if (!mag) return;
 
@@ -489,36 +605,30 @@ function updateRifleReloadAnim(vm, p, now) {
     }
     const mb = mag.userData._basePos;
 
-    let oy = 0;   // 本地 Y 偏移（世界：垂直方向）
-    let oz = 0;   // 本地 Z 偏移（世界：屏幕水平方向）
+    let oy = 0;
+    let oz = 0;
 
     if (t < 0.12) {
-        // 静置
         oy = 0; oz = 0;
     } else if (t < 0.30) {
-        // ★ 抬起：弹匣脱离井口，向上抬起一点 + 微向右移
         const mt = (t - 0.12) / 0.18;
-        const e = 1 - Math.pow(1 - mt, 2);        // 缓出
+        const e = 1 - Math.pow(1 - mt, 2);
         oy =  0.14 * e;
         oz =  0.03 * e;
     } else if (t < 0.50) {
-        // 下坠：从抬起位置快速滑出视野
         const mt = (t - 0.30) / 0.20;
-        const e = mt * mt;                         // 缓入（越滑越快）
+        const e = mt * mt;
         oy =  0.14 - 0.75 * e;
         oz =  0.03 - 0.05 * e;
     } else if (t < 0.65) {
-        // 视野外空档
         oy = -0.61;
         oz = -0.02;
     } else if (t < 0.85) {
-        // 新弹匣升起：从下方滑上来，稍微超过井口一点点
         const mt = (t - 0.65) / 0.20;
-        const e = 1 - Math.pow(1 - mt, 2);         // 缓出
+        const e = 1 - Math.pow(1 - mt, 2);
         oy = -0.61 + 0.65 * e;
         oz = -0.02 * (1 - e);
     } else {
-        // 就位：从 +0.04 回落到 0（嵌入井口）
         const mt = (t - 0.85) / 0.15;
         const e = 1 - Math.pow(1 - mt, 2);
         oy = 0.04 * (1 - e);
@@ -537,7 +647,6 @@ function updateSniperViewmodel(p, dt, now) {
     if (!vm.userData.basePos || !vm.userData.baseRot) return;
     const w = p.weapon;
 
-    // ★ 步枪换弹动画（最高优先级，覆盖所有其他分支）
     if (w && w.key === 'rifle' && vm.userData.magazineGroup
         && p.reloadEnd > now
         && !p.isMelee && !p.isSmoke && !p.isFlash) {
@@ -711,8 +820,6 @@ function updateSniperViewmodel(p, dt, now) {
 
 // ============================================================
 // ★★★ 第三人称动画（远端玩家看到的动画） ★★★
-//
-//   本次修改：换弹分支加入弹匣组的"抬起 → 下坠 → 升起 → 嵌入"四段动画
 // ============================================================
 function updateThirdPersonWeapon(p, dt, now) {
     if (!p.gunHolder) return;
@@ -729,7 +836,6 @@ function updateThirdPersonWeapon(p, dt, now) {
 
     const gun = gh.children.length > 0 ? gh.children[0] : null;
 
-    // ---- 狙击枪拉栓动画（第三人称） ----
     if (gun && gun.userData && gun.userData.boltGroup) {
         if (p.weapon && p.weapon.key === 'sniper' && p.weapon.boltMs && p.boltEnd > now) {
             const progress = 1 - (p.boltEnd - now) / p.weapon.boltMs;
@@ -750,7 +856,6 @@ function updateThirdPersonWeapon(p, dt, now) {
         }
     }
 
-    // ---- 近战动画 ----
     if (p.isMelee && p.meleeEnd > now) {
         const fireMs = p.meleeIsHeavy ? MELEE.heavyFireMs : MELEE.lightFireMs;
         const t = 1 - (p.meleeEnd - now) / fireMs;
@@ -795,18 +900,11 @@ function updateThirdPersonWeapon(p, dt, now) {
         return;
     }
 
-    // ============================================================
-    // ★★★ 换弹动画（第三人称）—— 带弹匣动作 ★★★
-    //
-    //   整枪下沉 + 侧倾，让弹匣井露出
-    //   弹匣组独立做"抬起 → 下坠 → 升起 → 嵌入"四段动画
-    // ============================================================
     if (p.reloadEnd > now && !p.isMelee && !p.isSmoke && !p.isFlash) {
         const w = p.weapon;
         const total = w.reloadMs || 2000;
         const t = 1 - (p.reloadEnd - now) / total;
 
-        // ---------- 整枪姿态 ----------
         let sink = 0;
         if (t < 0.10) sink = t / 0.10;
         else if (t < 0.90) sink = 1;
@@ -820,7 +918,6 @@ function updateThirdPersonWeapon(p, dt, now) {
         gh.position.set(bp.x + wobble, bp.y - sinkY, bp.z);
         gh.rotation.set(br.x + tilt, br.y, br.z + rollZ);
 
-        // ---------- 弹匣动画（第三人称版） ----------
         if (gun && gun.userData && gun.userData.magazineGroup) {
             const mag = gun.userData.magazineGroup;
 
@@ -837,32 +934,26 @@ function updateThirdPersonWeapon(p, dt, now) {
             let oz = 0;
 
             if (t < 0.12) {
-                // 静置
                 oy = 0; oz = 0;
             } else if (t < 0.30) {
-                // 抬起：弹匣脱离井口，让远端玩家也能看到
                 const mt = (t - 0.12) / 0.18;
                 const e = 1 - Math.pow(1 - mt, 2);
                 oy =  0.14 * e;
                 oz =  0.03 * e;
             } else if (t < 0.50) {
-                // 下坠：从抬起位置快速滑出
                 const mt = (t - 0.30) / 0.20;
                 const e = mt * mt;
                 oy =  0.14 - 0.75 * e;
                 oz =  0.03 - 0.05 * e;
             } else if (t < 0.65) {
-                // 视野外空档
                 oy = -0.61;
                 oz = -0.02;
             } else if (t < 0.85) {
-                // 新弹匣升起
                 const mt = (t - 0.65) / 0.20;
                 const e = 1 - Math.pow(1 - mt, 2);
                 oy = -0.61 + 0.65 * e;
                 oz = -0.02 * (1 - e);
             } else {
-                // 嵌入井口
                 const mt = (t - 0.85) / 0.15;
                 const e = 1 - Math.pow(1 - mt, 2);
                 oy = 0.04 * (1 - e);
@@ -875,7 +966,6 @@ function updateThirdPersonWeapon(p, dt, now) {
         return;
     }
 
-    // ---- 其他枪栓动作（非狙击） ----
     if (p.boltEnd > now && p.weapon && p.weapon.boltMs && p.weapon.key !== 'sniper') {
         const total = p.weapon.boltMs;
         const t = 1 - (p.boltEnd - now) / total;
@@ -885,7 +975,6 @@ function updateThirdPersonWeapon(p, dt, now) {
         return;
     }
 
-    // ---- 默认：平滑回到 basePos ----
     gh.position.lerp(bp, k);
     gh.rotation.x += (br.x + p.pitch - gh.rotation.x) * k;
     gh.rotation.y += (br.y - gh.rotation.y) * k;
@@ -978,6 +1067,11 @@ function updatePlayer(p, dt, now) {
         window.PHYSICS.syncPlayerToBody(p, dt);
     }
 
+    // ★ 后坐力恢复（在开火之前处理，保证本帧开火用的是恢复后的偏移）
+    if (p.recoil) {
+        updateRecoilRecovery(p, dt, now);
+    }
+
     if (p.input.fire) {
         if (p.isMelee) tryMelee(p, now, false);
         else if (p.isSmoke || p.isFlash) { /* 由引信系统处理 */ }
@@ -986,8 +1080,15 @@ function updatePlayer(p, dt, now) {
 
     p.mat.opacity = 1;
     p.cam.position.set(p.pos.x, p.pos.y + p.eyeH, p.pos.z);
-    p.cam.rotation.y = p.yaw;
-    p.cam.rotation.x = p.pitch;
+
+    // ============================================================
+    // ★ 摄像机旋转 = 玩家瞄准 + 后坐力偏移
+    // ============================================================
+    const recoilPitch = p.recoil ? p.recoil.offsetPitch : 0;
+    const recoilYaw   = p.recoil ? p.recoil.offsetYaw   : 0;
+    p.cam.rotation.y = p.yaw   + recoilYaw;
+    p.cam.rotation.x = p.pitch + recoilPitch;
+
     p.mesh.position.copy(p.pos);
     p.mesh.rotation.y = p.yaw;
     p.mesh.scale.y = p.height / HEIGHT_STAND;

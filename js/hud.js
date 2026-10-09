@@ -26,6 +26,10 @@ const _cdTimeEl  = document.getElementById('throwCountdownTime');
 const _crossEl   = q('#hud1 .cross');
 const _adsRetEl  = document.getElementById('adsReticle');
 
+// ★ AI 开关 DOM 缓存
+const _aiToggleEl      = document.getElementById('aiToggle');
+const _aiToggleStateEl = document.getElementById('aiToggleState');
+
 const _hudState = {
     score: -1,
     hp: -1,
@@ -334,7 +338,8 @@ function _getScoreboardData() {
         redScore  = p2.score;
         if (typeof gameMode !== 'undefined' && gameMode === 'ai') {
             blueName = '你';
-            redName  = 'AI';
+            // ★ 靶子模式名称
+            redName  = (typeof aiEnabled !== 'undefined' && !aiEnabled) ? '靶子' : 'AI';
         } else {
             blueName = '蓝方';
             redName  = '红方';
@@ -377,7 +382,6 @@ function _updateScorePanelContent() {
     }
 }
 
-// 供主循环每帧刷新面板内容（仅可见时执行，开销极小）
 function _tickScorePanel() {
     if (!_scorePanelVisible) return;
     if (!_scorePanelEl) return;
@@ -388,6 +392,80 @@ function _tickScorePanel() {
 
 window.showScorePanel = showScorePanel;
 window.hideScorePanel = hideScorePanel;
+
+// ============================================================
+// ★ AI 操纵开关（人机对战）
+//   —— 战斗阶段也常驻显示，可随时切换
+// ============================================================
+function toggleAiEnabled() {
+    if (typeof gameMode === 'undefined' || gameMode !== 'ai') return;
+    if (typeof running === 'undefined' || !running) return;
+    if (typeof isOver === 'function' && isOver()) return;
+
+    aiEnabled = !aiEnabled;
+
+    // 关闭 AI 时立即清除它的所有输入，防止残余推动
+    if (!aiEnabled && typeof p2 !== 'undefined' && p2 && p2.input) {
+        p2.input.forward = 0;
+        p2.input.right   = 0;
+        p2.input.jump    = false;
+        p2.input.crouch  = false;
+        p2.input.fire    = false;
+        p2.input.aim     = false;
+    }
+
+    if (typeof audio === 'function') audio();
+    if (aiEnabled) {
+        if (typeof sPickup === 'function') sPickup(1);
+    } else {
+        if (typeof sEmpty === 'function') sEmpty(1);
+    }
+
+    _updateAiToggleUI();
+    _updateScorePanelContent();
+}
+window.toggleAiEnabled = toggleAiEnabled;
+
+function _updateAiToggleUI() {
+    if (!_aiToggleEl) return;
+
+    // ★ 只要在「人机对战 + 游戏进行中」就一直显示，不再受 gameState 限制
+    const shouldShow =
+        (typeof gameMode !== 'undefined' && gameMode === 'ai') &&
+        typeof running !== 'undefined' && running &&
+        !(typeof isOver === 'function' && isOver());
+
+    if (!shouldShow) {
+        if (_aiToggleEl.style.display !== 'none') {
+            _aiToggleEl.style.display = 'none';
+        }
+        return;
+    }
+
+    if (_aiToggleEl.style.display !== 'flex') {
+        _aiToggleEl.style.display = 'flex';
+    }
+
+    if (aiEnabled) {
+        _aiToggleEl.classList.add('on');
+        _aiToggleEl.classList.remove('off');
+        if (_aiToggleStateEl) _aiToggleStateEl.textContent = '开';
+    } else {
+        _aiToggleEl.classList.add('off');
+        _aiToggleEl.classList.remove('on');
+        if (_aiToggleStateEl) _aiToggleStateEl.textContent = '关（靶子）';
+    }
+}
+
+if (_aiToggleEl) {
+    const _handler = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        toggleAiEnabled();
+    };
+    _aiToggleEl.addEventListener('click', _handler);
+    _aiToggleEl.addEventListener('touchstart', _handler, { passive: false });
+}
 
 // ============================================================
 // ★ TAB 键绑定（独立于 input.js，避免干扰主输入流程）
@@ -415,9 +493,6 @@ function updateHUD(now) {
     const p = p1;
     const h = H[1];
     if (!h) return;
-
-    // 顶部比分已隐藏，不再更新（保留缓存以避免多次访问 DOM）
-    // _setText(h.score, String(p.score), 'score');
 
     const hpVal = Math.max(0, Math.round(p.hp));
     if (hpVal !== _hudState.hp) {
@@ -539,4 +614,7 @@ function updateHUD(now) {
 
     // ★ 战绩面板内容刷新（仅面板可见时执行）
     _tickScorePanel();
+
+    // ★ AI 开关 UI 刷新
+    _updateAiToggleUI();
 }

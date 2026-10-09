@@ -27,12 +27,10 @@ function updateEffects(dt, now) {
     updateBulletHoles(now);
     updateThrowFuse(now);
 
-    // ★ 油桶爆炸特效
     if (typeof updateExplosionVisuals === 'function') {
         updateExplosionVisuals(dt, now);
     }
 
-    // ★ 弹壳物理同步
     if (typeof updateShellCasings === 'function') {
         updateShellCasings(dt, now);
     }
@@ -47,20 +45,7 @@ function resetPlayer(p, now) {
     p.mesh.scale.y = 1;
     p.hp = HP_MAX; p.armor = ARMOR_MAX;
 
-    // ============================================================
     // ★ 修复：不管当前手持什么武器，都按"主武器"重置弹药
-    //
-    //   原代码：
-    //     if (!p.isMelee && !p.isSmoke && !p.isFlash) {
-    //         p.ammo = p.weapon.mag;
-    //         p.reserve = p.weapon.startReserve;
-    //     }
-    //   会导致：上一回合把枪打空 → 切刀/烟雾/闪光 → 进入下一回合时
-    //   p.isMelee 为 true，弹药重置被跳过，p.ammo 仍是 0。
-    //
-    //   primaryWeaponKey 是玩家当前"本命枪"的 key，切到刀/投掷物时
-    //   不会被改动，因此可以拿到正确的武器配置。
-    // ============================================================
     const primaryW = (typeof WEAPONS !== 'undefined')
         ? WEAPONS[p.primaryWeaponKey || 'rifle']
         : null;
@@ -68,7 +53,6 @@ function resetPlayer(p, now) {
         p.ammo = primaryW.mag;
         p.reserve = primaryW.startReserve;
     } else if (p.weapon && p.weapon.mag !== undefined) {
-        // 兜底：极端情况下拿不到主武器配置，退回旧的按当前武器重置逻辑
         p.ammo = p.weapon.mag;
         p.reserve = p.weapon.startReserve;
     }
@@ -110,6 +94,15 @@ function resetPlayer(p, now) {
     p.throwFuseEnd = 0;
     p.throwFuseInHand = false;
 
+    // ★ 重置后坐力状态（新增）
+    if (p.recoil) {
+        p.recoil.offsetPitch = 0;
+        p.recoil.offsetYaw = 0;
+        p.recoil.bulletCount = 0;
+        p.recoil.lastShotTime = 0;
+        p.recoil.horizontalDir = 1;
+    }
+
     if (p._netTargetPos) p._netTargetPos.set(p.spawn.x, gh, p.spawn.z);
     if (p._netTargetYaw !== undefined) p._netTargetYaw = p.spawn.yaw;
 
@@ -137,10 +130,8 @@ function startRound(now) {
     clearAllBulletHoles();
     if (flashOverlayEl) flashOverlayEl.style.opacity = '0';
 
-    // ★ 重置所有油桶
     if (typeof window.resetBarrels === 'function') window.resetBarrels();
 
-    // ★ 清空弹壳
     if (typeof clearAllShellCasings === 'function') clearAllShellCasings();
 
     resetPlayer(p1, now);
@@ -192,14 +183,10 @@ function endMatch(winner) {
     if (window.closeCombatReport) window.closeCombatReport();
     if (typeof closeChat === 'function') closeChat();
 
-    // ============================================================
-    // ★ 联机模式下 p1 / p2 与"蓝方 / 红方"不固定对应，
-    //   必须根据座位或观战目标来推导"胜方颜色"。
-    // ============================================================
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online'
                       && typeof NET !== 'undefined' && NET.roomId);
 
-    let winningColor = null;   // 'blue' | 'red' | null（平局）
+    let winningColor = null;
     if (winner) {
         if (isOnline) {
             if (NET.role === 'spectator') {
@@ -207,8 +194,7 @@ function endMatch(winner) {
                 const winnerIsP1 = (winner === p1);
                 winningColor = (winnerIsP1 === p1IsBlue) ? 'blue' : 'red';
             } else {
-                // 玩家（房主 / 客户端）：p1 代表自己的座位
-                const mySeat  = NET.mySeat;                       // 'blue' | 'red'
+                const mySeat  = NET.mySeat;
                 const oppSeat = (mySeat === 'blue') ? 'red' : 'blue';
                 winningColor = (winner === p1) ? mySeat : oppSeat;
             }
@@ -217,9 +203,6 @@ function endMatch(winner) {
         }
     }
 
-    // ============================================================
-    // ★ 比分统一按"蓝方 : 红方"顺序显示
-    // ============================================================
     let blueScore, redScore;
     if (isOnline) {
         if (NET.role === 'spectator') {
@@ -270,10 +253,6 @@ function endMatch(winner) {
 
     if (flashOverlayEl) flashOverlayEl.style.opacity = '0';
 
-    // ============================================================
-    // ★ 房主广播比赛结束时，附带最终比分
-    //   （客户端 handleRoundEvent 会用它同步本地分数并显示结局）
-    // ============================================================
     if (isOnline && NET.isHost) {
         if (typeof NET_sendRoundEvent === 'function') {
             NET_sendRoundEvent('idle', 0, false, roundNumber, {

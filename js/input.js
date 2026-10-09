@@ -117,6 +117,17 @@ window.addEventListener('keydown', e => {
                 }
             }
         }
+
+        // ★ T 键：人机模式下切换 AI 开关
+        if (e.code === 'KeyT') {
+            if (typeof gameMode !== 'undefined' && gameMode === 'ai'
+                && running && !isOver()) {
+                if (typeof window.toggleAiEnabled === 'function') {
+                    window.toggleAiEnabled();
+                }
+            }
+            return;
+        }
     }
     keys[e.code] = true;
 });

@@ -85,7 +85,8 @@ function initChat() {
                         NET_sendChat(text);
                     }
 
-                    if (typeof gameMode !== 'undefined' && gameMode === 'ai' && running) {
+                    // ★ AI 关闭（靶子模式）时不回复
+                    if (typeof gameMode !== 'undefined' && gameMode === 'ai' && running && aiEnabled) {
                         if (Math.random() < 0.4) {
                             setTimeout(() => {
                                 if (!running) return;
@@ -196,9 +197,6 @@ function collectSmokeOccluders(targets) {
 
 // ============================================================
 // ★ 优化：遮挡检测缓存
-//   原 isOpponentOccluded() 每帧都跑 2 条射线检测。
-//   现在改为 10Hz（100ms 节流），中间帧复用上次结果。
-//   仅在开启透视时才会有可见收益（未开透视时函数不会被调用）。
 // ============================================================
 let _occludedLastCheck = 0;
 let _occludedCached = false;
@@ -206,13 +204,11 @@ let _occludedCached = false;
 function isOpponentOccluded() {
     const now = performance.now();
 
-    // ★ 10Hz 节流：100ms 内直接复用上次结果
     if (now - _occludedLastCheck < 100) {
         return _occludedCached;
     }
     _occludedLastCheck = now;
 
-    // 快速短路检查
     if (!p2 || !p2.baseVisible) {
         _occludedCached = false;
         return false;
@@ -232,8 +228,6 @@ function _isOpponentOccludedUncached() {
         p2.pos.y + 1.62 * scaleY,
     ];
 
-    // ★ 注意：这里保留 concat —— 因为烟雾是动态的，
-    //   需要每次都重新收集。10Hz 下开销已很小。
     const targets = wallMeshes.concat(crateMeshes);
     collectSmokeOccluders(targets);
 
@@ -350,6 +344,9 @@ function renderChatMessages() {
     if (typeof gameMode !== 'undefined' && gameMode === 'online'
         && typeof NET !== 'undefined' && NET.getOpponentName) {
         enemyName = NET.getOpponentName();
+    } else if (typeof gameMode !== 'undefined' && gameMode === 'ai') {
+        // ★ 靶子模式名称
+        enemyName = (typeof aiEnabled !== 'undefined' && !aiEnabled) ? '靶子' : 'AI';
     }
 
     chatMessagesEl.innerHTML = visible.map(m => {
@@ -380,12 +377,15 @@ function escapeHtml(s) {
 // ============================================================
 function aiTaunt() {
     if (typeof gameMode === 'undefined' || gameMode !== 'ai') return;
+    if (typeof aiEnabled !== 'undefined' && !aiEnabled) return;   // ★ 靶子不说话
     if (!running) return;
 
     aiStreak++;
 
     setTimeout(() => {
         if (!running) return;
+        if (typeof aiEnabled !== 'undefined' && !aiEnabled) return;
+
         let pool;
         if (aiStreak >= 4) pool = CHAT_AI_TAUNTS_DOMINANT;
         else if (aiStreak >= 2) pool = CHAT_AI_TAUNTS_STREAK;
@@ -397,6 +397,7 @@ function aiTaunt() {
         if (aiStreak >= 3 && Math.random() < 0.5) {
             setTimeout(() => {
                 if (!running) return;
+                if (typeof aiEnabled !== 'undefined' && !aiEnabled) return;
                 const extra = pool[Math.floor(Math.random() * pool.length)];
                 if (extra !== text) addChatMessage(2, extra);
             }, 700 + Math.random() * 600);
@@ -420,7 +421,6 @@ function clearChat() {
         xrayEnabled = false;
         applyNormalMaterials();
     }
-    // ★ 重置缓存，避免下一局继承旧的可见性/遮挡结果
     _occludedLastCheck = 0;
     _occludedCached = false;
 }

@@ -54,6 +54,26 @@ const _aiQ1      = new THREE.Quaternion();
 const _aiQ2      = new THREE.Quaternion();
 
 function aiResetRound(now) {
+    // ★ 靶子模式：不再随机换枪，保持当前武器；只重置内部 AI 状态
+    if (!aiEnabled) {
+        ai.targetYaw = p2.yaw;
+        ai.targetPitch = 0;
+        ai.aimJitterYaw = 0;
+        ai.aimJitterPitch = 0;
+        ai.nextJitterAt = now;
+        ai.moveF = 0;
+        ai.moveS = 0;
+        ai.nextMoveChange = now + 999999;
+        ai.nextJumpAt = now + 999999;
+        ai.stance = 'stand';
+        ai.stanceUntil = now + 999999;
+        ai.lastSeenAt = 0;
+        ai.nextShotReady = now;
+        ai.lastVisibilityCheck = 0;
+        ai.lastVisibilityResult = false;
+        return;
+    }
+
     const key = AI_WEAPON_POOL[Math.floor(Math.random() * AI_WEAPON_POOL.length)];
 
     ai.reservedWeaponKey = key;
@@ -124,6 +144,7 @@ function aiStartReload(now) {
 
 function aiFire(now) {
     if (gameState !== 'combat') return;
+    if (!aiEnabled) return;              // ★ 靶子不开火
     if (p2.isMelee) return;
     if (now < p2.nextShot || p2.reloadEnd > now) return;
     if (p2.deadUntil > now) return;
@@ -139,15 +160,15 @@ function aiFire(now) {
     p2.ammo--;
 
     // ============================================================
-    // ★ 射速计算（与 tryFire 保持一致，含开镜满射速）
-    //
-    //   AI 目前不会主动开镜（p2.input.aim 一直为 false），
-    //   但保留该分支以便未来扩展，也保证行为一致。
+    // ★ 射速计算（与 tryFire 保持一致）
+    //   优先级：
+    //     1. 奥丁（spinUpMs）→ 开镜直接满射速，腰射按 spin-up 曲线
+    //     2. 其他武器（如狂徒）→ 开镜时按 adsFireRateMul 缩放
+    //     3. 其余 → 固定 fireMs
     // ============================================================
     let currentFireMs = w.fireMs;
     if (w.spinUpMs && w.minFireMs) {
         if (p2.aiming) {
-            // 开镜：直接满射速
             p2.spinUpProgress = 1;
             currentFireMs = w.minFireMs;
         } else {
@@ -159,6 +180,9 @@ function aiFire(now) {
             }
             currentFireMs = Math.max(w.minFireMs, w.fireMs - (w.fireMs - w.minFireMs) * p2.spinUpProgress);
         }
+    } else if (p2.aiming && w.adsFireRateMul) {
+        // ★ 通用开镜射速惩罚（与 tryFire 保持一致）
+        currentFireMs = currentFireMs / w.adsFireRateMul;
     }
     p2.nextShot = now + currentFireMs;
     p2.lastShotTime = now;
@@ -250,6 +274,34 @@ function aiUpdate(dt, now) {
         return;
     }
     p2.baseVisible = true;
+
+    // ============================================================
+    // ★ AI 关闭：站桩靶子模式
+    // ============================================================
+    if (!aiEnabled) {
+        p2.prevY = p2.pos.y;
+        p2.vy -= GRAV * dt;
+        p2.pos.y += p2.vy * dt;
+        p2._vyBeforeLand = p2.vy;
+
+        collideWorld(p2);
+        if (p2.pos.y <= 0) {
+            p2.pos.y = 0;
+            p2.vy = 0;
+            p2.onGround = true;
+        }
+        const _ghStand = terrainGroundAt(p2.pos.x, p2.pos.z);
+        if (p2.pos.y < _ghStand) {
+            p2.pos.y = _ghStand;
+            p2.vy = 0;
+            p2.onGround = true;
+        }
+
+        p2.mesh.position.copy(p2.pos);
+        p2.mesh.rotation.y = p2.yaw;
+        p2.mesh.scale.y = p2.height / HEIGHT_STAND;
+        return;
+    }
 
     if (p2.isMelee || p2.isSmoke || p2.isFlash) {
         const key = (WEAPONS[ai.reservedWeaponKey]) ? ai.reservedWeaponKey : 'rifle';
