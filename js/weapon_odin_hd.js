@@ -1,165 +1,28 @@
-// ===== js/weapon_odin_hd.js – 高细节 PBR 轻机枪模型（M249 SAW 风格）=====
-// 使用方式：
-//   1. 本文件必须在 player_model.js 之前加载
-//   2. player_model.js 里的 makeWeaponModel / makeViewmodel 需加早返回
-//
-// 仅覆盖 'odin'，其他武器不受影响。
-//
-// ★ 本次修正：
-//   · 镜筒主体改空心管（openEnded = true），去掉前后端盖
-//   · 前端环 / 后端环改用 Torus 环形，中间通孔，开镜能看穿
-//   · 前镜片前移到 +0.0485，镀膜 / 红点同步，避免与端环 z-fighting
-//   · scopeCenter 锚点同步到新镜片位置
-//   · 视图模型 BASE_Z 从 -0.42 → -0.72（枪身缩进画面，能看到扳机 / 枪托）
+// ===== js/weapon_odin_hd.js – 高细节 PBR 轻机枪模型（M249 SAW 风格） =====
+// 依赖：js/weapon_hd_common.js（必须先加载）
 
 (function () {
     'use strict';
     if (typeof THREE === 'undefined') return;
 
-    const IS_TOUCH_LOW = (typeof IS_TOUCH !== 'undefined' && IS_TOUCH);
+    const U = window.HD_UTIL;
+    if (!U) {
+        console.error('[weapon_odin_hd] 缺少 HD_UTIL，请确认 weapon_hd_common.js 已加载');
+        return;
+    }
+
+    const IS_TOUCH_LOW = U.IS_TOUCH_LOW;
     const TEX_SIZE = IS_TOUCH_LOW ? 256 : 512;
     const SEG = IS_TOUCH_LOW ? 20 : 40;
     const CURVE_SEG = IS_TOUCH_LOW ? 6 : 10;
     const BEVEL_SEG = IS_TOUCH_LOW ? 2 : 3;
-
-    function makeCanvas(w, h) {
-        const c = document.createElement('canvas');
-        c.width = w; c.height = h || w;
-        return c;
-    }
-
-    function newHeightData(S) {
-        const c = makeCanvas(S);
-        const ctx = c.getContext('2d');
-        const img = ctx.createImageData(S, S);
-        const d = img.data;
-        for (let i = 0; i < d.length; i += 4) {
-            d[i] = d[i + 1] = d[i + 2] = 128;
-            d[i + 3] = 255;
-        }
-        return { c, ctx, img, d };
-    }
-
-    function normalMapFromHeight(hCanvas, strength) {
-        const S = hCanvas.width;
-        const src = hCanvas.getContext('2d').getImageData(0, 0, S, S).data;
-        const out = makeCanvas(S);
-        const octx = out.getContext('2d');
-        const dst = octx.createImageData(S, S);
-        const d = dst.data;
-        const mask = S - 1;
-
-        for (let y = 0; y < S; y++) {
-            const rowC = y * S;
-            const rowU = ((y - 1) & mask) * S;
-            const rowD = ((y + 1) & mask) * S;
-            for (let x = 0; x < S; x++) {
-                const xL = (x - 1) & mask;
-                const xR = (x + 1) & mask;
-                const dx = (src[(rowC + xR) * 4] - src[(rowC + xL) * 4]) / 255 * strength;
-                const dy = (src[(rowD + x) * 4] - src[(rowU + x) * 4]) / 255 * strength;
-                const invLen = 1 / Math.sqrt(dx * dx + dy * dy + 1);
-                const i = (rowC + x) * 4;
-                d[i]     = ((-dx * invLen) * 0.5 + 0.5) * 255;
-                d[i + 1] = ((-dy * invLen) * 0.5 + 0.5) * 255;
-                d[i + 2] = ((     invLen) * 0.5 + 0.5) * 255;
-                d[i + 3] = 255;
-            }
-        }
-        octx.putImageData(dst, 0, 0);
-        const t = new THREE.CanvasTexture(out);
-        t.wrapS = t.wrapT = THREE.RepeatWrapping;
-        t.anisotropy = 4;
-        return t;
-    }
-
-    function roughMapFromHeight(hCanvas, low, high, contrast) {
-        contrast = contrast || 1.0;
-        const S = hCanvas.width;
-        const src = hCanvas.getContext('2d').getImageData(0, 0, S, S).data;
-        const out = makeCanvas(S);
-        const octx = out.getContext('2d');
-        const dst = octx.createImageData(S, S);
-        const d = dst.data;
-        const range = high - low;
-        for (let i = 0; i < src.length; i += 4) {
-            let v = src[i] / 255;
-            v = Math.pow(v, contrast);
-            v = low + v * range;
-            const g = Math.max(0, Math.min(255, v * 255)) | 0;
-            d[i] = d[i + 1] = d[i + 2] = g;
-            d[i + 3] = 255;
-        }
-        octx.putImageData(dst, 0, 0);
-        const t = new THREE.CanvasTexture(out);
-        t.wrapS = t.wrapT = THREE.RepeatWrapping;
-        t.anisotropy = 4;
-        return t;
-    }
-
-    function colorMapFromHeight(hCanvas, baseRGB, wornRGB, opts) {
-        opts = opts || {};
-        const S = hCanvas.width;
-        const src = hCanvas.getContext('2d').getImageData(0, 0, S, S).data;
-        const out = makeCanvas(S);
-        const octx = out.getContext('2d');
-        const dst = octx.createImageData(S, S);
-        const d = dst.data;
-        const mask = S - 1;
-
-        const aoStrength   = opts.aoStrength   !== undefined ? opts.aoStrength   : 0.35;
-        const wearLow      = opts.wearLow      !== undefined ? opts.wearLow      : 0.32;
-        const wearHigh     = opts.wearHigh     !== undefined ? opts.wearHigh     : 0.55;
-        const dirtAmount   = opts.dirtAmount   !== undefined ? opts.dirtAmount   : 0.06;
-        const grainAmount  = opts.grainAmount  !== undefined ? opts.grainAmount  : 6;
-        const wearBoost    = opts.wearBoost    !== undefined ? opts.wearBoost    : 1.0;
-
-        const at = (x, y) => src[(((y & mask) * S + (x & mask)) << 2)] / 255;
-
-        for (let y = 0; y < S; y++) {
-            for (let x = 0; x < S; x++) {
-                const h = at(x, y);
-
-                let sum = 0;
-                for (let dy = -1; dy <= 1; dy++)
-                    for (let dx = -1; dx <= 1; dx++)
-                        sum += at(x + dx, y + dy);
-                const avg = sum / 9;
-                const ao = 1 - Math.max(0, avg - h) * aoStrength * 4.5;
-
-                let w = 0;
-                if (h < wearLow) w = 1;
-                else if (h < wearHigh) w = (wearHigh - h) / (wearHigh - wearLow);
-                w *= wearBoost;
-
-                const dr = baseRGB[0] * (1 - w) + wornRGB[0] * w;
-                const dg = baseRGB[1] * (1 - w) + wornRGB[1] * w;
-                const db = baseRGB[2] * (1 - w) + wornRGB[2] * w;
-
-                const dirt = (Math.random() - 0.5) * dirtAmount * 80;
-                const grain = (Math.random() - 0.5) * grainAmount;
-
-                const i = (y * S + x) << 2;
-                d[i]     = Math.max(0, Math.min(255, dr * ao + dirt + grain));
-                d[i + 1] = Math.max(0, Math.min(255, dg * ao + dirt + grain));
-                d[i + 2] = Math.max(0, Math.min(255, db * ao + dirt + grain));
-                d[i + 3] = 255;
-            }
-        }
-        octx.putImageData(dst, 0, 0);
-        const t = new THREE.CanvasTexture(out);
-        t.wrapS = t.wrapT = THREE.RepeatWrapping;
-        if (THREE.sRGBEncoding !== undefined) t.encoding = THREE.sRGBEncoding;
-        t.anisotropy = 4;
-        return t;
-    }
 
     // ============================================================
     // 高度图生成器
     // ============================================================
     function phosphatedSteelHeight() {
         const S = TEX_SIZE;
-        const { c, ctx, img, d } = newHeightData(S);
+        const { c, ctx, img, d } = U.newHeightData(S);
         const mask = S - 1;
 
         const n1 = (S * S * 0.85) | 0;
@@ -215,7 +78,7 @@
 
     function heavyBarrelHeight() {
         const S = TEX_SIZE;
-        const { c, ctx, img, d } = newHeightData(S);
+        const { c, ctx, img, d } = U.newHeightData(S);
         const mask = S - 1;
 
         for (let y = 0; y < S; y++) {
@@ -254,7 +117,7 @@
 
     function polymerHeight() {
         const S = TEX_SIZE;
-        const { c, ctx, img, d } = newHeightData(S);
+        const { c, ctx, img, d } = U.newHeightData(S);
         const mask = S - 1;
 
         const n1 = (S * S * 0.7) | 0;
@@ -306,8 +169,7 @@
 
     function heatShieldHeight() {
         const S = TEX_SIZE;
-        const { c, ctx, img, d } = newHeightData(S);
-        const mask = S - 1;
+        const { c, ctx, img, d } = U.newHeightData(S);
 
         const n1 = (S * S * 0.7) | 0;
         for (let i = 0; i < n1; i++) {
@@ -335,7 +197,7 @@
 
     function rubberHeight() {
         const S = TEX_SIZE;
-        const { c, ctx, img, d } = newHeightData(S);
+        const { c, ctx, img, d } = U.newHeightData(S);
         const n = (S * S * 1.5) | 0;
         for (let i = 0; i < n; i++) {
             const x = (Math.random() * S) | 0;
@@ -362,88 +224,53 @@
         const hRubber = rubberHeight();
 
         _tex = {
-            nPhos:   normalMapFromHeight(hPhos,   1.6),
-            nBarrel: normalMapFromHeight(hBarrel, 1.6),
-            nPoly:   normalMapFromHeight(hPoly,   1.5),
-            nShield: normalMapFromHeight(hShield, 1.3),
-            nRubber: normalMapFromHeight(hRubber, 3.2),
+            nPhos:   U.normalMapFromHeight(hPhos,   1.6),
+            nBarrel: U.normalMapFromHeight(hBarrel, 1.6),
+            nPoly:   U.normalMapFromHeight(hPoly,   1.5),
+            nShield: U.normalMapFromHeight(hShield, 1.3),
+            nRubber: U.normalMapFromHeight(hRubber, 3.2),
 
-            rPhos:   roughMapFromHeight(hPhos,   0.36, 0.56, 1.0),
-            rBarrel: roughMapFromHeight(hBarrel, 0.20, 0.40, 1.0),
-            rPoly:   roughMapFromHeight(hPoly,   0.74, 0.90, 1.0),
-            rShield: roughMapFromHeight(hShield, 0.30, 0.52, 1.0),
-            rRubber: roughMapFromHeight(hRubber, 0.90, 0.98, 1.0),
+            rPhos:   U.roughMapFromHeight(hPhos,   0.36, 0.56, 1.0),
+            rBarrel: U.roughMapFromHeight(hBarrel, 0.20, 0.40, 1.0),
+            rPoly:   U.roughMapFromHeight(hPoly,   0.74, 0.90, 1.0),
+            rShield: U.roughMapFromHeight(hShield, 0.30, 0.52, 1.0),
+            rRubber: U.roughMapFromHeight(hRubber, 0.90, 0.98, 1.0),
 
-            cPhos:   colorMapFromHeight(hPhos,   [34, 37, 41], [92, 96, 104],
+            cPhos:   U.colorMapFromHeight(hPhos,   [34, 37, 41], [92, 96, 104],
                 { aoStrength: 0.50, wearLow: 0.34, wearHigh: 0.58, dirtAmount: 0.06, grainAmount: 7 }),
-            cBarrel: colorMapFromHeight(hBarrel, [22, 25, 30], [86, 90, 98],
+            cBarrel: U.colorMapFromHeight(hBarrel, [22, 25, 30], [86, 90, 98],
                 { aoStrength: 0.42, wearLow: 0.30, wearHigh: 0.55, dirtAmount: 0.05, grainAmount: 6 }),
-            cPoly:   colorMapFromHeight(hPoly,   [24, 26, 30], [72, 74, 78],
+            cPoly:   U.colorMapFromHeight(hPoly,   [24, 26, 30], [72, 74, 78],
                 { aoStrength: 0.55, wearLow: 0.32, wearHigh: 0.58, dirtAmount: 0.06, grainAmount: 4 }),
-            cShield: colorMapFromHeight(hShield, [28, 31, 35], [86, 90, 96],
+            cShield: U.colorMapFromHeight(hShield, [28, 31, 35], [86, 90, 96],
                 { aoStrength: 0.42, wearLow: 0.30, wearHigh: 0.55, dirtAmount: 0.05, grainAmount: 5 }),
-            cRubber: colorMapFromHeight(hRubber, [12, 14, 17], [48, 48, 50],
+            cRubber: U.colorMapFromHeight(hRubber, [12, 14, 17], [48, 48, 50],
                 { aoStrength: 0.65, wearLow: 0.25, wearHigh: 0.50, dirtAmount: 0.04, grainAmount: 10 }),
         };
         return _tex;
     }
 
     // ============================================================
-    // 环境贴图
+    // 环境贴图（与 rifle 共用）
     // ============================================================
-    let _envMap = null;
     function getEnvMap() {
-        if (_envMap) return _envMap;
-        if (typeof renderer === 'undefined' || !renderer) return null;
-        try {
-            const pmrem = new THREE.PMREMGenerator(renderer);
-            pmrem.compileEquirectangularShader();
-
-            const W = 1024, H = 512;
-            const c = makeCanvas(W, H);
-            const ctx = c.getContext('2d');
-
-            const g = ctx.createLinearGradient(0, 0, 0, H);
-            g.addColorStop(0.00, '#0e1218');
-            g.addColorStop(0.30, '#233040');
-            g.addColorStop(0.48, '#6b7f96');
-            g.addColorStop(0.50, '#909fb2');
-            g.addColorStop(0.52, '#404855');
-            g.addColorStop(0.75, '#181c22');
-            g.addColorStop(1.00, '#050607');
-            ctx.fillStyle = g;
-            ctx.fillRect(0, 0, W, H);
-
-            const k = W / 2048;
-            const lights = [
-                { x: 500 * k,  y: 120 * k, r: 500 * k, c: '255,252,242', a: 1.0  },
-                { x: 1300 * k, y: 160 * k, r: 420 * k, c: '210,225,255', a: 0.85 },
-                { x: 1750 * k, y: 280 * k, r: 320 * k, c: '255,215,170', a: 0.7  },
-                { x: 300 * k,  y: 380 * k, r: 380 * k, c: '150,180,220', a: 0.5  },
-                { x: 1000 * k, y: 400 * k, r: 300 * k, c: '200,210,230', a: 0.35 },
-            ];
-            lights.forEach(L => {
-                const rg = ctx.createRadialGradient(L.x, L.y, 0, L.x, L.y, L.r);
-                rg.addColorStop(0,    'rgba(' + L.c + ',' + L.a + ')');
-                rg.addColorStop(0.35, 'rgba(' + L.c + ',' + (L.a * 0.45) + ')');
-                rg.addColorStop(0.7,  'rgba(' + L.c + ',' + (L.a * 0.1)  + ')');
-                rg.addColorStop(1,    'rgba(' + L.c + ',0)');
-                ctx.fillStyle = rg;
-                ctx.fillRect(L.x - L.r, L.y - L.r, L.r * 2, L.r * 2);
-            });
-
-            const tex = new THREE.CanvasTexture(c);
-            tex.mapping = THREE.EquirectangularReflectionMapping;
-            if (THREE.sRGBEncoding !== undefined) tex.encoding = THREE.sRGBEncoding;
-
-            const rt = pmrem.fromEquirectangular(tex);
-            _envMap = rt.texture;
-            tex.dispose();
-            pmrem.dispose();
-        } catch (e) {
-            console.warn('[weapon_odin_hd] 环境贴图生成失败', e);
-        }
-        return _envMap;
+        return U.buildEnvMap({
+            key: 'rifle_env',
+            width: 1024, height: 512,
+            gradient: [
+                [0.00, '#0e1218'], [0.30, '#233040'],
+                [0.48, '#6b7f96'], [0.50, '#909fb2'],
+                [0.52, '#404855'], [0.75, '#181c22'],
+                [1.00, '#050607'],
+            ],
+            lights: [
+                { cx: 500,  cy: 120, r: 500, rgb: '255,252,242', alpha: 1.0  },
+                { cx: 1300, cy: 160, r: 420, rgb: '210,225,255', alpha: 0.85 },
+                { cx: 1750, cy: 280, r: 320, rgb: '255,215,170', alpha: 0.7  },
+                { cx: 300,  cy: 380, r: 380, rgb: '150,180,220', alpha: 0.5  },
+                { cx: 1000, cy: 400, r: 300, rgb: '200,210,230', alpha: 0.35 },
+            ],
+        });
     }
 
     // ============================================================
@@ -506,7 +333,7 @@
                 roughnessMap: tex.rPhos, normalMap: tex.nPhos,
                 normalScale: new THREE.Vector2(0.30, 0.30),
                 clearcoat: 0.40, clearcoatRoughness: 0.28, envMapIntensity: 1.65,
-                side: THREE.DoubleSide,   // ★ 空心管需要双面渲染
+                side: THREE.DoubleSide,
             })),
             glass: new THREE.MeshPhysicalMaterial(mk({
                 color: 0x060a12, metalness: 0.0, roughness: 0.06,
@@ -522,82 +349,17 @@
     }
 
     // ============================================================
-    // 几何工具
+    // 几何快捷方式
     // ============================================================
-    function roundedRectShape(w, h, r) {
-        r = Math.min(r, w / 2 - 0.0001, h / 2 - 0.0001);
-        const s = new THREE.Shape();
-        const x = -w / 2, y = -h / 2;
-        s.moveTo(x + r, y);
-        s.lineTo(x + w - r, y);
-        s.quadraticCurveTo(x + w, y, x + w, y + r);
-        s.lineTo(x + w, y + h - r);
-        s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-        s.lineTo(x + r, y + h);
-        s.quadraticCurveTo(x, y + h, x, y + h - r);
-        s.lineTo(x, y + r);
-        s.quadraticCurveTo(x, y, x + r, y);
-        return s;
-    }
-
-    function applyTriplanarUV(geo, scale) {
-        const pos = geo.attributes.position;
-        const nor = geo.attributes.normal;
-        const uv  = geo.attributes.uv;
-        if (!uv || !nor) return;
-        for (let i = 0; i < pos.count; i++) {
-            const nx = Math.abs(nor.getX(i));
-            const ny = Math.abs(nor.getY(i));
-            const nz = Math.abs(nor.getZ(i));
-            const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-            let u, v;
-            if (nz >= nx && nz >= ny) { u = x; v = y; }
-            else if (nx >= ny)        { u = z; v = y; }
-            else                      { u = x; v = z; }
-            uv.setXY(i, u * scale, v * scale);
-        }
-        uv.needsUpdate = true;
-    }
-
-    function scaleGeometryUV(geo, uScale, vScale) {
-        const uv = geo.attributes.uv;
-        if (!uv) return geo;
-        for (let i = 0; i < uv.count; i++) {
-            uv.setXY(i, uv.getX(i) * uScale, uv.getY(i) * vScale);
-        }
-        uv.needsUpdate = true;
-        return geo;
-    }
-
-    function roundedBoxZ(w, h, d, r, bevel, uvScale) {
-        bevel = bevel === undefined ? 0.0018 : bevel;
-        uvScale = uvScale === undefined ? 18 : uvScale;
-        const geo = new THREE.ExtrudeGeometry(roundedRectShape(w, h, r), {
-            depth: Math.max(d - bevel * 2, 0.0002),
-            bevelEnabled: true,
-            bevelThickness: bevel,
-            bevelSize: bevel,
-            bevelSegments: BEVEL_SEG,
-            curveSegments: CURVE_SEG,
-        });
-        geo.translate(0, 0, -(d - bevel * 2) / 2);
-        geo.computeVertexNormals();
-        applyTriplanarUV(geo, uvScale);
-        return geo;
-    }
-
-    function roundedBoxX(L, H, W, r, bevel, uvScale) {
-        const geo = roundedBoxZ(W, H, L, r, bevel, uvScale);
-        geo.rotateY(Math.PI / 2);
-        return geo;
-    }
+    const boxX = (L, H, W, r, bevel, uvScale) =>
+        U.roundedBoxX(L, H, W, r, bevel, uvScale || 18, CURVE_SEG, BEVEL_SEG);
 
     // ============================================================
     // 铭文 / 镜片贴图
     // ============================================================
     function makeRollMarkTexture(text, subText) {
         const W = 1024, H = 192;
-        const c = makeCanvas(W, H);
+        const c = U.makeCanvas(W, H);
         const ctx = c.getContext('2d');
         ctx.clearRect(0, 0, W, H);
 
@@ -626,7 +388,7 @@
 
     function makeLensCoatingTexture() {
         const S = 256;
-        const c = makeCanvas(S);
+        const c = U.makeCanvas(S);
         const ctx = c.getContext('2d');
         const grad = ctx.createRadialGradient(S * 0.35, S * 0.35, 0, S * 0.5, S * 0.5, S * 0.65);
         grad.addColorStop(0,    'rgba(160, 200, 255, 0.85)');
@@ -635,7 +397,6 @@
         grad.addColorStop(1,    'rgba(20, 40, 80, 0.10)');
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, S, S);
-
         const t = new THREE.CanvasTexture(c);
         if (THREE.sRGBEncoding !== undefined) t.encoding = THREE.sRGBEncoding;
         return t;
@@ -648,7 +409,7 @@
     }
 
     // ============================================================
-    // 构建轻机枪（+X 为枪管方向）
+    // 构建轻机枪
     // ============================================================
     function buildOdinHD() {
         const MAT = getMaterials();
@@ -677,11 +438,11 @@
         stockGroup.rotation.z = 0.10;
         inner.add(stockGroup);
 
-        part(roundedBoxX(0.095, 0.090, 0.064, 0.022), MAT.polymer,
+        part(boxX(0.095, 0.090, 0.064, 0.022), MAT.polymer,
              -0.028, 0.004, 0, 0, 0, 0, stockGroup);
-        part(roundedBoxX(0.170, 0.102, 0.076, 0.022), MAT.polymer,
+        part(boxX(0.170, 0.102, 0.076, 0.022), MAT.polymer,
              -0.155, -0.016, 0, 0, 0, 0, stockGroup);
-        part(roundedBoxX(0.145, 0.022, 0.065, 0.007), MAT.polymer,
+        part(boxX(0.145, 0.022, 0.065, 0.007), MAT.polymer,
              -0.158, 0.048, 0, 0, 0, 0, stockGroup);
 
         {
@@ -698,10 +459,10 @@
             stockGroup.add(mesh);
         }
 
-        part(roundedBoxX(0.155, 0.008, 0.078, 0.002), MAT.polymer,
+        part(boxX(0.155, 0.008, 0.078, 0.002), MAT.polymer,
              -0.158, -0.072, 0, 0, 0, 0, stockGroup);
 
-        part(roundedBoxX(0.038, 0.155, 0.078, 0.016), MAT.rubber,
+        part(boxX(0.038, 0.155, 0.078, 0.016), MAT.rubber,
              -0.262, -0.022, 0, 0, 0, 0, stockGroup);
 
         {
@@ -750,7 +511,7 @@
         const RECV_X = -0.060;
         const RECV_L = 0.290;
 
-        part(roundedBoxX(RECV_L, 0.100, 0.078, 0.012), MAT.receiver, RECV_X, Y_RECV, 0);
+        part(boxX(RECV_L, 0.100, 0.078, 0.012), MAT.receiver, RECV_X, Y_RECV, 0);
 
         const rollMarkTex = makeRollMarkTexture('M249 SAW', '5.56MM LIGHT MACHINE GUN');
         const rollMarkMat = new THREE.MeshStandardMaterial({
@@ -761,13 +522,13 @@
         rollMarkMesh.position.set(RECV_X - 0.045, Y_RECV + 0.012, 0.0391);
         inner.add(rollMarkMesh);
 
-        part(roundedBoxX(0.120, 0.0050, 0.0008, 0.0006), MAT.slotInner,
+        part(boxX(0.120, 0.0050, 0.0008, 0.0006), MAT.slotInner,
              RECV_X - 0.030, Y_RECV + 0.024, 0.0391);
-        part(roundedBoxX(0.120, 0.0050, 0.0008, 0.0006), MAT.slotInner,
+        part(boxX(0.120, 0.0050, 0.0008, 0.0006), MAT.slotInner,
              RECV_X - 0.030, Y_RECV - 0.016, 0.0391);
-        part(roundedBoxX(0.120, 0.0050, 0.0008, 0.0006), MAT.slotInner,
+        part(boxX(0.120, 0.0050, 0.0008, 0.0006), MAT.slotInner,
              RECV_X - 0.030, Y_RECV + 0.024, -0.0391);
-        part(roundedBoxX(0.120, 0.0050, 0.0008, 0.0006), MAT.slotInner,
+        part(boxX(0.120, 0.0050, 0.0008, 0.0006), MAT.slotInner,
              RECV_X - 0.030, Y_RECV - 0.016, -0.0391);
 
         part(new THREE.CylinderGeometry(0.0050, 0.0050, 0.082, 16), MAT.bright,
@@ -778,11 +539,10 @@
         // -------- 3. 顶部供弹机盖 --------
         const FEED_X = RECV_X + 0.005;
 
-        part(roundedBoxX(0.255, 0.022, 0.072, 0.005), MAT.receiver, FEED_X, Y_FEED, 0);
-
-        part(roundedBoxX(0.238, 0.008, 0.010, 0.0018), MAT.receiver,
+        part(boxX(0.255, 0.022, 0.072, 0.005), MAT.receiver, FEED_X, Y_FEED, 0);
+        part(boxX(0.238, 0.008, 0.010, 0.0018), MAT.receiver,
              FEED_X, Y_FEED + 0.015, 0.022);
-        part(roundedBoxX(0.238, 0.008, 0.010, 0.0018), MAT.receiver,
+        part(boxX(0.238, 0.008, 0.010, 0.0018), MAT.receiver,
              FEED_X, Y_FEED + 0.015, -0.022);
 
         part(new THREE.CylinderGeometry(0.0050, 0.0050, 0.072, 14), MAT.bright,
@@ -792,21 +552,21 @@
         part(new THREE.SphereGeometry(0.0062, 12, 10), MAT.bright,
              FEED_X - 0.118, Y_FEED - 0.010, -0.038);
 
-        part(roundedBoxX(0.085, 0.048, 0.010, 0.004), MAT.slotInner,
+        part(boxX(0.085, 0.048, 0.010, 0.004), MAT.slotInner,
              FEED_X + 0.020, Y_FEED - 0.024, -0.044);
-        part(roundedBoxX(0.092, 0.008, 0.012, 0.0018), MAT.receiver,
+        part(boxX(0.092, 0.008, 0.012, 0.0018), MAT.receiver,
              FEED_X + 0.020, Y_FEED - 0.046, -0.044);
-        part(roundedBoxX(0.092, 0.008, 0.012, 0.0018), MAT.receiver,
+        part(boxX(0.092, 0.008, 0.012, 0.0018), MAT.receiver,
              FEED_X + 0.020, Y_FEED - 0.002, -0.044);
 
-        part(roundedBoxX(0.028, 0.016, 0.012, 0.002), MAT.bright,
+        part(boxX(0.028, 0.016, 0.012, 0.002), MAT.bright,
              FEED_X + 0.110, Y_FEED - 0.005, 0.035);
         for (let i = 0; i < 4; i++) {
             part(new THREE.BoxGeometry(0.0018, 0.010, 0.0012), MAT.slotInner,
                  FEED_X + 0.100 + i * 0.006, Y_FEED - 0.005, 0.0415);
         }
 
-        part(roundedBoxX(0.016, 0.012, 0.018, 0.002), MAT.bright,
+        part(boxX(0.016, 0.012, 0.018, 0.002), MAT.bright,
              FEED_X + 0.132, Y_FEED - 0.005, 0);
 
         {
@@ -826,7 +586,7 @@
         // -------- 4. 提把 --------
         const CARRY_X = 0.180;
 
-        part(roundedBoxX(0.058, 0.024, 0.052, 0.005), MAT.receiver,
+        part(boxX(0.058, 0.024, 0.052, 0.005), MAT.receiver,
              CARRY_X, Y_BARREL + 0.036, 0);
         part(new THREE.CylinderGeometry(0.0045, 0.0045, 0.058, 14), MAT.bright,
              CARRY_X - 0.020, Y_BARREL + 0.042, 0, R, 0, 0);
@@ -856,7 +616,7 @@
 
         const shieldGeo = new THREE.CylinderGeometry(SHIELD_R, SHIELD_R - 0.0012, SHIELD_L, 8, 1, false, Math.PI / 8);
         shieldGeo.rotateZ(R);
-        scaleGeometryUV(shieldGeo, 3, 5);
+        U.scaleGeometryUV(shieldGeo, 3, 5);
         part(shieldGeo, MAT.shield, SHIELD_CX, Y_BARREL, 0);
 
         {
@@ -906,7 +666,7 @@
 
         const forexGeo = new THREE.CylinderGeometry(0.0352, 0.0338, FOREX_L, 8, 1, false, Math.PI / 8);
         forexGeo.rotateZ(R);
-        scaleGeometryUV(forexGeo, 2.5, 3.5);
+        U.scaleGeometryUV(forexGeo, 2.5, 3.5);
         part(forexGeo, MAT.polymer, FOREX_CX, Y_BARREL, 0);
 
         part(new THREE.CylinderGeometry(0.0355, 0.0355, 0.008, 8, 1, false, Math.PI / 8),
@@ -932,7 +692,7 @@
             inner.add(mesh);
         }
 
-        part(roundedBoxX(0.090, 0.014, 0.042, 0.004), MAT.polymer,
+        part(boxX(0.090, 0.014, 0.042, 0.004), MAT.polymer,
              FOREX_CX, Y_BARREL - 0.034, 0);
 
         // -------- 7. 枪管 --------
@@ -949,7 +709,7 @@
 
         part(new THREE.CylinderGeometry(0.0255, 0.0255, 0.042, SEG, 1, false), MAT.barrel,
              0.555, Y_BARREL, 0, 0, 0, R);
-        part(roundedBoxX(0.036, 0.022, 0.026, 0.003), MAT.barrel,
+        part(boxX(0.036, 0.022, 0.026, 0.003), MAT.barrel,
              0.555, Y_BARREL + 0.024, 0);
 
         part(new THREE.CylinderGeometry(0.0038, 0.0038, 0.350, 12), MAT.bright,
@@ -991,24 +751,24 @@
         ammoBox.rotation.z = -0.03;
         inner.add(ammoBox);
 
-        part(roundedBoxX(AMMO_W, AMMO_H, AMMO_D, 0.011), MAT.polymer,
+        part(boxX(AMMO_W, AMMO_H, AMMO_D, 0.011), MAT.polymer,
              0, 0, 0, 0, 0, 0, ammoBox);
 
-        part(roundedBoxX(0.058, 0.005, 0.032, 0.002), MAT.slotInner,
+        part(boxX(0.058, 0.005, 0.032, 0.002), MAT.slotInner,
              -0.045, AMMO_H / 2 - 0.001, -0.030, 0, 0, 0, ammoBox);
-        part(roundedBoxX(0.062, 0.007, 0.006, 0.0018), MAT.receiver,
+        part(boxX(0.062, 0.007, 0.006, 0.0018), MAT.receiver,
              -0.045, AMMO_H / 2 + 0.002, -0.015, 0, 0, 0, ammoBox);
-        part(roundedBoxX(0.062, 0.007, 0.006, 0.0018), MAT.receiver,
+        part(boxX(0.062, 0.007, 0.006, 0.0018), MAT.receiver,
              -0.045, AMMO_H / 2 + 0.002, -0.046, 0, 0, 0, ammoBox);
-        part(roundedBoxX(0.007, 0.007, 0.038, 0.0018), MAT.receiver,
+        part(boxX(0.007, 0.007, 0.038, 0.0018), MAT.receiver,
              -0.016, AMMO_H / 2 + 0.002, -0.030, 0, 0, 0, ammoBox);
 
         for (let i = 0; i < 3; i++) {
-            part(roundedBoxX(AMMO_W - 0.012, 0.006, AMMO_D + 0.0005, 0.0018), MAT.polymer,
+            part(boxX(AMMO_W - 0.012, 0.006, AMMO_D + 0.0005, 0.0018), MAT.polymer,
                  0, -0.042 + i * 0.042, 0, 0, 0, 0, ammoBox);
         }
 
-        part(roundedBoxX(0.010, 0.020, 0.024, 0.002), MAT.bright,
+        part(boxX(0.010, 0.020, 0.024, 0.002), MAT.bright,
              AMMO_W / 2 + 0.002, 0.020, 0, 0, 0, 0, ammoBox);
         for (let i = 0; i < 3; i++) {
             part(new THREE.BoxGeometry(0.005, 0.0016, 0.0014), MAT.slotInner,
@@ -1035,12 +795,12 @@
             ammoBox.add(mesh);
         }
 
-        part(roundedBoxX(0.115, 0.005, 0.0008, 0.0006), MAT.slotInner,
+        part(boxX(0.115, 0.005, 0.0008, 0.0006), MAT.slotInner,
              0, -0.012, AMMO_D / 2 + 0.001, 0, 0, 0, ammoBox);
-        part(roundedBoxX(0.115, 0.005, 0.0008, 0.0006), MAT.slotInner,
+        part(boxX(0.115, 0.005, 0.0008, 0.0006), MAT.slotInner,
              0, -0.030, AMMO_D / 2 + 0.001, 0, 0, 0, ammoBox);
 
-        part(roundedBoxX(AMMO_W - 0.024, 0.005, AMMO_D - 0.014, 0.002), MAT.rubber,
+        part(boxX(AMMO_W - 0.024, 0.005, AMMO_D - 0.014, 0.002), MAT.rubber,
              0, -AMMO_H / 2 - 0.001, 0, 0, 0, 0, ammoBox);
 
         // -------- 10. 弹链 --------
@@ -1112,27 +872,27 @@
         gripGroup.rotation.z = -0.28;
         inner.add(gripGroup);
 
-        part(roundedBoxX(0.054, 0.130, 0.048, 0.015), MAT.polymer,
+        part(boxX(0.054, 0.130, 0.048, 0.015), MAT.polymer,
              0, -0.062, 0, 0, 0, 0, gripGroup);
 
         for (let i = 0; i < 4; i++) {
-            part(roundedBoxX(0.056, 0.006, 0.050, 0.002), MAT.polymer,
+            part(boxX(0.056, 0.006, 0.050, 0.002), MAT.polymer,
                  0, -0.018 - i * 0.026, 0, 0, 0, 0, gripGroup);
         }
 
-        part(roundedBoxX(0.058, 0.010, 0.052, 0.004), MAT.polymer,
+        part(boxX(0.058, 0.010, 0.052, 0.004), MAT.polymer,
              0, -0.132, 0, 0, 0, 0, gripGroup);
 
-        part(roundedBoxX(0.012, 0.032, 0.052, 0.004), MAT.polymer,
+        part(boxX(0.012, 0.032, 0.052, 0.004), MAT.polymer,
              0.028, -0.052, 0, 0, 0, 0, gripGroup);
 
         part(new THREE.TorusGeometry(0.032, 0.0045, 8, IS_TOUCH_LOW ? 18 : 26, Math.PI),
              MAT.receiver, RECV_X - 0.045, Y_RECV - 0.044, 0, 0, 0, Math.PI);
 
-        part(roundedBoxX(0.006, 0.030, 0.012, 0.002), MAT.receiver,
+        part(boxX(0.006, 0.030, 0.012, 0.002), MAT.receiver,
              RECV_X - 0.014, Y_RECV - 0.058, 0);
 
-        part(roundedBoxX(0.010, 0.028, 0.012, 0.003), MAT.bright,
+        part(boxX(0.010, 0.028, 0.012, 0.003), MAT.bright,
              RECV_X - 0.045, Y_RECV - 0.060, 0, 0, 0, 0.20);
 
         part(new THREE.CylinderGeometry(0.0020, 0.0020, 0.020, 8), MAT.bright,
@@ -1149,7 +909,7 @@
              0.610, Y_BARREL + 0.039, -0.0095);
 
         const GHOST_X = RECV_X - 0.135;
-        part(roundedBoxX(0.034, 0.014, 0.034, 0.003), MAT.receiver,
+        part(boxX(0.034, 0.014, 0.034, 0.003), MAT.receiver,
              GHOST_X, Y_FEED + 0.020, 0);
 
         part(new THREE.TorusGeometry(0.0088, 0.0017, 8, IS_TOUCH_LOW ? 16 : 24), MAT.bright,
@@ -1164,7 +924,7 @@
         const Y_RAIL_BASE = Y_FEED + 0.012;
         const RAIL_X = FEED_X - 0.078;
 
-        part(roundedBoxX(0.120, 0.009, 0.045, 0.002), MAT.receiver,
+        part(boxX(0.120, 0.009, 0.045, 0.002), MAT.receiver,
              RAIL_X, Y_RAIL_BASE + 0.0045, 0);
 
         {
@@ -1198,7 +958,7 @@
         const Y_RAIL_TOP = Y_RAIL_BASE + 0.0145;
         const SIGHT_X = RAIL_X;
 
-        part(roundedBoxX(0.072, 0.018, 0.046, 0.003), MAT.optic,
+        part(boxX(0.072, 0.018, 0.046, 0.003), MAT.optic,
              SIGHT_X, Y_RAIL_TOP + 0.009, 0);
 
         part(new THREE.CylinderGeometry(0.0044, 0.0044, 0.050, 16), MAT.bright,
@@ -1206,28 +966,24 @@
         part(new THREE.CylinderGeometry(0.0058, 0.0058, 0.0050, 6), MAT.bright,
              SIGHT_X, Y_RAIL_TOP + 0.006, 0.028, R, 0, 0);
 
-        part(roundedBoxX(0.020, 0.009, 0.007, 0.0016), MAT.optic,
+        part(boxX(0.020, 0.009, 0.007, 0.0016), MAT.optic,
              SIGHT_X, Y_RAIL_TOP + 0.006, -0.028);
         for (let i = 0; i < 4; i++) {
             part(new THREE.BoxGeometry(0.0030, 0.0014, 0.0070), MAT.slotInner,
                  SIGHT_X - 0.0068 + i * 0.0045, Y_RAIL_TOP + 0.010, -0.028);
         }
 
-        part(roundedBoxX(0.036, 0.022, 0.038, 0.004), MAT.optic,
+        part(boxX(0.036, 0.022, 0.038, 0.004), MAT.optic,
              SIGHT_X, Y_RAIL_TOP + 0.028, 0);
 
         const Y_TUBE_ACTUAL = Y_RAIL_TOP + 0.052;
 
-        // ★ 镜筒主体：空心管（openEnded = true），去掉前后端盖
         part(new THREE.CylinderGeometry(0.0235, 0.0235, 0.080, SEG, 1, true), MAT.optic,
              SIGHT_X, Y_TUBE_ACTUAL, 0, 0, 0, R);
 
-        // ★ 前端环：Torus 环形（中间通孔，可看穿）
-        //   rotation 参数顺序 (rx, ry, rz) = (0, R, 0) → 绕 Y 轴转 90°，环面法线朝 ±X
         part(new THREE.TorusGeometry(0.0257, 0.0025, 12, 32), MAT.optic,
              SIGHT_X + 0.040, Y_TUBE_ACTUAL, 0, 0, R, 0);
 
-        // ★ 后端环：Torus 环形
         part(new THREE.TorusGeometry(0.0257, 0.0025, 12, 32), MAT.optic,
              SIGHT_X - 0.040, Y_TUBE_ACTUAL, 0, 0, R, 0);
 
@@ -1252,12 +1008,10 @@
                  SIGHT_X + Math.cos(a) * 0.0110, Y_TUBE_ACTUAL + Math.sin(a) * 0.0110, 0.033, 0, 0, -a);
         }
 
-        // ★ 前镜片：前移到 +0.0485，避免和前端环同 z 面产生 z-fighting
         const lensF = part(new THREE.CircleGeometry(0.0228, 40), MAT.glass,
                            SIGHT_X + 0.0485, Y_TUBE_ACTUAL, 0, 0, R, 0);
         lensF.name = 'scopeLensFront';
 
-        // ★ 镀膜：跟着镜片前移
         {
             const coatMat = new THREE.MeshBasicMaterial({
                 map: getLensCoating(), transparent: true, opacity: 0.55, depthWrite: false,
@@ -1269,12 +1023,10 @@
             inner.add(coat);
         }
 
-        // ★ 后镜片：稍微后移
         const lensB = part(new THREE.CircleGeometry(0.0218, 40), MAT.glass,
                            SIGHT_X - 0.0485, Y_TUBE_ACTUAL, 0, 0, -R, 0);
         lensB.name = 'scopeLensBack';
 
-        // ★ 红点：跟着镜片前移
         part(new THREE.CircleGeometry(0.0025, 24), MAT.dot,
              SIGHT_X + 0.0480, Y_TUBE_ACTUAL, 0, 0, R, 0);
         part(new THREE.CircleGeometry(0.0010, 16), MAT.dot,
@@ -1284,13 +1036,12 @@
         part(new THREE.TorusGeometry(0.0105, 0.0024, 8, IS_TOUCH_LOW ? 16 : 20), MAT.bright,
              0.485, Y_BARREL - 0.038, 0, 0, 0, R);
 
-        // -------- 枪口锚点 --------
+        // -------- 锚点 --------
         const muzzlePoint = new THREE.Object3D();
         muzzlePoint.name = 'muzzlePoint';
         muzzlePoint.position.set(MUZZLE_X + 0.042, Y_BARREL, 0);
         inner.add(muzzlePoint);
 
-        // ★ 瞄准镜中心锚点（PiP + ADS 计算用），位置与新前镜片一致
         const scopeCenter = new THREE.Object3D();
         scopeCenter.name = 'scopeCenter';
         scopeCenter.position.set(SIGHT_X + 0.0485, Y_TUBE_ACTUAL, 0);
@@ -1301,7 +1052,7 @@
         const center = bbox.getCenter(new THREE.Vector3());
         inner.position.set(-center.x, -center.y * 0.50, -center.z * 0.15);
 
-               // -------- 整体旋转（枪管指向 -Z） --------
+        // -------- 整体旋转 --------
         gun.rotation.y = Math.PI / 2;
 
         gun.userData.muzzlePoint = muzzlePoint;
@@ -1309,7 +1060,6 @@
         gun.userData.lensMeshF = lensF;
         gun.userData.lensMeshB = lensB;
 
-        // ★ 风险 5 修复：世界模型规范变换
         gun.userData.basePos = new THREE.Vector3(0, 0, 0);
         gun.userData.baseRot = new THREE.Euler(0, Math.PI / 2, 0);
         gun.userData.adsPos  = gun.userData.basePos.clone();
@@ -1321,17 +1071,13 @@
 
     // ============================================================
     // 第一人称视图模型
-    //   ★ BASE_Z 后移到 -0.72 → 枪身整体缩进画面，正常视角能看到扳机 / 枪托
-    //   ★ ADS 位置用 scopeCenter 计算 → 开镜时镜片正对相机（PiP）
     // ============================================================
     function buildOdinViewmodelHD() {
         const g = buildOdinHD();
 
-        // ★ 后移（远离相机），露出完整枪身
-         const BASE_X = 0.27, BASE_Y = -0.20, BASE_Z = -0.56;
+        const BASE_X = 0.27, BASE_Y = -0.20, BASE_Z = -0.56;
         const BASE_RZ = 0.02;
 
-        // 用 scopeCenter 计算 ADS 位置（和狙击枪完全一样）
         g.position.set(0, 0, 0);
         g.rotation.set(0, Math.PI / 2, 0);
         g.updateMatrixWorld(true);
@@ -1368,5 +1114,5 @@
         preload: function () { getMaterials(); getEnvMap(); },
     };
 
-    console.log('[weapon_odin_hd] 高细节轻机枪已注册（M249 SAW 风格 · 空心镜筒 + PiP）');
+    console.log('[weapon_odin_hd] 高细节轻机枪已注册（复用 HD_UTIL）');
 })();

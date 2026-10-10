@@ -348,6 +348,21 @@ function handleRoomMessage(fromId, data) {
                 );
             }
             break;
+
+        // ★ 刀痕（房主 → 客户端）
+        //   · isVertical = false / undefined → 水平刀痕（轻击）
+        //   · isVertical = true              → 垂直刀痕（重击）
+        case 'slashMark':
+            if (!NET.isHost && typeof spawnSlashMark === 'function') {
+                spawnSlashMark(
+                    new THREE.Vector3(data.x, data.y, data.z),
+                    new THREE.Vector3(data.nx, data.ny, data.nz),
+                    data.yaw || 0,
+                    !!data.isVertical
+                );
+            }
+            break;
+
         case 'spark':
             if (!NET.isHost && typeof spawnSparks === 'function') {
                 spawnSparks(
@@ -384,7 +399,7 @@ function handleRoomMessage(fromId, data) {
             }
             break;
 
-        // ★ 新增：客户端收到主机的世界声音广播（HRTF 本地重放）
+        // ★ 客户端收到主机的世界声音广播（HRTF 本地重放）
         case 'worldSound':
             if (!NET.isHost && typeof handleRemoteWorldSound === 'function') {
                 handleRemoteWorldSound(data);

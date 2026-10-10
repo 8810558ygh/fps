@@ -9,7 +9,7 @@ function updateEffects(dt, now) {
         s.vel.y -= 12 * dt;
         s.mesh.position.addScaledVector(s.vel, dt);
         if (s.life <= 0) {
-            scene.remove(s.mesh);
+            _releaseSpark(s);           // ★ 归还火花池（唯一改动）
             sparks.splice(i, 1);
         }
     }
@@ -45,7 +45,6 @@ function resetPlayer(p, now) {
     p.mesh.scale.y = 1;
     p.hp = HP_MAX; p.armor = ARMOR_MAX;
 
-    // ★ 修复：不管当前手持什么武器，都按"主武器"重置弹药
     const primaryW = (typeof WEAPONS !== 'undefined')
         ? WEAPONS[p.primaryWeaponKey || 'rifle']
         : null;
@@ -94,7 +93,6 @@ function resetPlayer(p, now) {
     p.throwFuseEnd = 0;
     p.throwFuseInHand = false;
 
-    // ★ 重置后坐力状态（新增）
     if (p.recoil) {
         p.recoil.offsetPitch = 0;
         p.recoil.offsetYaw = 0;

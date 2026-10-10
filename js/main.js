@@ -1,9 +1,11 @@
 // ===== js/main.js – 主循环与启动（服务器权威版 + 瞄准镜画中画 · 优化版） =====
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.shadowMap.enabled = true;
-renderer.outputEncoding = THREE.sRGBEncoding;
-renderer.setScissorTest(false);
+// ★ renderer 已在 js/renderer.js 里创建（加载顺序更早）
+//   这里只取引用，不再重复 new
+const renderer = window.renderer;
+if (!renderer) {
+    console.error('[main] renderer 未初始化，请检查 js/renderer.js 是否加载');
+}
+window.renderer = renderer;
 
 const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
 
@@ -76,12 +78,27 @@ renderer.domElement.addEventListener('click', () => {
         renderer.domElement.requestPointerLock();
     }
 });
+
+// ============================================================
+// ★ 鼠标移动：灵敏度读取 SETTINGS
+// ============================================================
 document.addEventListener('mousemove', e => {
     if (document.pointerLockElement === renderer.domElement && running && !isOver()) {
         if (NET.isSpectator()) return;
-        const sens = 0.0022 * (p1.cam.fov / BASE_FOV);
+
+        const S  = (window.SETTINGS && window.SETTINGS.sensitivity) ? window.SETTINGS.sensitivity : null;
+        const RT = window.SETTINGS_RT || {};
+
+        const baseSens = (RT.mouseSens !== undefined) ? RT.mouseSens : 0.0022;
+        const adsMul   = (S && p1.aiming) ? S.adsMul   : 1.0;
+        const vertMul  = (S && S.vertMul) ? S.vertMul  : 1.0;
+        const invertY  = !!(S && S.invertY);
+
+        const sens = baseSens * (p1.cam.fov / BASE_FOV) * adsMul;
         p1.yaw -= e.movementX * sens;
-        p1.pitch -= e.movementY * sens;
+
+        const ySign = invertY ? 1 : -1;
+        p1.pitch += ySign * e.movementY * sens * vertMul;
         p1.pitch = Math.max(-1.35, Math.min(1.35, p1.pitch));
     }
 });
@@ -611,6 +628,10 @@ document.getElementById('exitBtn').addEventListener('click', (e) => {
 // ============================================================
 function enterGame(mode) {
     audio();
+
+    // ★ 新增：如果从设置面板直接开始，先关闭设置面板
+    if (typeof window.SETTINGS_Close === 'function') window.SETTINGS_Close();
+
     if (!window.getCurrentMapId() && window.loadMap) {
         window.loadMap('battlefield');
     }

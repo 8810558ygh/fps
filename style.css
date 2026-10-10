@@ -72,24 +72,72 @@ canvas {
 }
 #hud1 { left: 0; }
 
+/* ============================================================
+   ★ 准星（CSS 变量驱动 · 支持自定义）
+   ============================================================ */
 .cross {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 4px;
-    height: 4px;
-    margin: -2px 0 0 -2px;
-    background: rgba(255, 255, 255, .95);
-    border-radius: 50%;
+    width: 0;
+    height: 0;
+
+    /* CSS 变量默认值（与旧版视觉一致） */
+    --ch-color: #ffffff;
+    --ch-opacity: 0.95;
+    --ch-len: 13px;
+    --ch-thick: 2px;
+    --ch-gap: 0px;
+    --ch-dot: 4px;
+    --ch-outline: 0px;
+    --ch-outline-color: rgba(0, 0, 0, 0.85);
 }
-.cross::before,
-.cross::after {
-    content: "";
+
+/* 4 段十字线 */
+.ch-line {
     position: absolute;
-    background: rgba(255, 255, 255, .85);
+    left: 50%;
+    top: 50%;
+    background: var(--ch-color);
+    opacity: var(--ch-opacity);
+    box-shadow: 0 0 0 var(--ch-outline) var(--ch-outline-color);
+    pointer-events: none;
 }
-.cross::before { left: -11px; top: 1px; width: 26px; height: 2px; }
-.cross::after  { left: 1px; top: -11px; width: 2px; height: 26px; }
+.ch-up {
+    width: var(--ch-thick);
+    height: var(--ch-len);
+    transform: translate(-50%, calc(-100% - var(--ch-gap)));
+}
+.ch-down {
+    width: var(--ch-thick);
+    height: var(--ch-len);
+    transform: translate(-50%, var(--ch-gap));
+}
+.ch-left {
+    width: var(--ch-len);
+    height: var(--ch-thick);
+    transform: translate(calc(-100% - var(--ch-gap)), -50%);
+}
+.ch-right {
+    width: var(--ch-len);
+    height: var(--ch-thick);
+    transform: translate(var(--ch-gap), -50%);
+}
+
+/* 中心点 */
+.ch-dot {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: var(--ch-dot);
+    height: var(--ch-dot);
+    transform: translate(-50%, -50%);
+    background: var(--ch-color);
+    opacity: var(--ch-opacity);
+    border-radius: 50%;
+    box-shadow: 0 0 0 var(--ch-outline) var(--ch-outline-color);
+    pointer-events: none;
+}
 
 .hitmark {
     position: absolute;

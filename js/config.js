@@ -36,7 +36,13 @@ const RECOIL_MIN_THRESHOLD    = 0.0006;
 // ===== 近战武器 =====
 const MELEE = {
     key: 'knife', name: '军刀',
-    range: 8.0,
+    // ★ 从 8.0 改为 1.6 米（对齐实战近战距离）
+    //   · 真实刀 + 手臂 ≈ 1.0~1.2 米
+    //   · CS:GO 约 1.2 米
+    //   · Valorant 约 1.5~1.8 米
+    //   1.6 米是"稍微宽裕但不失真实"的折中值
+    range: 1.6,
+
     dmgLight: 50, dmgHeavy: 75,
     backMultiplier: 2.0,
     lightFireMs: 400, heavyFireMs: 900,
@@ -186,9 +192,9 @@ const WEAPONS = {
         // ============================================================
         recoil: {
             // ---- 垂直后坐力（每发小幅稳定上抬）----
-            vertFirst: 0.009,        // 第一发上抬 ≈ 0.52°（比上一版再降 30%）
-            vertPerShot: 0.0011,     // 每发额外增量（再降 35%，站撸几乎无感）
-            vertMax: 0.016,          // 单发上限 ≈ 0.92°（再降 30%）
+            vertFirst: 0.009,        // 第一发上抬 ≈ 0.52°
+            vertPerShot: 0.0011,     // 每发额外增量
+            vertMax: 0.016,          // 单发上限 ≈ 0.92°
 
             // ---- 水平后坐力（前 8 发极小，之后轻微摆动）----
             horizStart: 8,           // 前 8 发无水平偏移
@@ -201,7 +207,7 @@ const WEAPONS = {
             moveMul: 1.90,           // ★ 移动中开火 × 1.90（跑打几乎不可控）
 
             // ---- 累积偏移上限 ----
-            maxOffsetPitch: 0.24,    // 垂直累积上限 ≈ 13.7°（再降）
+            maxOffsetPitch: 0.24,    // 垂直累积上限 ≈ 13.7°
             maxOffsetYaw: 0.11,      // 水平累积上限 ≈ 6.3°
         },
     }

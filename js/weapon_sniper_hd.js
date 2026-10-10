@@ -1,85 +1,25 @@
-// ===== js/weapon_sniper_hd.js – 高细节 PBR 狙击枪模型（冥驹风格 · 左侧大拉栓）=====
-// 使用方式：
-//   1. 本文件必须在 player_model.js 之前加载
-//   2. player_model.js 里的 makeWeaponModel / makeViewmodel 需加早返回
-//
-// 仅覆盖 'sniper'，其他武器不受影响。
+// ===== js/weapon_sniper_hd.js – 高细节 PBR 狙击枪模型（冥驹风格 · 左侧大拉栓） =====
+// 依赖：js/weapon_hd_common.js（必须先加载）
 
 (function () {
     'use strict';
     if (typeof THREE === 'undefined') return;
 
-    const IS_TOUCH_LOW = (typeof IS_TOUCH !== 'undefined' && IS_TOUCH);
+    const U = window.HD_UTIL;
+    if (!U) {
+        console.error('[weapon_sniper_hd] 缺少 HD_UTIL，请确认 weapon_hd_common.js 已加载');
+        return;
+    }
+
+    const IS_TOUCH_LOW = U.IS_TOUCH_LOW;
     const TEX_SIZE = IS_TOUCH_LOW ? 128 : 256;
-    const SNIPER_SCALE = 0.62;   // ★ 调整：0.72 → 0.62（枪太长，缩一点）
+    const SNIPER_SCALE = 0.62;
 
     // ============================================================
-    // Canvas 工具
-    // ============================================================
-    function makeCanvas(w, h) {
-        const c = document.createElement('canvas');
-        c.width = w; c.height = h || w;
-        return c;
-    }
-
-    function normalMapFromHeight(hCanvas, strength) {
-        const S = hCanvas.width;
-        const src = hCanvas.getContext('2d').getImageData(0, 0, S, S).data;
-        const out = makeCanvas(S);
-        const octx = out.getContext('2d');
-        const dst = octx.createImageData(S, S);
-        const at = (x, y) => {
-            x = ((x % S) + S) % S;
-            y = ((y % S) + S) % S;
-            return src[(y * S + x) * 4] / 255;
-        };
-        for (let y = 0; y < S; y++) {
-            for (let x = 0; x < S; x++) {
-                const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
-                const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
-                const len = Math.sqrt(dx * dx + dy * dy + 1) || 1;
-                const i = (y * S + x) * 4;
-                dst.data[i]     = ((-dx / len) * 0.5 + 0.5) * 255;
-                dst.data[i + 1] = ((-dy / len) * 0.5 + 0.5) * 255;
-                dst.data[i + 2] = (( 1 / len) * 0.5 + 0.5) * 255;
-                dst.data[i + 3] = 255;
-            }
-        }
-        octx.putImageData(dst, 0, 0);
-        const t = new THREE.CanvasTexture(out);
-        t.wrapS = t.wrapT = THREE.RepeatWrapping;
-        t.anisotropy = 4;
-        return t;
-    }
-
-    function roughMapFromHeight(hCanvas, low, high, contrast) {
-        contrast = contrast || 1.0;
-        const S = hCanvas.width;
-        const src = hCanvas.getContext('2d').getImageData(0, 0, S, S).data;
-        const out = makeCanvas(S);
-        const octx = out.getContext('2d');
-        const dst = octx.createImageData(S, S);
-        const range = high - low;
-        for (let i = 0; i < src.length; i += 4) {
-            let v = src[i] / 255;
-            v = Math.pow(v, contrast);
-            v = low + v * range;
-            const g = Math.max(0, Math.min(255, v * 255)) | 0;
-            dst.data[i] = dst.data[i + 1] = dst.data[i + 2] = g;
-            dst.data[i + 3] = 255;
-        }
-        octx.putImageData(dst, 0, 0);
-        const t = new THREE.CanvasTexture(out);
-        t.wrapS = t.wrapT = THREE.RepeatWrapping;
-        t.anisotropy = 4;
-        return t;
-    }
-
-    // ============================================================
-    // 高度图生成器
+    // 高度图生成器（武器特有）
     // ============================================================
     function hPolymerCanvas() {
-        const S = TEX_SIZE, c = makeCanvas(S), ctx = c.getContext('2d');
+        const S = TEX_SIZE, c = U.makeCanvas(S), ctx = c.getContext('2d');
         ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, S, S);
         const n1 = S * S * 0.55;
         for (let i = 0; i < n1; i++) {
@@ -99,7 +39,7 @@
     }
 
     function hBrushedCanvas() {
-        const S = TEX_SIZE, c = makeCanvas(S), ctx = c.getContext('2d');
+        const S = TEX_SIZE, c = U.makeCanvas(S), ctx = c.getContext('2d');
         ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, S, S);
         for (let i = 0; i < S * 12; i++) {
             const y = Math.random() * S, x0 = Math.random() * S;
@@ -114,7 +54,7 @@
     }
 
     function hSteelCanvas() {
-        const S = TEX_SIZE, c = makeCanvas(S), ctx = c.getContext('2d');
+        const S = TEX_SIZE, c = U.makeCanvas(S), ctx = c.getContext('2d');
         ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, S, S);
         for (let i = 0; i < S * S * 0.6; i++) {
             const v = 128 + ((Math.random() - 0.5) * 55) | 0;
@@ -132,7 +72,7 @@
     }
 
     function hGripCanvas() {
-        const S = TEX_SIZE, c = makeCanvas(S), ctx = c.getContext('2d');
+        const S = TEX_SIZE, c = U.makeCanvas(S), ctx = c.getContext('2d');
         ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, S, S);
         for (let i = 0; i < S * S * 0.6; i++) {
             const v = 128 + ((Math.random() - 0.5) * 70) | 0;
@@ -150,7 +90,7 @@
     }
 
     function hRubberCanvas() {
-        const S = TEX_SIZE, c = makeCanvas(S), ctx = c.getContext('2d');
+        const S = TEX_SIZE, c = U.makeCanvas(S), ctx = c.getContext('2d');
         ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, S, S);
         for (let i = 0; i < S * S * 1.5; i++) {
             const v = 128 + ((Math.random() - 0.5) * 130) | 0;
@@ -166,73 +106,45 @@
     let _tex = null;
     function getTextures() {
         if (_tex) return _tex;
-        const hPoly = hPolymerCanvas();
+        const hPoly  = hPolymerCanvas();
         const hBrush = hBrushedCanvas();
         const hSteel = hSteelCanvas();
-        const hGrip = hGripCanvas();
-        const hRub = hRubberCanvas();
+        const hGrip  = hGripCanvas();
+        const hRub   = hRubberCanvas();
         _tex = {
-            nPolymer: normalMapFromHeight(hPoly, 1.4),
-            nBrushed: normalMapFromHeight(hBrush, 1.6),
-            nSteel:   normalMapFromHeight(hSteel, 1.5),
-            nGrip:    normalMapFromHeight(hGrip, 2.2),
-            nRubber:  normalMapFromHeight(hRub, 3.0),
-            rPolymer: roughMapFromHeight(hPoly,  0.72, 0.88, 1.0),
-            rBrushed: roughMapFromHeight(hBrush, 0.22, 0.42, 1.0),
-            rSteel:   roughMapFromHeight(hSteel, 0.20, 0.40, 1.0),
-            rGrip:    roughMapFromHeight(hGrip,  0.78, 0.92, 1.0),
+            nPolymer: U.normalMapFromHeight(hPoly, 1.4),
+            nBrushed: U.normalMapFromHeight(hBrush, 1.6),
+            nSteel:   U.normalMapFromHeight(hSteel, 1.5),
+            nGrip:    U.normalMapFromHeight(hGrip, 2.2),
+            nRubber:  U.normalMapFromHeight(hRub, 3.0),
+            rPolymer: U.roughMapFromHeight(hPoly,  0.72, 0.88, 1.0),
+            rBrushed: U.roughMapFromHeight(hBrush, 0.22, 0.42, 1.0),
+            rSteel:   U.roughMapFromHeight(hSteel, 0.20, 0.40, 1.0),
+            rGrip:    U.roughMapFromHeight(hGrip,  0.78, 0.92, 1.0),
         };
         return _tex;
     }
 
     // ============================================================
-    // 环境贴图
+    // 环境贴图（与 rifle 共用同一光照基准）
     // ============================================================
-    let _envMap = null;
     function getEnvMap() {
-        if (_envMap) return _envMap;
-        if (typeof renderer === 'undefined' || !renderer) return null;
-        try {
-            const pmrem = new THREE.PMREMGenerator(renderer);
-            pmrem.compileEquirectangularShader();
-            const W = 512, H = 256;
-            const cv = makeCanvas(W, H);
-            const ctx = cv.getContext('2d');
-            const g = ctx.createLinearGradient(0, 0, 0, H);
-            g.addColorStop(0.00, '#0e1218');
-            g.addColorStop(0.30, '#233040');
-            g.addColorStop(0.48, '#6b7f96');
-            g.addColorStop(0.50, '#909fb2');
-            g.addColorStop(0.52, '#404855');
-            g.addColorStop(0.75, '#181c22');
-            g.addColorStop(1.00, '#050607');
-            ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-            const lights = [
-                { x: 125, y: 30,  r: 130, c: '255,252,242', a: 1.0 },
-                { x: 325, y: 40,  r: 105, c: '210,225,255', a: 0.85 },
-                { x: 440, y: 70,  r: 80,  c: '255,215,170', a: 0.7 },
-                { x: 75,  y: 95,  r: 95,  c: '150,180,220', a: 0.5 },
-            ];
-            lights.forEach(L => {
-                const rg = ctx.createRadialGradient(L.x, L.y, 0, L.x, L.y, L.r);
-                rg.addColorStop(0,    `rgba(${L.c},${L.a})`);
-                rg.addColorStop(0.35, `rgba(${L.c},${L.a * 0.45})`);
-                rg.addColorStop(0.7,  `rgba(${L.c},${L.a * 0.1})`);
-                rg.addColorStop(1,    `rgba(${L.c},0)`);
-                ctx.fillStyle = rg;
-                ctx.fillRect(L.x - L.r, L.y - L.r, L.r * 2, L.r * 2);
-            });
-            const tex = new THREE.CanvasTexture(cv);
-            tex.mapping = THREE.EquirectangularReflectionMapping;
-            if (THREE.sRGBEncoding !== undefined) tex.encoding = THREE.sRGBEncoding;
-            const rt = pmrem.fromEquirectangular(tex);
-            _envMap = rt.texture;
-            tex.dispose();
-            pmrem.dispose();
-        } catch (e) {
-            console.warn('[weapon_sniper_hd] 环境贴图生成失败', e);
-        }
-        return _envMap;
+        return U.buildEnvMap({
+            key: 'rifle_env',        // ★ 与 rifle 共用同一份 env，节省显存
+            width: 512, height: 256,
+            gradient: [
+                [0.00, '#0e1218'], [0.30, '#233040'],
+                [0.48, '#6b7f96'], [0.50, '#909fb2'],
+                [0.52, '#404855'], [0.75, '#181c22'],
+                [1.00, '#050607'],
+            ],
+            lights: [
+                { cx: 125, cy: 30, r: 130, rgb: '255,252,242', alpha: 1.0 },
+                { cx: 325, cy: 40, r: 105, rgb: '210,225,255', alpha: 0.85 },
+                { cx: 440, cy: 70, r: 80,  rgb: '255,215,170', alpha: 0.7 },
+                { cx: 75,  cy: 95, r: 95,  rgb: '150,180,220', alpha: 0.5 },
+            ],
+        });
     }
 
     // ============================================================
@@ -298,50 +210,15 @@
     }
 
     // ============================================================
-    // 几何工具
+    // 几何快捷方式
     // ============================================================
-    function roundedRectShape(w, h, r) {
-        r = Math.min(r, w / 2 - 0.0001, h / 2 - 0.0001);
-        const s = new THREE.Shape();
-        const x = -w / 2, y = -h / 2;
-        s.moveTo(x + r, y);
-        s.lineTo(x + w - r, y);
-        s.quadraticCurveTo(x + w, y, x + w, y + r);
-        s.lineTo(x + w, y + h - r);
-        s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-        s.lineTo(x + r, y + h);
-        s.quadraticCurveTo(x, y + h, x, y + h - r);
-        s.lineTo(x, y + r);
-        s.quadraticCurveTo(x, y, x + r, y);
-        return s;
-    }
-
     const CURVE_SEG = IS_TOUCH_LOW ? 5 : 8;
     const BEVEL_SEG = 2;
-
-    function roundedBoxZ(w, h, d, r, bevel) {
-        bevel = bevel === undefined ? 0.0016 : bevel;
-        const geo = new THREE.ExtrudeGeometry(roundedRectShape(w, h, r), {
-            depth: Math.max(d - bevel * 2, 0.0002),
-            bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel,
-            bevelSegments: BEVEL_SEG, curveSegments: CURVE_SEG,
-        });
-        geo.translate(0, 0, -(d - bevel * 2) / 2);
-        geo.computeVertexNormals();
-        return geo;
-    }
-
-    function roundedBoxX(L, H, W, r, bevel) {
-        const geo = roundedBoxZ(W, H, L, r, bevel);
-        geo.rotateY(Math.PI / 2);
-        return geo;
-    }
-
-    function boxX(L, H, W, r) { return roundedBoxX(L, H, W, r === undefined ? 0.002 : r, 0.0012); }
-    function boxZ(W, H, D, r) { return roundedBoxZ(W, H, D, r === undefined ? 0.002 : r, 0.0012); }
+    const boxX = (L, H, W, r, bevel) => U.roundedBoxX(L, H, W, r, bevel, 0, CURVE_SEG, BEVEL_SEG);
+    const boxZ = (W, H, D, r, bevel) => U.roundedBoxZ(W, H, D, r, bevel, 0, CURVE_SEG, BEVEL_SEG);
 
     // ============================================================
-    // 构建狙击枪（+X 为枪管方向，-Z 为左侧拉栓）
+    // 构建狙击枪
     // ============================================================
     function buildSniperHD() {
         const MAT = getMaterials();
@@ -408,7 +285,6 @@
         part(boxX(0.300, 0.016, 0.058, 0.004), MAT.body,     -0.100, 0.118, 0);
         part(boxX(0.060, 0.078, 0.062, 0.006), MAT.receiver,  0.060, 0.070, 0);
 
-        // 皮卡汀尼导轨
         part(boxX(0.720, 0.010, 0.040, 0.002), MAT.receiver, 0.130, 0.130, 0);
         for (let i = 0; i < 56; i++) {
             const x = -0.230 + i * 0.0128;
@@ -421,13 +297,12 @@
             part(new THREE.BoxGeometry(0.0048, 0.002, 0.040), MAT.slotInner, x, 0.1348, 0);
         }
 
-        // 抛壳窗（右侧）
         part(boxZ(0.085, 0.038, 0.003, 0.002), MAT.slotInner, -0.045, 0.080, 0.0322);
         part(boxZ(0.082, 0.035, 0.002, 0.002), MAT.body,      -0.045, 0.080, 0.0328);
 
-        // -------- 3. ★ 左侧大拉栓组 --------
+        // -------- 3. 左侧大拉栓 --------
         const boltGroup = new THREE.Group();
-        boltGroup.name = 'boltGroup';        // ★ 新增：clone 后按 name 重新绑定
+        boltGroup.name = 'boltGroup';
         inner.add(boltGroup);
 
         part(boxZ(0.052, 0.020, 0.010, 0.002), MAT.receiver,
@@ -640,7 +515,7 @@
 
         // -------- 15. 瞄准镜中心标记 --------
         const scopeCenter = new THREE.Object3D();
-        scopeCenter.name = 'scopeCenter';    // ★ 新增：clone 后按 name 重新绑定
+        scopeCenter.name = 'scopeCenter';
         scopeCenter.position.set(0, 0.196, 0);
         inner.add(scopeCenter);
 
@@ -649,7 +524,7 @@
         const center = bbox.getCenter(new THREE.Vector3());
         inner.position.set(-center.x, -center.y * 0.85, -center.z * 0.15);
 
-                // -------- 整体缩放 + 旋转 --------
+        // -------- 整体缩放 + 旋转 --------
         gun.scale.setScalar(SNIPER_SCALE);
         gun.rotation.y = Math.PI / 2;
 
@@ -659,7 +534,6 @@
         gun.userData.lensMeshF   = lensF;
         gun.userData.lensMeshB   = lensB;
 
-        // ★ 风险 5 修复：世界模型规范变换
         gun.userData.basePos = new THREE.Vector3(0, 0, 0);
         gun.userData.baseRot = new THREE.Euler(0, Math.PI / 2, 0);
         gun.userData.adsPos  = gun.userData.basePos.clone();
@@ -675,7 +549,6 @@
     function buildSniperViewmodelHD() {
         const g = buildSniperHD();
 
-        // ★ 调整：往前推、往中间收（原来 0.26 / -0.24 / -0.34）
         const BASE_X = 0.20, BASE_Y = -0.16, BASE_Z = -0.58;
         const BASE_RZ = 0.02;
 
@@ -715,5 +588,5 @@
         preload: function () { getMaterials(); getEnvMap(); },
     };
 
-    console.log('[weapon_sniper_hd] 高细节狙击枪已注册（冥驹风格 · 左侧大拉栓）');
+    console.log('[weapon_sniper_hd] 高细节狙击枪已注册（复用 HD_UTIL）');
 })();

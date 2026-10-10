@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="style_online.css">
     <link rel="stylesheet" href="style_chat.css">
+    <link rel="stylesheet" href="style_settings.css">
     <base target="_blank">
     <style>
         html, body {
@@ -59,6 +60,15 @@
     <!-- ===== 大厅覆盖层 ===== -->
     <div id="lobbyOverlay" class="overlay">
         <div class="lobby-glow"></div>
+
+        <!-- ★ 大厅右上角设置按钮 -->
+        <div id="settingsBtn" title="设置">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                <path d="M12 8a4 4 0 100 8 4 4 0 000-8zm0 6a2 2 0 110-4 2 2 0 010 4z"/>
+                <path d="M19.4 13a7.8 7.8 0 000-2l2-1.6-2-3.4-2.4 1a7.7 7.7 0 00-1.7-1L14.8 3h-4l-.5 2.6a7.7 7.7 0 00-1.7 1l-2.4-1-2 3.4L6.6 11a7.8 7.8 0 000 2L4.6 14.6l2 3.4 2.4-1a7.7 7.7 0 001.7 1L11.2 21h4l.5-2.6a7.7 7.7 0 001.7-1l2.4 1 2-3.4L19.4 13z"/>
+            </svg>
+        </div>
+
         <h1 class="lobby-title"><span class="b">双雄</span>对决</h1>
         <div class="lobby-sub">ROUND-BASED SHOOTING ARENA</div>
         <div class="lobby-desc">
@@ -72,7 +82,6 @@
         </div>
 
         <div class="lobby-buttons">
-            <!-- ★ 已删除"靶场"按钮 -->
             <button class="btn lobby-btn lobby-btn-ai" id="lobbyAiBtn">人 机 对 战</button>
             <button class="btn lobby-btn lobby-btn-online" id="lobbyOnlineBtn">联 机 对 战</button>
         </div>
@@ -152,6 +161,150 @@
         </div>
     </div>
 
+    <!-- ===== ★ 设置页（全屏独立页面） ===== -->
+    <div id="settingsOverlay" style="display:none;">
+        <div class="settings-page-wrap">
+
+            <div class="settings-topbar">
+                <button id="settingsCloseBtn" class="settings-back-btn">
+                    <span class="arrow">←</span>
+                    <span>返 回</span>
+                </button>
+                <h1 class="settings-title">⚙ 设 置</h1>
+                <button id="settingsResetBtn" class="settings-reset-btn">恢复默认</button>
+            </div>
+
+            <div class="settings-tabs" id="settingsTabs">
+                <button class="stab active" data-tab="crosshair">准星</button>
+                <button class="stab" data-tab="sensitivity">灵敏度</button>
+            </div>
+
+            <div class="settings-content">
+
+                <!-- ============ 准星页 ============ -->
+                <div class="settings-page" data-page="crosshair">
+                    <div class="settings-page-inner">
+
+                        <div class="settings-section">
+                            <div class="section-title">预览</div>
+                            <div class="ch-preview-box">
+                                <div class="ch-preview">
+                                    <span class="ch-line ch-up"></span>
+                                    <span class="ch-line ch-down"></span>
+                                    <span class="ch-line ch-left"></span>
+                                    <span class="ch-line ch-right"></span>
+                                    <span class="ch-dot"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <div class="section-title">外观</div>
+
+                            <div class="set-row">
+                                <label>颜色</label>
+                                <div class="color-wrap">
+                                    <button class="swatch" data-color="#ffffff" style="--c:#ffffff"></button>
+                                    <button class="swatch" data-color="#00ff88" style="--c:#00ff88"></button>
+                                    <button class="swatch" data-color="#ff3355" style="--c:#ff3355"></button>
+                                    <button class="swatch" data-color="#00e5ff" style="--c:#00e5ff"></button>
+                                    <button class="swatch" data-color="#ffd24a" style="--c:#ffd24a"></button>
+                                    <input type="color" id="chColor" value="#ffffff">
+                                </div>
+                            </div>
+
+                            <div class="set-row">
+                                <label>中心点</label>
+                                <input type="range" id="chDot" min="0" max="8" step="1" value="4">
+                                <span class="set-val" id="chDotVal">4 px</span>
+                            </div>
+                            <div class="set-row">
+                                <label>长度</label>
+                                <input type="range" id="chLen" min="0" max="24" step="1" value="13">
+                                <span class="set-val" id="chLenVal">13 px</span>
+                            </div>
+                            <div class="set-row">
+                                <label>粗细</label>
+                                <input type="range" id="chThick" min="1" max="6" step="1" value="2">
+                                <span class="set-val" id="chThickVal">2 px</span>
+                            </div>
+                            <div class="set-row">
+                                <label>间隙</label>
+                                <input type="range" id="chGap" min="0" max="16" step="1" value="0">
+                                <span class="set-val" id="chGapVal">0 px</span>
+                            </div>
+                            <div class="set-row">
+                                <label>透明度</label>
+                                <input type="range" id="chOpacity" min="10" max="100" step="5" value="95">
+                                <span class="set-val" id="chOpacityVal">0.95</span>
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <div class="section-title">描边</div>
+
+                            <div class="set-row">
+                                <label>黑色描边</label>
+                                <input type="checkbox" id="chOutline" class="switch">
+                                <span class="set-val">增强可见性</span>
+                            </div>
+                            <div class="set-row">
+                                <label>描边厚度</label>
+                                <input type="range" id="chOutlineThick" min="1" max="3" step="1" value="1">
+                                <span class="set-val" id="chOutlineThickVal">1 px</span>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- ============ 灵敏度页 ============ -->
+                <div class="settings-page" data-page="sensitivity" style="display:none;">
+                    <div class="settings-page-inner">
+
+                        <div class="settings-section">
+                            <div class="section-title">鼠标</div>
+
+                            <div class="set-row">
+                                <label>灵敏度</label>
+                                <input type="range" id="sensMouse" min="1" max="100" step="1" value="22">
+                                <span class="set-val" id="sensMouseVal">22</span>
+                            </div>
+                            <div class="set-row">
+                                <label>开镜倍率</label>
+                                <input type="range" id="sensAds" min="30" max="200" step="5" value="100">
+                                <span class="set-val" id="sensAdsVal">1.00×</span>
+                            </div>
+                            <div class="set-row">
+                                <label>垂直倍率</label>
+                                <input type="range" id="sensVert" min="50" max="200" step="5" value="100">
+                                <span class="set-val" id="sensVertVal">1.00×</span>
+                            </div>
+                            <div class="set-row">
+                                <label>反转 Y 轴</label>
+                                <input type="checkbox" id="sensInvertY" class="switch">
+                                <span class="set-val">上下颠倒</span>
+                            </div>
+                        </div>
+
+                        <div class="settings-section" id="touchSection" style="display:none;">
+                            <div class="section-title">触屏</div>
+
+                            <div class="set-row" id="touchRow">
+                                <label>触摸灵敏度</label>
+                                <input type="range" id="sensTouch" min="1" max="100" step="1" value="60">
+                                <span class="set-val" id="sensTouchVal">60</span>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+    </div>
+
     <canvas id="minimap" style="display:none;"></canvas>
     <div id="timer" class="timer">5:00</div>
 
@@ -181,7 +334,14 @@
     <div id="hud1" class="hud" style="width:100%; left:0;">
         <div class="scope"><div class="ring"></div><div class="sh"></div><div class="sv"></div></div>
         <div class="dmgflash"></div>
-        <div class="cross"><div class="hitmark"></div></div>
+        <div class="cross" id="crosshair">
+            <div class="hitmark"></div>
+            <span class="ch-line ch-up"></span>
+            <span class="ch-line ch-down"></span>
+            <span class="ch-line ch-left"></span>
+            <span class="ch-line ch-right"></span>
+            <span class="ch-dot"></span>
+        </div>
         <div class="score">0</div>
         <div class="feed"></div>
         <div class="centermsg"></div>
@@ -221,10 +381,55 @@
                autocomplete="off" spellcheck="false">
     </div>
 
+    <!-- ===== ★ 移动端控制（跟手摇杆版） ===== -->
     <div id="mobile-controls" style="position:fixed;inset:0;z-index:20;pointer-events:none;display:none;">
-        <div id="touch-left" style="position:absolute;left:20px;bottom:100px;width:130px;height:130px;border-radius:50%;background:rgba(255,255,255,0.15);border:2px solid rgba(255,255,255,0.3);pointer-events:auto;touch-action:none;"></div>
+
+        <!-- 左侧触摸区域（透明，覆盖左半屏下方） -->
+        <div id="touch-left-zone"
+             style="position:absolute;left:0;bottom:0;width:40%;height:70%;
+                    pointer-events:auto;touch-action:none;"></div>
+
+        <!-- 左侧静态提示圈（未触摸时显示，固定在左下角） -->
+        <div id="touch-left-hint"
+             style="position:absolute;left:24px;bottom:110px;
+                    width:110px;height:110px;border-radius:50%;
+                    background:rgba(255,255,255,0.06);
+                    border:2px dashed rgba(255,255,255,0.22);
+                    pointer-events:none;transition:opacity 0.15s;">
+            <div style="position:absolute;left:50%;top:50%;
+                        width:44px;height:44px;margin-left:-22px;margin-top:-22px;
+                        border-radius:50%;
+                        background:rgba(255,255,255,0.16);
+                        border:1.5px solid rgba(255,255,255,0.32);"></div>
+        </div>
+
+        <!-- 左侧跟手摇杆（触摸时显示在手指下方） -->
+        <div id="touch-left-base"
+             style="position:absolute;left:0;top:0;
+                    width:130px;height:130px;
+                    margin-left:-65px;margin-top:-65px;
+                    border-radius:50%;
+                    background:rgba(255,255,255,0.12);
+                    border:2px solid rgba(255,255,255,0.35);
+                    pointer-events:none;display:none;
+                    box-shadow:0 4px 20px rgba(0,0,0,0.45);">
+            <div id="touch-left-knob"
+                 style="position:absolute;left:50%;top:50%;
+                        width:56px;height:56px;margin-left:-28px;margin-top:-28px;
+                        border-radius:50%;
+                        background:rgba(255,255,255,0.42);
+                        border:2px solid rgba(255,255,255,0.62);
+                        box-shadow:0 2px 8px rgba(0,0,0,0.5);
+                        transition:transform 0.04s linear;"></div>
+        </div>
+
+        <!-- 右侧视角区域 -->
         <div id="touch-right" style="position:absolute;right:0;top:0;width:60%;height:100%;pointer-events:auto;background:transparent;touch-action:none;"></div>
+
+        <!-- 开火按钮 -->
         <div id="btn-fire" style="position:absolute;right:20px;bottom:40px;width:90px;height:90px;border-radius:50%;background:rgba(255,50,50,0.7);border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff;font-weight:bold;pointer-events:auto;box-shadow:0 4px 10px rgba(0,0,0,0.5);touch-action:manipulation;">开火</div>
+
+        <!-- 功能按钮组 -->
         <div style="position:absolute;left:20px;bottom:250px;display:flex;gap:10px;flex-wrap:wrap;max-width:55%;pointer-events:none;">
             <div id="btn-jump"   style="pointer-events:auto;padding:10px 16px;background:rgba(0,0,0,0.6);border-radius:8px;color:#fff;border:1px solid #aaa;font-size:15px;touch-action:manipulation;">跳跃</div>
             <div id="btn-aim"    style="pointer-events:auto;padding:10px 16px;background:rgba(0,0,0,0.6);border-radius:8px;color:#fff;border:1px solid #aaa;font-size:15px;touch-action:manipulation;">开镜</div>
@@ -373,13 +578,15 @@
     <script src="js/audio.js"></script>
     <script src="js/sound.js"></script>
     <script src="js/textures.js"></script>
+    <script src="js/renderer.js"></script>
     <script src="js/physics.js"></script>
     <script src="js/scene.js"></script>
     <script src="js/barrels.js"></script>
-    <script src="js/shell_casings.js"></script>    
+    <script src="js/shell_casings.js"></script>
     <script src="js/map_battlefield.js"></script>
     <script src="js/map_desert.js"></script>
 
+    <script src="js/weapon_hd_common.js"></script>
     <script src="js/weapon_rifle_hd.js"></script>
     <script src="js/weapon_sniper_hd.js"></script>
     <script src="js/weapon_shotgun_hd.js"></script>
@@ -408,6 +615,7 @@
     <script src="js/input_touch.js"></script>
     <script src="js/minimap.js"></script>
     <script src="js/loading.js"></script>
+    <script src="js/settings.js"></script>
     <script src="js/main.js"></script>
 
 </body>

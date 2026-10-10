@@ -165,6 +165,9 @@ function updateRecoilRecovery(p, dt, now) {
 
 // ============================================================
 // 近战攻击（含油桶命中）
+//
+//   · 轻击（左键）：水平刀痕（挥砍）
+//   · 重击（右键）：垂直刀痕（往前刺）
 // ============================================================
 function tryMelee(p, now, isHeavy) {
     if (gameState !== 'combat') return;
@@ -238,7 +241,26 @@ function tryMelee(p, now, isHeavy) {
                 emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                 damage(o, dmg, p);
             } else {
+                // ---- 命中墙面 / 箱子 ----
                 spawnSparks(h.point, 0xffd28a);
+
+                const n = (typeof getHitWorldNormal === 'function')
+                    ? getHitWorldNormal(h)
+                    : new THREE.Vector3(0, 1, 0);
+
+                // 轻击 → 水平刀痕；重击 → 垂直刀痕
+                if (typeof spawnSlashMark === 'function') {
+                    spawnSlashMark(h.point, n, p.yaw, !!isHeavy);
+                }
+                if (isOnlineHost) {
+                    NET_broadcast({
+                        type: 'slashMark',
+                        x: h.point.x, y: h.point.y, z: h.point.z,
+                        nx: n.x, ny: n.y, nz: n.z,
+                        yaw: p.yaw,
+                        isVertical: !!isHeavy,
+                    });
+                }
             }
         }
     }
@@ -642,6 +664,10 @@ function updateRifleReloadAnim(vm, p, now) {
 // 第一人称视图模型动画
 // ============================================================
 function updateSniperViewmodel(p, dt, now) {
+    // ★ 只有本地视角玩家（p1）需要 viewmodel 动画。
+    //    p2 的 viewmodel 在 main.js 的 render() 里被强制隐藏，
+    //    永远不可见 → 在这里为它跑动画纯属浪费 CPU。
+    if (p !== p1) return;
     if (!p.vm || p.vm.children.length === 0) return;
     const vm = p.vm.children[0];
     if (!vm.userData.basePos || !vm.userData.baseRot) return;

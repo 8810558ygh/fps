@@ -1,9 +1,7 @@
-// ===== js/game_effects.js – 弹痕、曳光弹、火花、投掷轨迹、闪光指示器 =====
+// ===== js/game_effects.js – 弹痕、刀痕、曳光弹、火花、投掷轨迹、闪光指示器 =====
 
 // ============================================================
 // ★ B1：曳光弹对象池
-//   原实现每发子弹都 new BufferGeometry + Line + 克隆材质，
-//   奥丁连射时一秒内几十次分配。改为预分配固定数量的 Line 循环复用。
 // ============================================================
 const TRACER_POOL_SIZE = 32;
 const TRACER_LIFETIME_MS = 90;
@@ -54,17 +52,61 @@ function updateTracers(now) {
 }
 window.updateTracers = updateTracers;
 
-// ===== 火花 =====
-const sparks = [];
+// ============================================================
+// ★ 火花（对象池化：预建 128 个 Mesh，用完隐藏归还）
+// ============================================================
+const sparks = [];                                  // 活跃火花列表
 const sparkGeo = new THREE.BoxGeometry(0.07, 0.07, 0.07);
 
+const SPARK_POOL_SIZE = 128;
+const _sparkFreePool = [];                          // 空闲 Mesh 池
+let _sparkPoolInitialized = false;
+let _sparkPoolStarved = 0;                          // 池满跳过计数器（调试用）
+
+function _initSparkPool() {
+    if (_sparkPoolInitialized) return;
+    if (typeof scene === 'undefined' || !scene) return;
+    _sparkPoolInitialized = true;
+
+    // 借一个默认材质，实际用时会被替换成颜色对应的材质
+    const dummyMat = _getSparkMat(0xffd28a);
+
+    for (let i = 0; i < SPARK_POOL_SIZE; i++) {
+        const m = new THREE.Mesh(sparkGeo, dummyMat);
+        m.visible = false;
+        m.frustumCulled = false;         // 火花移动快，避免每帧做剔除计算
+        m.renderOrder = 2;               // 稍微靠前一点，避免被地面遮挡时闪烁
+        scene.add(m);                     // ★ 只在初始化时 add 一次，之后永不 remove
+        _sparkFreePool.push({
+            mesh: m,
+            vel:  new THREE.Vector3(),
+            life: 0,
+        });
+    }
+    console.log('[effects] 火花池已初始化:', SPARK_POOL_SIZE);
+}
+
+// 借一个空闲火花（池满返回 null）
+function _acquireSpark() {
+    if (!_sparkPoolInitialized) _initSparkPool();
+    if (_sparkFreePool.length === 0) return null;
+    return _sparkFreePool.pop();
+}
+
+// 归还火花
+function _releaseSpark(s) {
+    s.mesh.visible = false;
+    s.life = 0;
+    s.vel.set(0, 0, 0);
+    _sparkFreePool.push(s);
+}
+
 // ============================================================
-// ★ 特效帧预算：一帧最多创建 N 个 spark / bullet hole
-//   霰弹枪 12 颗弹丸同帧命中时，避免一帧创建上百个 Mesh + 材质
+// 帧预算计数器（火花 / 弹痕共用）
 // ============================================================
 let _fxFrameStamp = -1;
 let _fxSparkCount = 0;
-let _fxHoleCount = 0;
+let _fxHoleCount  = 0;
 const FX_SPARK_PER_FRAME = 3;
 const FX_HOLE_PER_FRAME  = 3;
 
@@ -77,10 +119,6 @@ function _tickFxBudget() {
     }
 }
 
-// ============================================================
-// ★ 火花材质缓存（避免每次开火 new MeshBasicMaterial）
-//   移除时不能 dispose，因为材质是共享的
-// ============================================================
 const _sparkMatCache = new Map();
 function _getSparkMat(color) {
     let m = _sparkMatCache.get(color);
@@ -91,12 +129,15 @@ function _getSparkMat(color) {
     return m;
 }
 
-// ===== 弹痕 =====
+// ===== 弹痕 / 刀痕共用列表 =====
 const bulletHoles = [];
 const MAX_BULLET_HOLES = 80;
 const BULLET_HOLE_LIFE_MS = 15000;
 const BULLET_HOLE_FADE_MS = 2500;
 
+// ============================================================
+// 圆形弹孔纹理（枪械）
+// ============================================================
 let _bulletHoleTex = null;
 function getBulletHoleTexture() {
     if (_bulletHoleTex) return _bulletHoleTex;
@@ -164,7 +205,6 @@ function spawnBulletHole(point, normal) {
     if (typeof scene === 'undefined') return;
     if (!point) return;
 
-    // ★ 帧预算：霰弹枪 12 颗弹丸同帧命中时，最多创建 3 个弹痕
     _tickFxBudget();
     if (_fxHoleCount >= FX_HOLE_PER_FRAME) return;
     _fxHoleCount++;
@@ -172,7 +212,6 @@ function spawnBulletHole(point, normal) {
     const n = (normal ? normal.clone() : new THREE.Vector3(0, 1, 0)).normalize();
     const geo = getBulletHoleGeo();
 
-    // 注意：这里每个弹痕有自己的材质（因为要独立 opacity 淡出），不共享
     const mat = new THREE.MeshBasicMaterial({
         map: getBulletHoleTexture(),
         transparent: true,
@@ -213,6 +252,247 @@ function spawnBulletHole(point, normal) {
 }
 window.spawnBulletHole = spawnBulletHole;
 
+// ============================================================
+// ★ 刀痕纹理（锐利的金属切割痕）
+// ============================================================
+let _slashMarkTex = null;
+function getSlashMarkTexture() {
+    if (_slashMarkTex) return _slashMarkTex;
+
+    const W = 512, H = 64;
+    const c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    const ctx = c.getContext('2d');
+
+    const startX = W * 0.06;
+    const endX   = W * 0.94;
+    const cy     = H / 2;
+
+    const segs = 80;
+    const pts = [];
+    for (let i = 0; i <= segs; i++) {
+        const t = i / segs;
+        const x = startX + (endX - startX) * t;
+        const wave =
+              Math.sin(t * Math.PI * 2.7)        * 1.8
+            + Math.sin(t * Math.PI * 6.1 + 0.7)  * 0.9
+            + Math.sin(t * Math.PI * 13.5 + 2.1) * 0.35;
+        pts.push({ x, y: cy + wave, t });
+    }
+
+    function widthAt(t) {
+        const inEdge = Math.min(t / 0.12, (1 - t) / 0.12);
+        const c01 = Math.max(0, Math.min(1, inEdge));
+        return Math.pow(c01, 0.6);
+    }
+
+    function drawBand(halfWidth, colorStr) {
+        ctx.fillStyle = colorStr;
+        ctx.beginPath();
+        for (let i = 0; i < pts.length; i++) {
+            const p = pts[i];
+            const hw = widthAt(p.t) * halfWidth;
+            if (i === 0) ctx.moveTo(p.x, p.y - hw);
+            else ctx.lineTo(p.x, p.y - hw);
+        }
+        for (let i = pts.length - 1; i >= 0; i--) {
+            const p = pts[i];
+            const hw = widthAt(p.t) * halfWidth;
+            ctx.lineTo(p.x, p.y + hw);
+        }
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    drawBand(8.5, 'rgba(30, 22, 16, 0.18)');
+    drawBand(5.5, 'rgba(12, 10, 8, 0.55)');
+    drawBand(2.6, 'rgba(0, 0, 0, 0.95)');
+
+    const SPIKES = 90;
+    for (let i = 0; i < SPIKES; i++) {
+        const t = 0.12 + Math.random() * 0.76;
+        const idx = Math.floor(t * segs);
+        const p = pts[idx];
+        const wf = widthAt(p.t);
+        if (wf < 0.25) continue;
+
+        const side = Math.random() < 0.5 ? -1 : 1;
+        const baseOffset = 2.2 + Math.random() * 1.5;
+        const baseY = p.y + side * baseOffset;
+        const tipY  = baseY + side * (1.5 + Math.random() * 4.5);
+        const tipX  = p.x + (Math.random() - 0.5) * 4;
+
+        const bright = 175 + Math.floor(Math.random() * 70);
+        ctx.fillStyle = `rgba(${bright}, ${bright - 8}, ${bright - 25}, ${0.55 + Math.random() * 0.4})`;
+        ctx.beginPath();
+        ctx.moveTo(p.x - 1.4, baseY);
+        ctx.lineTo(p.x + 1.4, baseY);
+        ctx.lineTo(tipX, tipY);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = `rgba(0, 0, 0, ${0.4 + Math.random() * 0.3})`;
+        ctx.beginPath();
+        ctx.moveTo(p.x - 1.4, baseY);
+        ctx.lineTo(p.x + 1.4, baseY);
+        ctx.lineTo(p.x, baseY + side * 0.8);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    ctx.strokeStyle = 'rgba(255, 252, 240, 0.9)';
+    ctx.lineWidth = 0.9;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    let first = true;
+    for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const wf = widthAt(p.t);
+        if (wf < 0.15) { first = true; continue; }
+        const oy = -0.9;
+        if (first) { ctx.moveTo(p.x, p.y + oy); first = false; }
+        else ctx.lineTo(p.x, p.y + oy);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255, 245, 220, 0.5)';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    first = true;
+    for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const wf = widthAt(p.t);
+        if (wf < 0.15) { first = true; continue; }
+        const oy = 1.1;
+        if (first) { ctx.moveTo(p.x, p.y + oy); first = false; }
+        else ctx.lineTo(p.x, p.y + oy);
+    }
+    ctx.stroke();
+
+    for (let i = 0; i < 30; i++) {
+        const t = 0.15 + Math.random() * 0.7;
+        const idx = Math.floor(t * segs);
+        const p = pts[idx];
+        const wf = widthAt(p.t);
+        if (wf < 0.3) continue;
+        const ox = (Math.random() - 0.5) * 5;
+        const oy = (Math.random() - 0.5) * 3;
+        const r = 0.4 + Math.random() * 1.0;
+        ctx.fillStyle = `rgba(0, 0, 0, ${0.55 + Math.random() * 0.35})`;
+        ctx.beginPath();
+        ctx.arc(p.x + ox, p.y + oy, r, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = 'destination-in';
+    const grad = ctx.createLinearGradient(0, 0, W, 0);
+    grad.addColorStop(0.00, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.05, 'rgba(0,0,0,0.7)');
+    grad.addColorStop(0.14, 'rgba(0,0,0,1)');
+    grad.addColorStop(0.86, 'rgba(0,0,0,1)');
+    grad.addColorStop(0.95, 'rgba(0,0,0,0.7)');
+    grad.addColorStop(1.00, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = 'source-over';
+
+    const t = new THREE.CanvasTexture(c);
+    t.encoding  = THREE.sRGBEncoding;
+    t.minFilter = THREE.LinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    _slashMarkTex = t;
+    return t;
+}
+
+let _slashMarkGeo = null;
+function getSlashMarkGeo() {
+    if (_slashMarkGeo) return _slashMarkGeo;
+    _slashMarkGeo = new THREE.PlaneGeometry(0.48, 0.06);
+    return _slashMarkGeo;
+}
+
+function spawnSlashMark(point, normal, playerYaw, isVertical) {
+    if (typeof scene === 'undefined') return;
+    if (!point) return;
+
+    _tickFxBudget();
+    if (_fxHoleCount >= FX_HOLE_PER_FRAME) return;
+    _fxHoleCount++;
+
+    const n = (normal ? normal.clone() : new THREE.Vector3(0, 1, 0)).normalize();
+
+    let swingDir = new THREE.Vector3();
+
+    if (isVertical) {
+        swingDir.set(0, 1, 0);
+        const dot = swingDir.dot(n);
+        swingDir.sub(n.clone().multiplyScalar(dot));
+
+        if (swingDir.lengthSq() < 0.001) {
+            swingDir.set(Math.cos(playerYaw), 0, -Math.sin(playerYaw));
+            const d2 = swingDir.dot(n);
+            swingDir.sub(n.clone().multiplyScalar(d2));
+        }
+    } else {
+        swingDir.set(Math.cos(playerYaw), 0, -Math.sin(playerYaw));
+        const dot = swingDir.dot(n);
+        swingDir.sub(n.clone().multiplyScalar(dot));
+
+        if (swingDir.lengthSq() < 0.001) {
+            const up = Math.abs(n.y) > 0.9
+                ? new THREE.Vector3(1, 0, 0)
+                : new THREE.Vector3(0, 1, 0);
+            swingDir.crossVectors(up, n).normalize();
+        }
+    }
+
+    swingDir.normalize();
+
+    const bitangent = new THREE.Vector3().crossVectors(n, swingDir).normalize();
+    const basisMat = new THREE.Matrix4().makeBasis(swingDir, bitangent, n);
+
+    const geo = getSlashMarkGeo();
+    const mat = new THREE.MeshBasicMaterial({
+        map: getSlashMarkTexture(),
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -8,
+        polygonOffsetUnits: -8,
+        side: THREE.DoubleSide,
+    });
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(point).addScaledVector(n, 0.008);
+    mesh.setRotationFromMatrix(basisMat);
+
+    if (!isVertical) {
+        mesh.rotateZ((Math.random() - 0.5) * 0.12);
+    }
+
+    const s = 0.9 + Math.random() * 0.25;
+    mesh.scale.set(s, s, s);
+
+    mesh.renderOrder = 5;
+    scene.add(mesh);
+
+    bulletHoles.push({ mesh, born: performance.now() });
+
+    while (bulletHoles.length > MAX_BULLET_HOLES) {
+        const old = bulletHoles.shift();
+        if (old.mesh) {
+            scene.remove(old.mesh);
+            if (old.mesh.material) old.mesh.material.dispose();
+        }
+    }
+}
+window.spawnSlashMark = spawnSlashMark;
+
+// ============================================================
+// 弹痕 / 刀痕生命周期
+// ============================================================
 function updateBulletHoles(now) {
     for (let i = bulletHoles.length - 1; i >= 0; i--) {
         const bh = bulletHoles[i];
@@ -265,7 +545,6 @@ function getShotTargets() {
 }
 window.getShotTargets = getShotTargets;
 
-// 返回一个可修改的副本（复用同一个数组对象，不产生新分配）
 function prepareShotTargets() {
     _shotTargetsWork.length = 0;
     const base = getShotTargets();
@@ -274,7 +553,7 @@ function prepareShotTargets() {
 }
 window.prepareShotTargets = prepareShotTargets;
 
-// ===== 枪口世界坐标（优先使用视图模型里的 muzzlePoint 锚点） =====
+// ===== 枪口世界坐标 =====
 function muzzleWorld(p, out) {
     if (p && p.vm && p.vm.children.length > 0) {
         const vmGun = p.vm.children[0];
@@ -286,47 +565,61 @@ function muzzleWorld(p, out) {
     return out.set(0.28, -0.2, -1.25).applyMatrix4(p.cam.matrixWorld);
 }
 
-// ===== 火花（材质共享 + 帧预算） =====
+// ============================================================
+// ★ 火花生成（池化版）
+// ============================================================
 function spawnSparks(point, color) {
     _tickFxBudget();
     if (_fxSparkCount >= FX_SPARK_PER_FRAME) return;
     _fxSparkCount++;
 
     const mat = _getSparkMat(color);
+
     for (let i = 0; i < 6; i++) {
-        const m = new THREE.Mesh(sparkGeo, mat);
-        m.position.copy(point);
-        scene.add(m);
-        sparks.push({
-            mesh: m,
-            vel: new THREE.Vector3(
-                (Math.random() - 0.5) * 4,
-                Math.random() * 3.5,
-                (Math.random() - 0.5) * 4
-            ),
-            life: 0.4
-        });
+        const s = _acquireSpark();
+        if (!s) {
+            // 池满：跳过剩余火花（视觉上几乎无感，只是少几粒）
+            _sparkPoolStarved++;
+            return;
+        }
+
+        s.mesh.material = mat;
+        s.mesh.position.copy(point);
+        s.mesh.visible = true;
+
+        s.vel.set(
+            (Math.random() - 0.5) * 4,
+            Math.random() * 3.5,
+            (Math.random() - 0.5) * 4
+        );
+        s.life = 0.4;
+
+        sparks.push(s);
     }
 }
 window.spawnSparks = spawnSparks;
+
+// ★ 调试：查看火花池状态
+window.dumpSparkPool = function () {
+    console.log(
+        `[effects] 火花池: 活跃 ${sparks.length} / 空闲 ${_sparkFreePool.length} / 总 ${SPARK_POOL_SIZE}\n` +
+        `           因池满跳过: ${_sparkPoolStarved} 次`
+    );
+    return {
+        active: sparks.length,
+        free: _sparkFreePool.length,
+        total: SPARK_POOL_SIZE,
+        starved: _sparkPoolStarved,
+    };
+};
 
 // ===== 投掷轨迹线 =====
 let smokeTrajLine = null;
 let flashTrajLine = null;
 
-// ★ 提高时间步精度、保持总时长
-//   SMOKE_TRAJ_DT = 1/60，与 cannon.js 的 FIXED_STEP 一致
-//   STEPS = 144，总时长 = 144 / 60 = 2.4 秒
 const SMOKE_TRAJ_STEPS = 144;
 const SMOKE_TRAJ_DT = 1 / 60;
 
-// ============================================================
-// ★ 投掷轨迹模拟（与 cannon.js 物理世界对齐）
-//   · 重力：使用配置里的 gravity（已在 config.js 改为 GRAV = 22）
-//   · 空气阻尼：cannon.js 里 linearDamping = 0.05
-//   · 碰撞高度：球体半径 SMOKE_PROJ_RADIUS = 0.09
-//   · 时间步：1/60，与物理世界一致
-// ============================================================
 function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounces, friction, steps, dt) {
     const pts = [];
     const vel = dir.clone().multiplyScalar(throwSpeed);
@@ -336,9 +629,6 @@ function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounc
     let stopped = false;
     let restX = pos.x, restY = pos.y, restZ = pos.z;
 
-    // ★ 与 cannon.js 保持一致：
-    //   1. 空气阻尼（physics.js 里 createProjectileBody 设的 linearDamping = 0.05）
-    //   2. 地面高度用球体半径（cannon.js 里投掷物是 Sphere(SMOKE_PROJ_RADIUS)）
     const LINEAR_DAMPING = 0.05;
     const GROUND_Y = (typeof SMOKE_PROJ_RADIUS !== 'undefined') ? SMOKE_PROJ_RADIUS : 0.09;
     const dampFactor = Math.pow(1 - LINEAR_DAMPING, dt);
@@ -350,7 +640,6 @@ function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounc
         }
         pts.push(pos.clone());
 
-        // ★ 空气阻尼（cannon.js 每步施加，这里对齐）
         vel.multiplyScalar(dampFactor);
 
         vel.y -= gravity * dt;
@@ -456,7 +745,7 @@ function updateFlashTrajectory(now) {
     updateTrajLine(flashTrajLine, pts);
 }
 
-// ===== 闪光指示器：被闪光弹命中时在角色眼前显示光晕 =====
+// ===== 闪光指示器 =====
 function updateFlashIndicators(now) {
     if (typeof p1 === 'undefined' || typeof p2 === 'undefined') return;
 
@@ -471,7 +760,7 @@ function updateFlashIndicators(now) {
         if (isFlashed) {
             const remain = p.flashUntil - now;
             const total = FLASH.flashDurationMs;
-            const t = Math.max(0, Math.min(1, remain / total));  // 1 → 0
+            const t = Math.max(0, Math.min(1, remain / total));
 
             p.flashIndicator.visible = true;
 

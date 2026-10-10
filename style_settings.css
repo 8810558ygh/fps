@@ -1,0 +1,414 @@
+/* ============================================================
+   style_settings.css – 设置按钮 + 全屏设置页
+   ============================================================ */
+
+/* ============================================================
+   ★ 大厅右上角设置按钮
+   —— 相对 #lobbyOverlay 定位（大厅已设 position: fixed）
+   ============================================================ */
+#settingsBtn {
+    position: absolute;
+    top: 24px;
+    right: 24px;
+    z-index: 5;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #cfe0f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+#settingsBtn:hover {
+    color: #ffd24a;
+    border-color: rgba(255, 210, 74, 0.6);
+    background: rgba(255, 210, 74, 0.08);
+    transform: translateY(-2px) rotate(45deg);
+}
+#settingsBtn:active {
+    transform: translateY(0) scale(0.95);
+}
+#settingsBtn svg { pointer-events: none; }
+
+@media (pointer: coarse) {
+    #settingsBtn {
+        top: 16px;
+        right: 16px;
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+    }
+    #settingsBtn svg { width: 19px; height: 19px; }
+}
+
+/* ============================================================
+   ★ 全屏设置页
+   —— 层级盖过 #lobbyOverlay(55) 和 #onlineLobbyOverlay(58)
+   ============================================================ */
+#settingsOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    background: radial-gradient(ellipse at center, #16263a 0%, #08131f 75%);
+    color: #cfe0f0;
+    font-family: "Microsoft YaHei", Arial, sans-serif;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.settings-page-wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ---------- 顶部栏 ---------- */
+.settings-topbar {
+    display: grid;
+    grid-template-columns: 140px 1fr 140px;
+    align-items: center;
+    padding: 20px 32px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.18);
+    flex-shrink: 0;
+}
+.settings-title {
+    text-align: center;
+    font-size: 26px;
+    letter-spacing: 8px;
+    color: #ffd24a;
+    font-weight: 700;
+    text-shadow: 0 2px 16px rgba(255, 210, 74, 0.35);
+}
+
+.settings-back-btn {
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    color: #cfe0f0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+.settings-back-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 210, 74, 0.5);
+    color: #ffd24a;
+    transform: translateX(-2px);
+}
+.settings-back-btn .arrow {
+    font-size: 18px;
+    line-height: 1;
+}
+
+.settings-reset-btn {
+    justify-self: end;
+    padding: 10px 22px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    color: #cfe0f0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+.settings-reset-btn:hover {
+    background: rgba(255, 100, 100, 0.12);
+    border-color: rgba(255, 100, 100, 0.5);
+    color: #ff9080;
+}
+
+/* ---------- Tab 栏 ---------- */
+.settings-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 32px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.12);
+    flex-shrink: 0;
+}
+.stab {
+    position: relative;
+    background: none;
+    border: none;
+    color: #7c92a8;
+    font-size: 16px;
+    padding: 18px 34px;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 4px;
+    font-family: inherit;
+    font-weight: 600;
+}
+.stab:hover { color: #cfe0f0; }
+.stab.active {
+    color: #ffd24a;
+    text-shadow: 0 0 14px rgba(255, 210, 74, 0.55);
+}
+.stab.active::after {
+    content: '';
+    position: absolute;
+    left: 24px;
+    right: 24px;
+    bottom: -1px;
+    height: 3px;
+    background: linear-gradient(90deg,
+        rgba(255, 210, 74, 0) 0%,
+        #ffd24a 50%,
+        rgba(255, 210, 74, 0) 100%);
+    border-radius: 2px;
+    box-shadow: 0 0 14px rgba(255, 210, 74, 0.8);
+}
+
+/* ---------- 内容区 ---------- */
+.settings-content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 32px 40px;
+}
+.settings-content::-webkit-scrollbar { width: 10px; }
+.settings-content::-webkit-scrollbar-track { background: transparent; }
+.settings-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 5px;
+}
+.settings-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.22);
+}
+
+.settings-page { width: 100%; }
+
+.settings-page-inner {
+    width: min(760px, 100%);
+    margin: 0 auto;
+    padding-bottom: 40px;
+}
+
+/* ---------- 分组 ---------- */
+.settings-section {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    padding: 22px 28px 26px;
+    margin-bottom: 22px;
+}
+.section-title {
+    font-size: 13px;
+    color: #7c92a8;
+    letter-spacing: 4px;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    text-transform: uppercase;
+}
+
+/* ---------- 参数行 ---------- */
+.set-row {
+    display: grid;
+    grid-template-columns: 130px 1fr 90px;
+    align-items: center;
+    gap: 20px;
+    padding: 12px 0;
+    font-size: 15px;
+}
+.set-row + .set-row {
+    border-top: 1px dashed rgba(255, 255, 255, 0.05);
+}
+.set-row label {
+    color: #9fb2c8;
+    letter-spacing: 1px;
+}
+.set-val {
+    text-align: right;
+    font-family: Consolas, "Courier New", monospace;
+    color: #6ee7b7;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+/* ---------- 滑块 ---------- */
+.set-row input[type=range] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.12);
+    outline: none;
+    cursor: pointer;
+    padding: 0;
+}
+.set-row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: linear-gradient(180deg, #ffd24a, #f0a92e);
+    box-shadow: 0 0 12px rgba(255, 210, 74, 0.7);
+    cursor: pointer;
+    border: none;
+}
+.set-row input[type=range]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border: none;
+    border-radius: 50%;
+    background: #ffd24a;
+    cursor: pointer;
+}
+
+/* ---------- 开关 ---------- */
+.switch {
+    width: 46px;
+    height: 24px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.15s;
+    padding: 0;
+    border: none;
+    outline: none;
+    justify-self: start;
+}
+.switch:checked { background: rgba(110, 231, 183, 0.5); }
+.switch::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.switch:checked::after { transform: translateX(22px); }
+
+/* ---------- 色板 ---------- */
+.color-wrap {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    grid-column: 2 / 4;
+}
+.swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: var(--c);
+    border: 2px solid rgba(255, 255, 255, 0.18);
+    cursor: pointer;
+    padding: 0;
+    transition: transform 0.15s, border-color 0.15s;
+}
+.swatch:hover {
+    transform: scale(1.15);
+    border-color: rgba(255, 255, 255, 0.55);
+}
+#chColor {
+    width: 52px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    cursor: pointer;
+    background: transparent;
+    margin-left: 6px;
+}
+
+/* ============================================================
+   ★ 准星预览区
+   ============================================================ */
+.ch-preview-box {
+    width: 100%;
+    height: 220px;
+    border-radius: 12px;
+    background:
+        repeating-conic-gradient(#2a2e34 0% 25%, #23262b 0% 50%) 50% / 18px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: inset 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+.ch-preview {
+    position: relative;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    /* CSS 变量由 JS 同步写入，与游戏内 #crosshair 完全一致 */
+    --ch-color: #ffffff;
+    --ch-opacity: 0.95;
+    --ch-len: 13px;
+    --ch-thick: 2px;
+    --ch-gap: 0px;
+    --ch-dot: 4px;
+    --ch-outline: 0px;
+    --ch-outline-color: rgba(0, 0, 0, 0.85);
+}
+
+/* ============================================================
+   ★ 移动端适配
+   ============================================================ */
+@media (pointer: coarse) {
+    .settings-topbar {
+        grid-template-columns: 100px 1fr 100px;
+        padding: 12px 16px;
+    }
+    .settings-title { font-size: 18px; letter-spacing: 4px; }
+    .settings-back-btn,
+    .settings-reset-btn {
+        padding: 7px 14px;
+        font-size: 12px;
+        letter-spacing: 1px;
+    }
+    .settings-back-btn .arrow { font-size: 15px; }
+    .settings-tabs { padding: 0 16px; }
+    .stab { font-size: 14px; padding: 14px 20px; letter-spacing: 2px; }
+    .stab.active::after { left: 14px; right: 14px; }
+
+    .settings-content { padding: 18px 14px; }
+    .settings-section { padding: 16px 16px 20px; margin-bottom: 16px; }
+    .section-title { font-size: 12px; letter-spacing: 2px; margin-bottom: 12px; }
+
+    .set-row {
+        grid-template-columns: 96px 1fr 64px;
+        gap: 12px;
+        font-size: 13px;
+        padding: 10px 0;
+    }
+    .set-val { font-size: 12px; }
+
+    .ch-preview-box { height: 150px; }
+    .swatch { width: 24px; height: 24px; border-radius: 6px; }
+    #chColor { width: 42px; height: 28px; }
+}
