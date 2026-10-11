@@ -1,13 +1,10 @@
 // ===== js/online_core.js – P2P 联机核心（NET + 座位 + 房间 + 路由 + UI） =====
 
 const ICE_SERVERS = [
-    // 保留 Google STUN 作为基础穿透
+    // Google STUN（基础穿透）
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    // ★ 新增：两个备用公共 STUN，提高打洞成功率
-    { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:stun.nextcloud.com:443' },
-    // Xirsys 提供的 TURN 中继
+    // Xirsys TURN 中继
     {
         username: 'iVhu6xd1fzssTwtLVCDSl1bfyFR0tbp20zbmIPPG-1i7kl79Iljkr5veYYSlbt2QAAAAAGrKT1d4dWFu',
         credential: '1ed8b33e-c4b9-11f1-8719-42684a6cc554',
@@ -56,12 +53,12 @@ const NET = {
     _heartbeatTimer: null,
     _pingTimer: null,
     _hostBroadcastTimer: null,
-    _hostBroadcastRaf: null,          // ★ 新增：rAF 驱动广播
+    _hostBroadcastRaf: null,          // ★ rAF 驱动广播
     _assignedPeers: new Set(),
-    _lastSentInput: null,             // ★ 新增：上报变化检测缓存
-    _lastDrift: 0,                    // ★ 新增：客户端位置漂移量（调试）
-    _lastHardSyncLogTime: 0,          // ★ 新增：硬同步日志节流
-    connType: null                    // ★ 新增：'p2p' / 'relay' / 'host'
+    _lastSentInput: null,             // ★ 上报变化检测缓存
+    _lastDrift: 0,                    // ★ 客户端位置漂移量（调试）
+    _lastHardSyncLogTime: 0,          // ★ 硬同步日志节流
+    connType: null                    // ★ 'p2p' / 'relay' / 'host'
 };
 window.NET = NET;
 
@@ -142,7 +139,8 @@ function updateOpponentInfo() {
 window.NET_updateOpponentInfo = updateOpponentInfo;
 
 // ============================================================
-// ★ 连接类型检测：区分 P2P 直连 / TURN 中继
+// 连接类型检测（★ 备用，不主动调用，避免干扰 PeerJS 事件流）
+//   如需调试时手动调用：detectConnectionType(NET.connections.get(id).conn)
 // ============================================================
 function detectConnectionType(conn) {
     if (!conn || !conn.peerConnection) return;
@@ -168,14 +166,6 @@ function detectConnectionType(conn) {
 
             NET.connType = relay ? 'relay' : (p2p ? 'p2p' : (host ? 'host' : 'unknown'));
             console.log('[NET] 连接类型:', NET.connType);
-
-            if (relay) {
-                const el = document.getElementById('onlineHint');
-                if (el) {
-                    el.textContent = '⚠️ 使用 TURN 中继连接，延迟可能偏高（建议切换网络环境）';
-                    el.style.color = '#ffd24a';
-                }
-            }
         }).catch(e => console.warn('[NET] getStats 失败:', e));
     }, 2000);
 }
@@ -408,7 +398,6 @@ function handleRoomMessage(fromId, data) {
             }
             break;
 
-        // ★ 刀痕（房主 → 客户端）
         case 'slashMark':
             if (!NET.isHost && typeof spawnSlashMark === 'function') {
                 spawnSlashMark(
@@ -429,14 +418,12 @@ function handleRoomMessage(fromId, data) {
             }
             break;
 
-        // ★ 油桶爆炸（房主 → 客户端）
         case 'barrelExplode':
             if (!NET.isHost && typeof window.hideBarrelAt === 'function') {
                 window.hideBarrelAt(data.x, data.y, data.z);
             }
             break;
 
-        // ★ 命中反馈
         case 'hitmarkForClient':
             if (!NET.isHost
                 && typeof hitmark === 'function'
@@ -456,7 +443,6 @@ function handleRoomMessage(fromId, data) {
             }
             break;
 
-        // ★ 客户端收到主机的世界声音广播（HRTF 本地重放）
         case 'worldSound':
             if (!NET.isHost && typeof handleRemoteWorldSound === 'function') {
                 handleRemoteWorldSound(data);
@@ -525,7 +511,7 @@ function createRoom() {
     });
     NET.peer.on('connection', (conn) => {
         NET.connections.set(conn.peer, { conn, lastSeen: Date.now() });
-        conn.on('open', () => detectConnectionType(conn));   // ★ 新增
+        // ★ 注意：不在 open 事件里做任何额外事情，避免干扰 PeerJS 内部流程
         conn.on('data', (d) => handleRoomMessage(conn.peer, d));
         conn.on('close', () => {
             NET.connections.delete(conn.peer);
@@ -568,7 +554,6 @@ function joinRoom(roomCode) {
             conn.send({ type: 'joinRequest', myId: NET.myPeerId, name: NET.myName });
             startHeartbeat();
             startPingLoop();
-            detectConnectionType(conn);   // ★ 新增
         });
         conn.on('data', (d) => handleRoomMessage(NET.roomId, d));
         conn.on('close', () => { NET.connections.delete(NET.roomId); toast('与房主断开连接'); });
@@ -620,7 +605,6 @@ window.leaveOnlineRoom = function () {
     NET.pendingMeleeHeavy = false;
     NET.tick = 0;
     NET._assignedPeers.clear();
-    // ★ 新增：清理网络优化字段
     NET._lastSentInput = null;
     NET._lastDrift = 0;
     NET._lastHardSyncLogTime = 0;

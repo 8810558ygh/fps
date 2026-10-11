@@ -388,12 +388,12 @@ function updateP2ShadowState() {
 
 // ============================================================
 // ★ 远端玩家插值（固定时间常数 · 帧率无关 · 抗抖动）
+//   k = 1 - exp(-18·dt)，τ ≈ 55ms
 // ============================================================
 function interpolateRemotePlayer(p, dt) {
     if (!p || !p._netTargetPos) return;
 
-    // k = 1 - exp(-18·dt)，τ ≈ 55ms，帧率无关
-    const k = 1 - Math.exp(-18 * dt);
+    const k    = 1 - Math.exp(-18 * dt);
     const kYaw = 1 - Math.exp(-22 * dt);
 
     p.pos.x += (p._netTargetPos.x - p.pos.x) * k;
@@ -496,7 +496,7 @@ function loop() {
             if (typeof NET_updateSpectatorView === 'function') NET_updateSpectatorView(dt);
         }
 
-        // ★ 只处理 AI 模式
+        // ★ 只处理 AI 模式（'range' 分支已删除）
         if (gameMode === 'ai' && typeof aiUpdate === 'function') {
             aiUpdate(dt, now);
         }
@@ -682,6 +682,7 @@ function enterGame(mode) {
 }
 window.enterGame = enterGame;
 
+// ★ 靶场按钮已删除
 document.getElementById('lobbyAiBtn').addEventListener('click', () => enterGame('ai'));
 
 document.getElementById('lobbyOnlineBtn').addEventListener('click', () => {
