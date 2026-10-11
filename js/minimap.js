@@ -13,10 +13,15 @@
     let dpr = 1;
 
     // ★ 新增：视野扇形径向渐变的缓存
-    //   原先每帧 createRadialGradient，其实只有 radius 变化时才需要重建；
-    //   而 radius 只跟 mapSize 挂钩，几乎不变。
     let _viewFovGrad = null;
     let _viewFovGradRadius = -1;
+
+    // ★ 新增：取得当前地图的活动半径（半宽）
+    function _getArenaHalf() {
+        return (typeof window.currentArenaHalf === 'number')
+            ? window.currentArenaHalf
+            : ((typeof ARENA !== 'undefined') ? ARENA : 26);
+    }
 
     function resize() {
         const isTouch = window.matchMedia('(pointer: coarse)').matches;
@@ -75,7 +80,10 @@
             return;
         }
 
-        const scale = s / (ARENA * 2);
+        // ★ 修改：动态半宽
+        const half  = _getArenaHalf();
+        const scale = s / (half * 2);
+
         const wallFill = '#d8d2c6';
         const wallEdge = 'rgba(30, 30, 34, 0.85)';
         staticCtx.lineWidth = 0.8;
@@ -83,10 +91,12 @@
         for (const c of colliders) {
             const w = c.x1 - c.x0;
             const h = c.z1 - c.z0;
-            if (w > ARENA * 1.5 || h > ARENA * 1.5) continue;
+            // ★ 修改：超大地图物体跳过阈值改用 half
+            if (w > half * 1.5 || h > half * 1.5) continue;
 
-            const x = (c.x0 + ARENA) * scale;
-            const y = (c.z0 + ARENA) * scale;
+            // ★ 修改：偏移量用 half
+            const x = (c.x0 + half) * scale;
+            const y = (c.z0 + half) * scale;
             const rectW = Math.max(w * scale, 2);
             const rectH = Math.max(h * scale, 2);
 
@@ -110,17 +120,12 @@
     const _ray = new THREE.Raycaster();
 
     // ============================================================
-    // ★ 优化：可见性缓存
-    //   原来 enemyVisible() 每帧都跑射线检测（60Hz）。
-    //   现在改为 10Hz（100ms 节流），中间帧复用上次结果。
-    //   CPU 射线开销降低约 83%，人眼几乎无感知。
+    // ★ 优化：可见性缓存（10Hz 节流）
     // ============================================================
     let _enemyVisibleLastCheck = 0;
     let _enemyVisibleCached = false;
 
     // ★ 优化：遮挡物列表缓存
-    //   原来每帧 wallMeshes.concat(crateMeshes) 会创建新数组。
-    //   现在缓存起来，只在地图物体数量变化时重建。
     const _occluderCache = [];
     let _occluderCacheLen = -1;
     function _getOccluderList() {
@@ -138,13 +143,11 @@
     function enemyVisible() {
         const now = performance.now();
 
-        // ★ 10Hz 节流：100ms 内直接复用上次结果
         if (now - _enemyVisibleLastCheck < 100) {
             return _enemyVisibleCached;
         }
         _enemyVisibleLastCheck = now;
 
-        // 前两个快速短路检查仍然每次执行（开销极小）
         if (typeof p2 === 'undefined' || !p2 || !p2.baseVisible) {
             _enemyVisibleCached = false;
             return false;
@@ -195,7 +198,10 @@
 
     function draw() {
         const s = mapSize;
-        const scale = s / (ARENA * 2);
+
+        // ★ 修改：动态半宽
+        const half  = _getArenaHalf();
+        const scale = s / (half * 2);
 
         // 静态层
         ctx.clearRect(0, 0, s, s);
@@ -204,8 +210,9 @@
         if (typeof p1 === 'undefined' || !p1) return;
 
         // ---- 玩家三角 + 视野扇形 ----
-        const px = (p1.pos.x + ARENA) * scale;
-        const py = (p1.pos.z + ARENA) * scale;
+        // ★ 修改：坐标换算用 half
+        const px = (p1.pos.x + half) * scale;
+        const py = (p1.pos.z + half) * scale;
 
         ctx.save();
         ctx.translate(px, py);
@@ -220,8 +227,7 @@
         ctx.arc(0, 0, radius, -Math.PI / 2 - hFov / 2, -Math.PI / 2 + hFov / 2);
         ctx.closePath();
 
-        // ★ 修改：径向渐变按需创建、之后复用
-        //   radius 只跟 mapSize 挂钩，几乎不变，没必要每帧重建。
+        // ★ 径向渐变按需创建、之后复用
         if (!_viewFovGrad || _viewFovGradRadius !== radius) {
             _viewFovGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
             _viewFovGrad.addColorStop(0, 'rgba(107, 179, 255, 0.35)');
@@ -248,8 +254,9 @@
 
         // ---- 敌人红点（仅当可见时） ----
         if (enemyVisible()) {
-            const ex = (p2.pos.x + ARENA) * scale;
-            const ey = (p2.pos.z + ARENA) * scale;
+            // ★ 修改：坐标换算用 half
+            const ex = (p2.pos.x + half) * scale;
+            const ey = (p2.pos.z + half) * scale;
 
             // 呼吸脉冲
             const t = performance.now() / 450;

@@ -30,6 +30,13 @@ const _adsRetEl  = document.getElementById('adsReticle');
 const _aiToggleEl      = document.getElementById('aiToggle');
 const _aiToggleStateEl = document.getElementById('aiToggleState');
 
+// ============================================================
+// ★ 硬直 / 易伤 视觉反馈 DOM 缓存
+// ============================================================
+let _stunOverlayEl = null;
+let _stunShakeRaf  = 0;
+let _vulnOverlayEl = null;
+
 const _hudState = {
     score: -1,
     hp: -1,
@@ -113,7 +120,7 @@ function getReportColumns(attacker, attackerSeat) {
 }
 
 // ============================================================
-// ★ showRoundReport：包含"腿部"一行
+// ★ showRoundReport
 // ============================================================
 function showRoundReport(roundNumber, attacker, victim, dmgByAttacker, dmgByVictim,
                          killerSeat, victimSeat) {
@@ -301,7 +308,6 @@ function hideScorePanel() {
     if (_scorePanelEl) _scorePanelEl.classList.remove('visible');
 }
 
-// 返回展示层数据（正确处理单机 / 联机 / 观战）
 function _getScoreboardData() {
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online'
                       && typeof NET !== 'undefined' && NET.roomId);
@@ -333,12 +339,10 @@ function _getScoreboardData() {
             }
         }
     } else {
-        // 单机：p1 = 蓝方（自己），p2 = 红方
         blueScore = p1.score;
         redScore  = p2.score;
         if (typeof gameMode !== 'undefined' && gameMode === 'ai') {
             blueName = '你';
-            // ★ 靶子模式名称
             redName  = (typeof aiEnabled !== 'undefined' && !aiEnabled) ? '靶子' : 'AI';
         } else {
             blueName = '蓝方';
@@ -395,7 +399,6 @@ window.hideScorePanel = hideScorePanel;
 
 // ============================================================
 // ★ AI 操纵开关（人机对战）
-//   —— 战斗阶段也常驻显示，可随时切换
 // ============================================================
 function toggleAiEnabled() {
     if (typeof gameMode === 'undefined' || gameMode !== 'ai') return;
@@ -404,7 +407,6 @@ function toggleAiEnabled() {
 
     aiEnabled = !aiEnabled;
 
-    // 关闭 AI 时立即清除它的所有输入，防止残余推动
     if (!aiEnabled && typeof p2 !== 'undefined' && p2 && p2.input) {
         p2.input.forward = 0;
         p2.input.right   = 0;
@@ -429,7 +431,6 @@ window.toggleAiEnabled = toggleAiEnabled;
 function _updateAiToggleUI() {
     if (!_aiToggleEl) return;
 
-    // ★ 只要在「人机对战 + 游戏进行中」就一直显示，不再受 gameState 限制
     const shouldShow =
         (typeof gameMode !== 'undefined' && gameMode === 'ai') &&
         typeof running !== 'undefined' && running &&
@@ -468,7 +469,7 @@ if (_aiToggleEl) {
 }
 
 // ============================================================
-// ★ TAB 键绑定（独立于 input.js，避免干扰主输入流程）
+// ★ TAB 键绑定
 // ============================================================
 window.addEventListener('keydown', (e) => {
     if (e.code !== 'Tab') return;
@@ -483,8 +484,153 @@ window.addEventListener('keyup', (e) => {
     hideScorePanel();
 }, false);
 
-// 失焦时确保面板关闭（避免按住 TAB 切窗口后一直显示）
 window.addEventListener('blur', hideScorePanel, false);
+
+// ============================================================
+// ★★★ 硬直视觉反馈 ★★★
+// ============================================================
+function ensureStunOverlay() {
+    if (_stunOverlayEl) return _stunOverlayEl;
+    if (typeof document === 'undefined') return null;
+
+    const el = document.createElement('div');
+    el.id = 'stunOverlay';
+    el.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:44',
+        'pointer-events:none',
+        'background:radial-gradient(ellipse at center, rgba(255,40,40,0) 40%, rgba(255,40,40,0.45) 100%)',
+        'opacity:0',
+        'transition:opacity 0.15s',
+        'display:none',
+    ].join(';');
+    document.body.appendChild(el);
+    _stunOverlayEl = el;
+    return el;
+}
+
+window.onStunStart = function (now) {
+    // 屏幕抖动
+    if (_stunShakeRaf) cancelAnimationFrame(_stunShakeRaf);
+    const startTime = performance.now();
+    const dur = 500;
+    function shake() {
+        const t = performance.now() - startTime;
+        if (t >= dur) {
+            _stunShakeRaf = 0;
+            document.body.style.transform = '';
+            return;
+        }
+        const k = 1 - t / dur;
+        const amp = 6 * k;
+        const dx = (Math.random() - 0.5) * amp * 2;
+        const dy = (Math.random() - 0.5) * amp * 2;
+        document.body.style.transform = `translate(${dx}px, ${dy}px)`;
+        _stunShakeRaf = requestAnimationFrame(shake);
+    }
+    shake();
+
+    if (typeof sHit === 'function') sHit(1);
+};
+
+function updateStunUI(p, now) {
+    const el = ensureStunOverlay();
+    if (!el) return;
+
+    const remain = p.stunUntil - now;
+    if (remain > 0) {
+        if (el.style.display !== 'block') el.style.display = 'block';
+        const alpha = Math.min(1, remain / 1000) * 0.9;
+        el.style.opacity = String(alpha);
+
+        // 只在硬直期间显示中心提示
+        const h = H[1];
+        if (h && h.center) {
+            h.center.textContent = `落地受伤 · ${(remain / 1000).toFixed(1)}s`;
+        }
+    } else {
+        if (el.style.display !== 'none') el.style.display = 'none';
+    }
+}
+
+// ============================================================
+// ★★★ 易伤视觉反馈（紫色脉冲 + 顶部倒计时）★★★
+// ============================================================
+function ensureVulnOverlay() {
+    if (_vulnOverlayEl) return _vulnOverlayEl;
+    if (typeof document === 'undefined') return null;
+
+    const el = document.createElement('div');
+    el.id = 'vulnOverlay';
+    el.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:43',
+        'pointer-events:none',
+        'box-shadow:inset 0 0 120px 30px rgba(180,40,255,0.55)',
+        'opacity:0',
+        'transition:opacity 0.2s',
+        'display:none',
+    ].join(';');
+    document.body.appendChild(el);
+    _vulnOverlayEl = el;
+    return el;
+}
+
+// 易伤触发瞬间（由 game_state.js 调用）
+window.onVulnerableStart = function (now) {
+    const el = ensureVulnOverlay();
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.transition = 'none';
+    el.style.opacity = '1';
+    requestAnimationFrame(() => {
+        el.style.transition = 'opacity 0.4s';
+    });
+    if (typeof sEmpty === 'function') sEmpty(1);
+};
+
+// 每帧更新易伤视觉
+function updateVulnUI(p, now) {
+    const el = ensureVulnOverlay();
+    if (!el) return;
+
+    const remain = p.vulnerableUntil - now;
+    if (remain > 0) {
+        if (el.style.display !== 'block') el.style.display = 'block';
+
+        const base  = Math.min(1, remain / 3000) * 0.85;
+        const pulse = 0.65 + 0.35 * Math.sin(now * 0.012);
+        el.style.opacity = String(base * pulse);
+
+        // 顶部倒计时
+        let tipEl = document.getElementById('vulnTimer');
+        if (!tipEl) {
+            tipEl = document.createElement('div');
+            tipEl.id = 'vulnTimer';
+            tipEl.style.cssText = [
+                'position:fixed', 'top:14px', 'left:50%',
+                'transform:translateX(-50%) translateY(38px)',
+                'z-index:16',
+                'padding:4px 16px',
+                'background:rgba(120,20,180,0.88)',
+                'color:#fff',
+                'border-radius:6px',
+                'font-size:14px',
+                'font-weight:700',
+                'letter-spacing:2px',
+                'pointer-events:none',
+                'box-shadow:0 4px 14px rgba(0,0,0,0.55)',
+                'font-family:"Microsoft YaHei",Arial,sans-serif',
+                'border:1px solid rgba(200,120,255,0.6)',
+            ].join(';');
+            document.body.appendChild(tipEl);
+        }
+        tipEl.style.display = 'block';
+        tipEl.textContent = `💜 易伤 ×2 · ${(remain / 1000).toFixed(1)}s`;
+    } else {
+        if (el.style.display !== 'none') el.style.display = 'none';
+        const tipEl = document.getElementById('vulnTimer');
+        if (tipEl) tipEl.style.display = 'none';
+    }
+}
 
 // ============================================================
 // 主 HUD 更新
@@ -612,9 +758,21 @@ function updateHUD(now) {
         _hudState.adsRetDisplay = adsRetDisplay;
     }
 
-    // ★ 战绩面板内容刷新（仅面板可见时执行）
     _tickScorePanel();
-
-    // ★ AI 开关 UI 刷新
     _updateAiToggleUI();
+
+    // ★ 滑索 UI 提示
+    if (typeof updateZiplinePrompt === 'function') {
+        updateZiplinePrompt(p);
+    }
+
+    // ★ 硬直视觉反馈
+    if (typeof updateStunUI === 'function') {
+        updateStunUI(p, now);
+    }
+
+    // ★ 易伤视觉反馈
+    if (typeof updateVulnUI === 'function') {
+        updateVulnUI(p, now);
+    }
 }

@@ -1,10 +1,5 @@
 // ===== js/online_game.js – 房主权威同步、客户端输入、观战视角 =====
 
-// ============================================================
-// ★ 优化：状态增量同步
-// ============================================================
-
-// 高频字段 —— 每帧都发
 const HIGH_FREQ_FIELDS = [
     'x', 'y', 'z',
     'yaw', 'pitch', 'fov',
@@ -15,7 +10,6 @@ const HIGH_FREQ_FIELDS = [
     'flashRemain'
 ];
 
-// 低频字段 —— 只在变化时发
 const LOW_FREQ_FIELDS = [
     'hp', 'armor', 'score',
     'ammo', 'reserve', 'weapon',
@@ -24,11 +18,49 @@ const LOW_FREQ_FIELDS = [
     'smokeCharges', 'flashCharges',
     'crouching', 'dead', 'visible',
     'throwFuseType', 'throwFuseInHand',
-    'onGround'
+    'onGround',
+    'ziplineActive',
+    'ziplineLineIdx',
+    'ziplineT',
+    'ziplineDir'
 ];
 
-let _lastSentBlue = null;
-let _lastSentRed  = null;
+// ============================================================
+// ★ 对象池
+// ============================================================
+const _playerStateP1 = {};
+const _playerStateP2 = {};
+
+const _deltaBlue = {};
+const _deltaRed  = {};
+
+const _payloadBlue = { full: false, data: _deltaBlue };
+const _payloadRed  = { full: false, data: _deltaRed  };
+
+const _hostStatePacket = {
+    type: 'hostState',
+    tick: 0,
+    timestamp: 0,
+    hostSeat: null,
+    mapId: null,
+    roundNumber: 0,
+    gameState: 'idle',
+    stateEndTimeRemain: 0,
+    bluePlayer: null,
+    redPlayer: null,
+};
+
+const _lastLowFreqBlue = { _init: false };
+const _lastLowFreqRed  = { _init: false };
+
+(function _prewarmDeltaShape() {
+    const all = HIGH_FREQ_FIELDS.concat(LOW_FREQ_FIELDS);
+    for (let i = 0; i < all.length; i++) {
+        _deltaBlue[all[i]] = undefined;
+        _deltaRed[all[i]]  = undefined;
+    }
+})();
+
 let _forceFullCounter = 0;
 let _lastRoundNumber = -1;
 let _lastConnCount = -1;
@@ -38,12 +70,24 @@ const _clientPlayerState = {
     red: null
 };
 
-function _buildPlayerPayload(full, baseline, forceFull) {
-    if (forceFull || !baseline) {
-        return { full: true, data: full };
+// ============================================================
+// ★ 构建增量包
+// ============================================================
+function _buildPlayerPayload(full, lastLowFreq, forceFull, out) {
+    if (forceFull || !lastLowFreq._init) {
+        out.full = true;
+        out.data = full;
+
+        for (let i = 0; i < LOW_FREQ_FIELDS.length; i++) {
+            const k = LOW_FREQ_FIELDS[i];
+            lastLowFreq[k] = full[k];
+        }
+        lastLowFreq._init = true;
+        return out;
     }
 
-    const delta = {};
+    out.full = false;
+    const delta = out.data;
 
     for (let i = 0; i < HIGH_FREQ_FIELDS.length; i++) {
         const k = HIGH_FREQ_FIELDS[i];
@@ -52,12 +96,16 @@ function _buildPlayerPayload(full, baseline, forceFull) {
 
     for (let i = 0; i < LOW_FREQ_FIELDS.length; i++) {
         const k = LOW_FREQ_FIELDS[i];
-        if (full[k] !== baseline[k]) {
-            delta[k] = full[k];
+        const v = full[k];
+        if (v !== lastLowFreq[k]) {
+            delta[k] = v;
+            lastLowFreq[k] = v;
+        } else {
+            delta[k] = undefined;
         }
     }
 
-    return { full: false, data: delta };
+    return out;
 }
 
 function _mergeDelta(side, payload) {
@@ -75,7 +123,10 @@ function _mergeDelta(side, payload) {
     const merged = _clientPlayerState[side];
     const d = payload.data;
     for (const k in d) {
-        merged[k] = d[k];
+        const v = d[k];
+        if (v !== undefined) {
+            merged[k] = v;
+        }
     }
     return merged;
 }
@@ -255,10 +306,10 @@ function enterOnlineGame() {
     updateOpponentInfo();
     if (typeof renderChatMessages === 'function') renderChatMessages();
 
-    _lastSentBlue = null;
-    _lastSentRed = null;
     _clientPlayerState.blue = null;
     _clientPlayerState.red = null;
+    _lastLowFreqBlue._init = false;
+    _lastLowFreqRed._init = false;
     _forceFullCounter = 0;
     _lastRoundNumber = -1;
     _lastConnCount = -1;
@@ -271,9 +322,9 @@ function enterOnlineGame() {
 window.NET_enterOnlineGame = enterOnlineGame;
 
 // ============================================================
-// ★ 房主广播：rAF 驱动，60Hz
+// ★ 房主广播
 // ============================================================
-const HOST_BROADCAST_INTERVAL = 16;   // ms
+const HOST_BROADCAST_INTERVAL = 16;
 
 function startHostBroadcast() {
     stopHostBroadcast();
@@ -307,42 +358,57 @@ function stopHostBroadcast() {
     }
 }
 
-function serializePlayer(p) {
+// ============================================================
+// ★ 序列化玩家状态
+// ============================================================
+function serializePlayer(p, out) {
     const now = performance.now();
-    return {
-        x: p.pos.x, y: p.pos.y, z: p.pos.z,
-        yaw: p.yaw, pitch: p.pitch,
-        hp: p.hp, armor: p.armor, score: p.score,
-        weapon: p.isMelee ? 'knife' : (p.isSmoke ? 'smoke' : (p.isFlash ? 'flash' : p.weapon.key)),
-        ammo: p.ammo, reserve: p.reserve,
-        fov: p.cam.fov,
-        crouching: p.height < HEIGHT_STAND - 0.15,
-        dead: p.hp <= 0 || p.deadUntil > now,
-        visible: p.baseVisible,
-        onGround: !!p.onGround,
-        aiming: !!p.aiming,
-        aimStage: p.aimStage || 0,
-        isMelee: !!p.isMelee,
-        isSmoke: !!p.isSmoke,
-        isFlash: !!p.isFlash,
-        meleeIsHeavy: !!p.meleeIsHeavy,
-        smokeCharges: p.smokeCharges || 0,
-        flashCharges: p.flashCharges || 0,
-        reloadRemain: Math.max(0, p.reloadEnd - now),
-        boltRemain: Math.max(0, p.boltEnd - now),
-        equipRemain: Math.max(0, p.equipEnd - now),
-        meleeEndRemain: Math.max(0, p.meleeEnd - now),
-        meleeRecoveryRemain: Math.max(0, p.meleeRecovery - now),
-        throwFuseActive: !!p.throwFuseActive,
-        throwFuseType: p.throwFuseType || null,
-        throwFuseEndRemain: p.throwFuseActive ? Math.max(0, p.throwFuseEnd - now) : 0,
-        throwFuseInHand: !!p.throwFuseInHand,
-        flashRemain: p.flashUntil > now ? (p.flashUntil - now) : 0
-    };
+    out.x = p.pos.x;
+    out.y = p.pos.y;
+    out.z = p.pos.z;
+    out.yaw = p.yaw;
+    out.pitch = p.pitch;
+    out.hp = p.hp;
+    out.armor = p.armor;
+    out.score = p.score;
+    out.weapon = p.isMelee ? 'knife' : (p.isSmoke ? 'smoke' : (p.isFlash ? 'flash' : p.weapon.key));
+    out.ammo = p.ammo;
+    out.reserve = p.reserve;
+    out.fov = p.cam.fov;
+    out.crouching = p.height < HEIGHT_STAND - 0.15;
+    out.dead = p.hp <= 0 || p.deadUntil > now;
+    out.visible = p.baseVisible;
+    out.onGround = !!p.onGround;
+    out.aiming = !!p.aiming;
+    out.aimStage = p.aimStage || 0;
+    out.isMelee = !!p.isMelee;
+    out.isSmoke = !!p.isSmoke;
+    out.isFlash = !!p.isFlash;
+    out.meleeIsHeavy = !!p.meleeIsHeavy;
+    out.smokeCharges = p.smokeCharges || 0;
+    out.flashCharges = p.flashCharges || 0;
+    out.reloadRemain = Math.max(0, p.reloadEnd - now);
+    out.boltRemain = Math.max(0, p.boltEnd - now);
+    out.equipRemain = Math.max(0, p.equipEnd - now);
+    out.meleeEndRemain = Math.max(0, p.meleeEnd - now);
+    out.meleeRecoveryRemain = Math.max(0, p.meleeRecovery - now);
+    out.throwFuseActive = !!p.throwFuseActive;
+    out.throwFuseType = p.throwFuseType || null;
+    out.throwFuseEndRemain = p.throwFuseActive ? Math.max(0, p.throwFuseEnd - now) : 0;
+    out.throwFuseInHand = !!p.throwFuseInHand;
+    out.flashRemain = p.flashUntil > now ? (p.flashUntil - now) : 0;
+
+    const zip = p.zipline;
+    out.ziplineActive  = !!(zip && zip.active);
+    out.ziplineLineIdx = (zip && zip.active) ? zip.lineIdx : -1;
+    out.ziplineT       = (zip && zip.active) ? zip.t       : 0;
+    out.ziplineDir     = (zip && zip.active) ? zip.dir     : 1;
+
+    return out;
 }
 
 // ============================================================
-// ★ 房主广播（增量版）
+// ★ 房主广播
 // ============================================================
 function hostBroadcastTick() {
     if (!NET.isHost || !NET.roomId) return;
@@ -350,8 +416,11 @@ function hostBroadcastTick() {
     const now = performance.now();
     const hostSeat = NET.mySeat;
 
-    const hostData   = serializePlayer(p1);
-    const clientData = serializePlayer(p2);
+    serializePlayer(p1, _playerStateP1);
+    serializePlayer(p2, _playerStateP2);
+
+    const hostData = _playerStateP1;
+    const clientData = _playerStateP2;
 
     const bluePlayer = hostSeat === 'blue' ? hostData : clientData;
     const redPlayer  = hostSeat === 'blue' ? clientData : hostData;
@@ -371,31 +440,96 @@ function hostBroadcastTick() {
         forceFull = true;
     }
 
-    const bluePayload = _buildPlayerPayload(bluePlayer, _lastSentBlue, forceFull);
-    _lastSentBlue = bluePlayer;
+    _buildPlayerPayload(bluePlayer, _lastLowFreqBlue, forceFull, _payloadBlue);
+    _buildPlayerPayload(redPlayer,  _lastLowFreqRed,  forceFull, _payloadRed);
 
-    const redPayload = _buildPlayerPayload(redPlayer, _lastSentRed, forceFull);
-    _lastSentRed = redPlayer;
+    const packet = _hostStatePacket;
+    packet.tick = NET.tick++;
+    packet.timestamp = now;
+    packet.hostSeat = hostSeat;
+    packet.mapId = getLocalMapId();
+    packet.roundNumber = (typeof roundNumber !== 'undefined') ? roundNumber : 1;
+    packet.gameState = (typeof gameState !== 'undefined') ? gameState : 'idle';
+    packet.stateEndTimeRemain = (typeof stateEndTime !== 'undefined') ? Math.max(0, stateEndTime - now) : 0;
+    packet.bluePlayer = _payloadBlue;
+    packet.redPlayer = _payloadRed;
 
-    const packet = {
-        type: 'hostState',
-        tick: NET.tick++,
-        timestamp: now,
-        hostSeat,
-        mapId: getLocalMapId(),
-        roundNumber: (typeof roundNumber !== 'undefined') ? roundNumber : 1,
-        gameState: (typeof gameState !== 'undefined') ? gameState : 'idle',
-        stateEndTimeRemain: (typeof stateEndTime !== 'undefined') ? Math.max(0, stateEndTime - now) : 0,
-        bluePlayer: bluePayload,
-        redPlayer: redPayload
-    };
     broadcast(packet);
 }
 
+// ============================================================
+// ★ 房主端：处理客户端输入
+//
+//   ★ ziplineDismount：只清滑索状态（客户端脱索瞬间上报）
+//   ★ vulnerableStart：设置硬直/易伤（客户端落地瞬间上报）
+// ============================================================
 function handleClientInput(fromId, data) {
     if (!NET.isHost) return;
     if (typeof p2 === 'undefined' || !p2) return;
 
+    // ============================================================
+    // ★ 滑索挂载：直接接管 p2.zipline 状态
+    // ============================================================
+    if (data.ziplineMount) {
+        if (!p2.zipline) p2.zipline = { active: false, lineIdx: -1, t: 0, dir: 1 };
+        p2.zipline.active  = true;
+        p2.zipline.lineIdx = data.ziplineMount.lineIdx;
+        p2.zipline.t       = data.ziplineMount.t;
+        p2.zipline.dir     = data.ziplineMount.dir;
+
+        if (typeof ZIPLINES !== 'undefined'
+            && Array.isArray(ZIPLINES)
+            && ZIPLINES[data.ziplineMount.lineIdx]) {
+            const line = ZIPLINES[data.ziplineMount.lineIdx];
+            const dirX = line.dx * data.ziplineMount.dir;
+            const dirZ = line.dz * data.ziplineMount.dir;
+            if (Math.abs(dirX) + Math.abs(dirZ) > 0.001) {
+                p2.yaw = Math.atan2(-dirX, -dirZ);
+            }
+            p2.pitch = 0;
+        }
+
+        if (p2.input) {
+            p2.input.forward = 0;
+            p2.input.right   = 0;
+            p2.input.jump    = false;
+            p2.input.crouch  = false;
+            p2.input.fire    = false;
+            p2.input.aim     = false;
+        }
+    }
+
+    // ============================================================
+    // ★ 滑索脱离：清滑索状态（清输入）
+    //   （硬直/易伤由下面的 vulnerableStart 单独处理）
+    // ============================================================
+    if (data.ziplineDismount) {
+        if (p2.zipline) p2.zipline.active = false;
+        if (p2.input) {
+            p2.input.forward = 0;
+            p2.input.right   = 0;
+            p2.input.jump    = false;
+            p2.input.crouch  = false;
+            p2.input.fire    = false;
+            p2.input.aim     = false;
+        }
+    }
+
+    // ============================================================
+    // ★ 硬直 / 易伤开始：落地时设置 p2.stunUntil / p2.vulnerableUntil
+    //   这保证房主端伤害计算（damage(p2,...)）能正确翻倍
+    // ============================================================
+    if (data.vulnerableStart) {
+        const now = performance.now();
+        if (data.vulnerableStart.stunDuration > 0) {
+            p2.stunUntil = now + data.vulnerableStart.stunDuration;
+        }
+        if (data.vulnerableStart.vulnDuration > 0) {
+            p2.vulnerableUntil = now + data.vulnerableStart.vulnDuration;
+        }
+    }
+
+    // ---- 常规输入 ----
     if (data.input) {
         p2.input.forward = data.input.forward || 0;
         p2.input.right   = data.input.right || 0;
@@ -445,7 +579,7 @@ function handleClientInput(fromId, data) {
 }
 
 // ============================================================
-// ★ 客户端处理房主状态（增量合并版 · 客户端位置完全信任本地预测）
+// ★ 客户端处理房主状态
 // ============================================================
 function handleHostState(data) {
     if (NET.isHost) return;
@@ -473,20 +607,17 @@ function handleHostState(data) {
                 applyWeaponToPlayer(p1, targetKey, true);
             }
 
-            // ============================================================
-            // ★★★ 关键优化：客户端位置完全信任本地预测 ★★★
-            //   房主只在误差 > 1m 时硬同步
-            // ============================================================
             const authX = myData.x, authY = myData.y, authZ = myData.z;
             const dx = authX - p1.pos.x;
             const dy = authY - p1.pos.y;
             const dz = authZ - p1.pos.z;
             const errSq = dx * dx + dy * dy + dz * dz;
 
-            const HARD_RESYNC_SQ = 1.0;    // 1m
+            const HARD_RESYNC_SQ = 1.0;
             NET._lastDrift = Math.sqrt(errSq);
 
-            if (errSq > HARD_RESYNC_SQ) {
+            const localZipActive = !!(p1.zipline && p1.zipline.active);
+            if (errSq > HARD_RESYNC_SQ && !localZipActive) {
                 p1.pos.set(authX, authY, authZ);
                 p1.vy = 0;
                 p1.prevY = authY;
@@ -546,12 +677,40 @@ function handleHostState(data) {
         }
 
         if (typeof p2 !== 'undefined' && p2) {
-            if (p2._netTargetPos) {
-                p2._netTargetPos.set(oppData.x, oppData.y, oppData.z);
-                p2._netTargetYaw = oppData.yaw;
-            } else {
+            const p2WasOnZipline = !!(p2.zipline && p2.zipline.active);
+            const p2IsOnZipline  = !!oppData.ziplineActive;
+
+            if (p2IsOnZipline) {
+                if (!p2.zipline) p2.zipline = { active: false, lineIdx: -1, t: 0, dir: 1 };
+                p2.zipline.active  = true;
+                p2.zipline.lineIdx = oppData.ziplineLineIdx;
+                p2.zipline.t       = oppData.ziplineT;
+                p2.zipline.dir     = oppData.ziplineDir;
+
+                if (p2._netTargetPos) {
+                    p2._netTargetPos.set(oppData.x, oppData.y, oppData.z);
+                    p2._netTargetYaw = oppData.yaw;
+                }
                 p2.pos.set(oppData.x, oppData.y, oppData.z);
                 p2.yaw = oppData.yaw;
+            } else {
+                if (p2WasOnZipline) {
+                    if (p2.zipline) p2.zipline.active = false;
+                    p2.pos.set(oppData.x, oppData.y, oppData.z);
+                    p2.yaw = oppData.yaw;
+                    if (p2._netTargetPos) {
+                        p2._netTargetPos.set(oppData.x, oppData.y, oppData.z);
+                        p2._netTargetYaw = oppData.yaw;
+                    }
+                }
+
+                if (p2._netTargetPos) {
+                    p2._netTargetPos.set(oppData.x, oppData.y, oppData.z);
+                    p2._netTargetYaw = oppData.yaw;
+                } else {
+                    p2.pos.set(oppData.x, oppData.y, oppData.z);
+                    p2.yaw = oppData.yaw;
+                }
             }
 
             {
@@ -559,7 +718,7 @@ function handleHostState(data) {
                 const snapDy = oppData.y - p2.pos.y;
                 const snapDz = oppData.z - p2.pos.z;
                 const snapSq = snapDx * snapDx + snapDy * snapDy + snapDz * snapDz;
-                if (snapSq > 25) {
+                if (snapSq > 25 && !p2IsOnZipline) {
                     p2.pos.set(oppData.x, oppData.y, oppData.z);
                     if (p2._netTargetPos) p2._netTargetPos.set(oppData.x, oppData.y, oppData.z);
                     if (p2._netTargetYaw !== undefined) p2._netTargetYaw = oppData.yaw;
@@ -952,7 +1111,13 @@ function handleRoundEvent(data) {
 
         _clientPlayerState.blue = null;
         _clientPlayerState.red  = null;
+        _lastLowFreqBlue._init = false;
+        _lastLowFreqRed._init = false;
         NET._lastSentInput = null;
+
+        NET.pendingZiplineMount = null;
+        NET.pendingZiplineDismount = false;
+        NET.pendingVulnerableStart = null;
     }
 }
 
@@ -997,7 +1162,7 @@ window.NET_sendRoundEvent = function (gameStateStr, remain, reset, roundNum, ext
 };
 
 // ============================================================
-// ★ 客户端上报（变化检测版 · 60Hz 上报，只在有变化时发送）
+// ★ 客户端上报
 // ============================================================
 window.NET_sendClientInput = function () {
     if (NET.isHost || NET.role !== 'player') return;
@@ -1008,7 +1173,9 @@ window.NET_sendClientInput = function () {
 
     const hasPending = NET.pendingWeaponSwitch || NET.pendingReload
         || NET.pendingFuseStart || NET.pendingFuseRelease
-        || NET.pendingMelee;
+        || NET.pendingMelee
+        || NET.pendingZiplineMount || NET.pendingZiplineDismount
+        || NET.pendingVulnerableStart;
 
     const last = NET._lastSentInput;
     const changed = !last
@@ -1050,7 +1217,11 @@ window.NET_sendClientInput = function () {
         fuseStart: NET.pendingFuseStart,
         fuseRelease: NET.pendingFuseRelease,
         melee: NET.pendingMelee,
-        meleeHeavy: NET.pendingMeleeHeavy
+        meleeHeavy: NET.pendingMeleeHeavy,
+
+        ziplineMount: NET.pendingZiplineMount,
+        ziplineDismount: NET.pendingZiplineDismount,
+        vulnerableStart: NET.pendingVulnerableStart
     });
 
     NET.pendingWeaponSwitch = null;
@@ -1059,6 +1230,10 @@ window.NET_sendClientInput = function () {
     NET.pendingFuseRelease = false;
     NET.pendingMelee = false;
     NET.pendingMeleeHeavy = false;
+
+    NET.pendingZiplineMount = null;
+    NET.pendingZiplineDismount = false;
+    NET.pendingVulnerableStart = null;
 };
 
 window.NET_sendChat = function (text) {

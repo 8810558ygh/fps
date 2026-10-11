@@ -71,9 +71,7 @@ function setWeapon(p, key) {
         return;
     }
 
-    // ============================================================
     // 枪械分支
-    // ============================================================
     const w = WEAPONS[key];
     if (!w) return;
 
@@ -104,7 +102,6 @@ function setWeapon(p, key) {
     p.meleeCombo = 0; p.meleeEnd = 0; p.meleeRecovery = 0;
     p.meleeIsHeavy = false;
 
-    // ★ 切枪时重置后坐力状态
     if (p.recoil) {
         p.recoil.offsetPitch = 0;
         p.recoil.offsetYaw = 0;
@@ -373,25 +370,26 @@ function makePlayer(id, color, spawn, weaponKey) {
         _shadowDisabled: false,
 
         // ============================================================
-        // ★★★ 后坐力状态（独立于玩家基础瞄准 p.pitch / p.yaw）★★★
-        //
-        //   摄像机实际方向 = (p.pitch + recoil.offsetPitch,
-        //                     p.yaw   + recoil.offsetYaw)
-        //
-        //   鼠标输入只修改 p.pitch / p.yaw（基础瞄准）
-        //   后坐力只修改 recoil.offsetPitch / offsetYaw
-        //   松手后偏移量指数衰减回 0（见 updatePlayer 的恢复逻辑）
+        // ★ 后坐力状态
         // ============================================================
         recoil: {
-            offsetPitch: 0,          // 垂直后坐力累积（弧度，正值 = 向上看）
-            offsetYaw: 0,            // 水平后坐力累积（弧度，正值 = 向左偏）
-            bulletCount: 0,          // 当前连发子弹计数（决定后坐力强度）
-            lastShotTime: 0,         // 上次开火时间（用于判断连发/新序列）
-            horizontalDir: 1,        // 水平方向（1 = 右，-1 = 左）
+            offsetPitch: 0,
+            offsetYaw: 0,
+            bulletCount: 0,
+            lastShotTime: 0,
+            horizontalDir: 1,
         },
 
         _netTargetPos: new THREE.Vector3(spawn.x, 0, spawn.z),
         _netTargetYaw: spawn.yaw,
+
+        // ============================================================
+        // ★ 滑索 + 硬直 + 易伤
+        // ============================================================
+        zipline: { active: false, lineIdx: -1, t: 0, dir: 1 },
+        _zipStunPending: false,
+        stunUntil: 0,
+        vulnerableUntil: 0,
 
         input: {
             forward: 0,

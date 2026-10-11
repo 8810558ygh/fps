@@ -3,12 +3,8 @@
 // ===== 游戏状态 =====
 let running = false;
 let matchStart = 0;
-// ★ gameMode 现在只有 'ai' 和 'online'（'range' 已删除）
 let gameMode = 'ai';
 
-// ★ AI 操纵开关（仅人机对战模式有效）
-//   true  = AI 正常战斗（移动 / 瞄准 / 开火）
-//   false = 站桩靶子模式（只受重力，不移动 / 不射击）
 let aiEnabled = true;
 
 let gameState = 'idle';
@@ -24,6 +20,14 @@ function isOver() { return _overFlag; }
 function setOver(v) { _overFlag = !!v; }
 window.isOver = isOver;
 window.setOver = setOver;
+
+// ============================================================
+// ★ 硬直工具：判断玩家是否处于硬直状态
+// ============================================================
+function _isPlayerStunned(p) {
+    return p && p.stunUntil > performance.now();
+}
+window._isPlayerStunned = _isPlayerStunned;
 
 // ===== 复用的临时向量 =====
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
@@ -62,13 +66,17 @@ function canFit(p, h) {
 }
 
 function collideWorld(p) {
-    const lim = ARENA - 0.6;
+    const half = (typeof window.currentArenaHalf === 'number')
+        ? window.currentArenaHalf
+        : ARENA;
+    const lim = half - 0.6;
+
     p.pos.x = Math.max(-lim, Math.min(lim, p.pos.x));
     p.pos.z = Math.max(-lim, Math.min(lim, p.pos.z));
     const r = 0.42;
     const h = p.height;
 
-    // ---- 循环 1：垂直碰撞（落地 / 顶头） ----
+    // ---- 循环 1：垂直碰撞 ----
     for (const c of colliders) {
         if (p.pos.x + r <= c.x0 || p.pos.x - r >= c.x1 ||
             p.pos.z + r <= c.z0 || p.pos.z - r >= c.z1) continue;
@@ -114,13 +122,9 @@ function collideWorld(p) {
         p.onGround = true;
     }
 
-    // ============================================================
-    // ★ 新增：离开地面检测
-    //   如果玩家悬空超过 3cm（走下高台 / 走出平台边缘），
-    //   自动把 onGround 设为 false，让后续的落地检测能正确触发。
-    // ============================================================
+    // ---- 离开地面检测 ----
     if (p.onGround) {
-        let highestSupport = gh;   // 地形是基础支撑面
+        let highestSupport = gh;
 
         for (const c of colliders) {
             const top = c.top !== undefined ? c.top : 0;
@@ -154,8 +158,7 @@ const STRIDE_LENGTH = 2.0;
 const STEP_MAX_AUDIBLE = 22;
 
 // ============================================================
-// ★ 脚步声 + 落地声
-//   isRemote = true 时启用"远端突跳保护"（联机客户端使用）
+// ★ 脚步声 + 落地声 + 硬直触发（含易伤）+ 落地时上报易伤事件
 // ============================================================
 function updateFootsteps(p, dt, now, isRemote) {
     if (!running || gameState !== 'combat') {
@@ -169,7 +172,7 @@ function updateFootsteps(p, dt, now, isRemote) {
         return;
     }
 
-    // ★ 落地检测（放在蹲下检查之前：蹲下落地也要响）
+    // ★ 落地检测
     const justLanded = (p._prevOnGround === false) && p.onGround;
     p._prevOnGround = p.onGround;
     if (justLanded) {
@@ -177,6 +180,50 @@ function updateFootsteps(p, dt, now, isRemote) {
         if (isRemote && impact < 3.0) impact = JUMP_V * 0.7;
         if (impact > 3.0) {
             triggerLanding(p, impact, isRemote);
+        }
+
+        // ============================================================
+        // ★ 主动脱离滑索后落地 → 1s 硬直 + 3s 易伤
+        //   ★ 联机客户端：落地时才上报 vulnerableStart 给房主
+        //     —— 让房主端 p2.vulnerableUntil 和客户端 p1.vulnerableUntil 时间戳对齐
+        // ============================================================
+        if (p._zipStunPending) {
+            p._zipStunPending = false;
+            p.stunUntil       = now + 1000;    // 1s 硬直
+            p.vulnerableUntil = now + 3000;    // 3s 易伤（伤害 ×2）
+
+            // ★ 联机客户端：落地时上报硬直/易伤给房主
+            //   房主收到后立即设置 p2.stunUntil / p2.vulnerableUntil
+            //   → 房主端 damage(p2, ...) 会正确翻倍
+            if (p.id === 1
+                && typeof gameMode !== 'undefined' && gameMode === 'online'
+                && typeof NET !== 'undefined'
+                && NET.role === 'player' && !NET.isHost) {
+                NET.pendingVulnerableStart = {
+                    stunDuration: 1000,
+                    vulnDuration: 3000,
+                };
+            }
+
+            // 硬直音效
+            if (p.id === 1) {
+                if (typeof sLandingSelf === 'function') sLandingSelf(1.5);
+            } else {
+                const ex = p.pos.x - p1.pos.x;
+                const ez = p.pos.z - p1.pos.z;
+                const d = Math.hypot(ex, ez);
+                if (d < STEP_MAX_AUDIBLE && typeof emitWorldSound === 'function') {
+                    emitWorldSound('landing', p.pos.x, p.pos.y, p.pos.z, false, { impactNorm: 1.5 });
+                }
+            }
+
+            // ★ 本地视觉反馈
+            if (p.id === 1 && typeof window.onStunStart === 'function') {
+                window.onStunStart(now);
+            }
+            if (p.id === 1 && typeof window.onVulnerableStart === 'function') {
+                window.onVulnerableStart(now);
+            }
         }
     }
 
@@ -213,7 +260,6 @@ function updateFootsteps(p, dt, now, isRemote) {
         if (p.id === 1) {
             sFootstepSelf();
         } else {
-            // ★ 空间化：对手脚步（HRTF 自动处理方向与距离）
             const ex = p.pos.x - p1.pos.x;
             const ez = p.pos.z - p1.pos.z;
             const d = Math.hypot(ex, ez);
@@ -224,11 +270,7 @@ function updateFootsteps(p, dt, now, isRemote) {
 }
 
 // ============================================================
-// ★ 落地音效触发
-//   impactNorm 允许 > 1.0 以区分高度：
-//     · 平地跳 ≈ 1.0
-//     · 2.5m 高台 ≈ 1.3
-//     · 5m 高台 ≈ 1.8
+// ★ 落地音效触发（不含坠伤）
 // ============================================================
 function triggerLanding(p, impact, isRemote) {
     const IMPACT_BASE = 8.0;
@@ -262,6 +304,7 @@ function isBackAttack(attacker, victim) {
 // ===== 换弹 =====
 function startReload(p, now) {
     if (!running || gameState !== 'combat') return;
+    if (_isPlayerStunned(p)) return;
     if (p.isMelee || p.isSmoke || p.isFlash) return;
     const w = p.weapon;
     if (now < p.deadUntil || p.reloadEnd > now || p.ammo === w.mag || p.reserve <= 0) return;
@@ -270,13 +313,13 @@ function startReload(p, now) {
     p.aimStage = 0; p.aiming = false;
     if (p.input) p.input.aim = false;
     if (p.id === 1) mouse.aim = false;
-    // ★ 空间化：换弹音效
     emitWorldSound('reload', p.pos.x, p.pos.y + p.eyeH, p.pos.z, p.id === 1);
 }
 
 // ===== 开镜切换 =====
 function toggleAim() {
     if (!running || isOver() || gameState !== 'combat') return;
+    if (_isPlayerStunned(p1)) return;
     if (p1.isMelee || p1.isSmoke || p1.isFlash) return;
     const now = performance.now();
     const p = p1;

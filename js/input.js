@@ -31,7 +31,6 @@ function _requestFuseRelease() {
 window.addEventListener('keydown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
-    // ★ 问题 1 修复：统一走 NET.isSpectator()
     if (NET.isSpectator()) {
         if (e.code === 'Enter' || e.code === 'NumpadEnter') {
             if (running && !isOver() && typeof openChat === 'function') {
@@ -118,7 +117,6 @@ window.addEventListener('keydown', e => {
             }
         }
 
-        // ★ T 键：人机模式下切换 AI 开关
         if (e.code === 'KeyT') {
             if (typeof gameMode !== 'undefined' && gameMode === 'ai'
                 && running && !isOver()) {
@@ -127,6 +125,45 @@ window.addEventListener('keydown', e => {
                 }
             }
             return;
+        }
+
+        // ============================================================
+        // ★ F 键：挂载滑索（联机客户端上报挂载事件）
+        // ============================================================
+        if (e.code === 'KeyF') {
+            if (running && !isOver() && gameState === 'combat') {
+                if (typeof p1 !== 'undefined' && p1
+                    && typeof window.tryMountZipline === 'function') {
+                    const mounted = window.tryMountZipline(p1);
+                    if (mounted && isOC && p1.zipline) {
+                        NET.pendingZiplineMount = {
+                            lineIdx: p1.zipline.lineIdx,
+                            t:       p1.zipline.t,
+                            dir:     p1.zipline.dir,
+                        };
+                    }
+                }
+            }
+            return;
+        }
+
+        // ============================================================
+        // ★ Space 键：滑索上脱离
+        //   只上报"脱离滑索"（清滑索状态），不带时长
+        //   硬直 / 易伤改为落地时上报（见 game_state.js 的 updateFootsteps）
+        // ============================================================
+        if (e.code === 'Space') {
+            if (typeof p1 !== 'undefined' && p1
+                && p1.zipline && p1.zipline.active) {
+                if (typeof window.dismountZipline === 'function') {
+                    window.dismountZipline(p1);
+                    if (isOC) {
+                        NET.pendingZiplineDismount = true;
+                    }
+                }
+                e.preventDefault();
+                return;
+            }
         }
     }
     keys[e.code] = true;
@@ -141,7 +178,6 @@ window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; }
 document.addEventListener('mousedown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
-    // ★ 问题 1 修复：统一走 NET.isSpectator()
     if (NET.isSpectator()) {
         if (e.button === 0) {
             e.preventDefault(); e.stopPropagation();
@@ -181,7 +217,6 @@ document.addEventListener('mousedown', e => {
 
 document.addEventListener('mouseup', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
-    // ★ 问题 1 修复：统一走 NET.isSpectator()
     if (NET.isSpectator()) { e.preventDefault(); e.stopPropagation(); return; }
     if (e.button === 0) {
         mouse.leftDown = false;
@@ -192,7 +227,6 @@ document.addEventListener('mouseup', e => {
 
 document.addEventListener('wheel', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
-    // ★ 问题 1 修复：统一走 NET.isSpectator()
     if (NET.isSpectator()) return;
     e.preventDefault(); e.stopPropagation();
     if (!running || isOver()) return;

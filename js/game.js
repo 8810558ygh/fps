@@ -9,7 +9,7 @@ function updateEffects(dt, now) {
         s.vel.y -= 12 * dt;
         s.mesh.position.addScaledVector(s.vel, dt);
         if (s.life <= 0) {
-            _releaseSpark(s);           // ★ 归还火花池（唯一改动）
+            _releaseSpark(s);
             sparks.splice(i, 1);
         }
     }
@@ -92,6 +92,19 @@ function resetPlayer(p, now) {
     p.throwFuseStart = 0;
     p.throwFuseEnd = 0;
     p.throwFuseInHand = false;
+
+    // ============================================================
+    // ★ 滑索 + 硬直 + 易伤 状态清零
+    // ============================================================
+    if (p.zipline) {
+        p.zipline.active  = false;
+        p.zipline.lineIdx = -1;
+        p.zipline.t       = 0;
+        p.zipline.dir     = 1;
+    }
+    p._zipStunPending  = false;
+    p.stunUntil        = 0;
+    p.vulnerableUntil  = 0;
 
     if (p.recoil) {
         p.recoil.offsetPitch = 0;

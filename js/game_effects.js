@@ -1,4 +1,6 @@
 // ===== js/game_effects.js – 弹痕、刀痕、曳光弹、火花、投掷轨迹、闪光指示器 =====
+// ★ 弹痕/刀痕已改为对象池化（方案 B），所有武器共用，无每帧预算限制
+// ★ 投掷轨迹 Vector3 已改为对象池化，消除手持烟/闪时的 GC 卡顿
 
 // ============================================================
 // ★ B1：曳光弹对象池
@@ -55,28 +57,27 @@ window.updateTracers = updateTracers;
 // ============================================================
 // ★ 火花（对象池化：预建 128 个 Mesh，用完隐藏归还）
 // ============================================================
-const sparks = [];                                  // 活跃火花列表
+const sparks = [];
 const sparkGeo = new THREE.BoxGeometry(0.07, 0.07, 0.07);
 
 const SPARK_POOL_SIZE = 128;
-const _sparkFreePool = [];                          // 空闲 Mesh 池
+const _sparkFreePool = [];
 let _sparkPoolInitialized = false;
-let _sparkPoolStarved = 0;                          // 池满跳过计数器（调试用）
+let _sparkPoolStarved = 0;
 
 function _initSparkPool() {
     if (_sparkPoolInitialized) return;
     if (typeof scene === 'undefined' || !scene) return;
     _sparkPoolInitialized = true;
 
-    // 借一个默认材质，实际用时会被替换成颜色对应的材质
     const dummyMat = _getSparkMat(0xffd28a);
 
     for (let i = 0; i < SPARK_POOL_SIZE; i++) {
         const m = new THREE.Mesh(sparkGeo, dummyMat);
         m.visible = false;
-        m.frustumCulled = false;         // 火花移动快，避免每帧做剔除计算
-        m.renderOrder = 2;               // 稍微靠前一点，避免被地面遮挡时闪烁
-        scene.add(m);                     // ★ 只在初始化时 add 一次，之后永不 remove
+        m.frustumCulled = false;
+        m.renderOrder = 2;
+        scene.add(m);
         _sparkFreePool.push({
             mesh: m,
             vel:  new THREE.Vector3(),
@@ -86,14 +87,12 @@ function _initSparkPool() {
     console.log('[effects] 火花池已初始化:', SPARK_POOL_SIZE);
 }
 
-// 借一个空闲火花（池满返回 null）
 function _acquireSpark() {
     if (!_sparkPoolInitialized) _initSparkPool();
     if (_sparkFreePool.length === 0) return null;
     return _sparkFreePool.pop();
 }
 
-// 归还火花
 function _releaseSpark(s) {
     s.mesh.visible = false;
     s.life = 0;
@@ -102,20 +101,17 @@ function _releaseSpark(s) {
 }
 
 // ============================================================
-// 帧预算计数器（火花 / 弹痕共用）
+// 帧预算计数器（仅火花使用；弹痕已改为池化，不再需要预算）
 // ============================================================
 let _fxFrameStamp = -1;
 let _fxSparkCount = 0;
-let _fxHoleCount  = 0;
 const FX_SPARK_PER_FRAME = 3;
-const FX_HOLE_PER_FRAME  = 3;
 
 function _tickFxBudget() {
     const stamp = Math.floor(performance.now() / 16.0);
     if (stamp !== _fxFrameStamp) {
         _fxFrameStamp = stamp;
         _fxSparkCount = 0;
-        _fxHoleCount = 0;
     }
 }
 
@@ -129,11 +125,90 @@ function _getSparkMat(color) {
     return m;
 }
 
-// ===== 弹痕 / 刀痕共用列表 =====
-const bulletHoles = [];
-const MAX_BULLET_HOLES = 80;
-const BULLET_HOLE_LIFE_MS = 15000;
-const BULLET_HOLE_FADE_MS = 2500;
+// ============================================================
+// ★ 弹痕 / 刀痕对象池（方案 B · 池化复用 · 所有武器共用）
+// ============================================================
+const TRACE_POOL_SIZE      = 200;      // 池容量
+const BULLET_HOLE_LIFE_MS  = 10000;    // 生命周期 10s
+const BULLET_HOLE_FADE_MS  = 2000;     // 淡出 2s
+
+const _tracePool       = [];
+const _traceActive     = [];
+let   _tracePoolIdx    = 0;
+let   _tracePoolInited = false;
+
+// 弹痕 / 刀痕共用单位平面几何体（靠 scale 调整实际尺寸）
+let _traceBaseGeo = null;
+function _getTraceBaseGeo() {
+    if (!_traceBaseGeo) _traceBaseGeo = new THREE.PlaneGeometry(1, 1);
+    return _traceBaseGeo;
+}
+
+function _initTracePool() {
+    if (_tracePoolInited) return;
+    if (typeof scene === 'undefined' || !scene) return;
+    _tracePoolInited = true;
+
+    const geo = _getTraceBaseGeo();
+
+    for (let i = 0; i < TRACE_POOL_SIZE; i++) {
+        const mat = new THREE.MeshBasicMaterial({
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            polygonOffset: true,
+            polygonOffsetFactor: -8,
+            polygonOffsetUnits: -8,
+            side: THREE.DoubleSide,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.visible = false;
+        mesh.renderOrder = 5;
+        mesh.frustumCulled = false;
+        scene.add(mesh);
+
+        _tracePool.push({
+            mesh,
+            mat,
+            active: false,
+            born: 0,
+            until: 0,
+        });
+    }
+    console.log('[effects] 弹痕池已初始化:', TRACE_POOL_SIZE);
+}
+
+function _acquireTraceSlot() {
+    if (!_tracePoolInited) _initTracePool();
+    if (_tracePool.length === 0) return null;
+
+    // 优先找空闲槽位（round-robin 起点）
+    for (let i = 0; i < TRACE_POOL_SIZE; i++) {
+        const slot = _tracePool[(_tracePoolIdx + i) % TRACE_POOL_SIZE];
+        if (!slot.active) {
+            _tracePoolIdx = (_tracePoolIdx + i + 1) % TRACE_POOL_SIZE;
+            return slot;
+        }
+    }
+
+    // 池满 → 回收最旧的活跃槽位
+    let oldest = _traceActive[0];
+    for (let i = 1; i < _traceActive.length; i++) {
+        if (_traceActive[i].born < oldest.born) oldest = _traceActive[i];
+    }
+    _releaseTraceSlot(oldest);
+    return oldest;
+}
+
+function _releaseTraceSlot(slot) {
+    if (!slot || !slot.active) return;
+    slot.active = false;
+    slot.mesh.visible = false;
+    slot.mat.opacity = 0;
+
+    const idx = _traceActive.indexOf(slot);
+    if (idx >= 0) _traceActive.splice(idx, 1);
+}
 
 // ============================================================
 // 圆形弹孔纹理（枪械）
@@ -183,13 +258,6 @@ function getBulletHoleTexture() {
     return t;
 }
 
-let _bulletHoleGeo = null;
-function getBulletHoleGeo() {
-    if (_bulletHoleGeo) return _bulletHoleGeo;
-    _bulletHoleGeo = new THREE.PlaneGeometry(0.18, 0.18);
-    return _bulletHoleGeo;
-}
-
 function getHitWorldNormal(h) {
     if (h && h.face && h.object) {
         return h.face.normal.clone().transformDirection(h.object.matrixWorld).normalize();
@@ -201,54 +269,49 @@ function getHitWorldNormal(h) {
 }
 window.getHitWorldNormal = getHitWorldNormal;
 
+// ============================================================
+// ★ 生成弹痕（池化版 · 使用单位平面 + scale 缩放）
+// ============================================================
 function spawnBulletHole(point, normal) {
     if (typeof scene === 'undefined') return;
     if (!point) return;
 
-    _tickFxBudget();
-    if (_fxHoleCount >= FX_HOLE_PER_FRAME) return;
-    _fxHoleCount++;
+    const slot = _acquireTraceSlot();
+    if (!slot) return;
 
     const n = (normal ? normal.clone() : new THREE.Vector3(0, 1, 0)).normalize();
-    const geo = getBulletHoleGeo();
 
-    const mat = new THREE.MeshBasicMaterial({
-        map: getBulletHoleTexture(),
-        transparent: true,
-        opacity: 1,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -8,
-        polygonOffsetUnits: -8,
-        side: THREE.DoubleSide
-    });
+    // 切换纹理为弹孔纹理（同池内切换成本极低）
+    const tex = getBulletHoleTexture();
+    if (slot.mat.map !== tex) {
+        slot.mat.map = tex;
+        slot.mat.needsUpdate = true;
+    }
 
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.copy(point).addScaledVector(n, 0.008);
+    slot.mesh.position.copy(point).addScaledVector(n, 0.008);
 
+    // 平面法线对齐命中面法线
     const up = Math.abs(n.y) > 0.9
         ? new THREE.Vector3(1, 0, 0)
         : new THREE.Vector3(0, 1, 0);
     const t1 = new THREE.Vector3().crossVectors(up, n).normalize();
     const t2 = new THREE.Vector3().crossVectors(n, t1).normalize();
     const m = new THREE.Matrix4().makeBasis(t1, t2, n);
-    mesh.setRotationFromMatrix(m);
-    mesh.rotateZ(Math.random() * Math.PI * 2);
+    slot.mesh.setRotationFromMatrix(m);
+    slot.mesh.rotateZ(Math.random() * Math.PI * 2);
+
+    // 尺寸：基础 0.18 × 随机系数（原 PlaneGeometry(0.18, 0.18) + scale s）
     const s = 0.75 + Math.random() * 0.7;
-    mesh.scale.set(s, s, s);
+    slot.mesh.scale.set(0.18 * s, 0.18 * s, 1);
 
-    mesh.renderOrder = 5;
-    scene.add(mesh);
+    slot.mat.opacity = 1;
+    slot.mesh.visible = true;
 
-    bulletHoles.push({ mesh, born: performance.now() });
+    slot.active = true;
+    slot.born   = performance.now();
+    slot.until  = slot.born + BULLET_HOLE_LIFE_MS;
 
-    while (bulletHoles.length > MAX_BULLET_HOLES) {
-        const old = bulletHoles.shift();
-        if (old.mesh) {
-            scene.remove(old.mesh);
-            if (old.mesh.material) old.mesh.material.dispose();
-        }
-    }
+    _traceActive.push(slot);
 }
 window.spawnBulletHole = spawnBulletHole;
 
@@ -405,23 +468,26 @@ function getSlashMarkTexture() {
     return t;
 }
 
-let _slashMarkGeo = null;
-function getSlashMarkGeo() {
-    if (_slashMarkGeo) return _slashMarkGeo;
-    _slashMarkGeo = new THREE.PlaneGeometry(0.48, 0.06);
-    return _slashMarkGeo;
-}
-
+// ============================================================
+// ★ 生成刀痕（池化版 · 使用单位平面 + scale 缩放）
+// ============================================================
 function spawnSlashMark(point, normal, playerYaw, isVertical) {
     if (typeof scene === 'undefined') return;
     if (!point) return;
 
-    _tickFxBudget();
-    if (_fxHoleCount >= FX_HOLE_PER_FRAME) return;
-    _fxHoleCount++;
+    const slot = _acquireTraceSlot();
+    if (!slot) return;
 
     const n = (normal ? normal.clone() : new THREE.Vector3(0, 1, 0)).normalize();
 
+    // 切换纹理为刀痕纹理
+    const tex = getSlashMarkTexture();
+    if (slot.mat.map !== tex) {
+        slot.mat.map = tex;
+        slot.mat.needsUpdate = true;
+    }
+
+    // 计算刀刃方向
     let swingDir = new THREE.Vector3();
 
     if (isVertical) {
@@ -452,72 +518,53 @@ function spawnSlashMark(point, normal, playerYaw, isVertical) {
     const bitangent = new THREE.Vector3().crossVectors(n, swingDir).normalize();
     const basisMat = new THREE.Matrix4().makeBasis(swingDir, bitangent, n);
 
-    const geo = getSlashMarkGeo();
-    const mat = new THREE.MeshBasicMaterial({
-        map: getSlashMarkTexture(),
-        transparent: true,
-        opacity: 1,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -8,
-        polygonOffsetUnits: -8,
-        side: THREE.DoubleSide,
-    });
-
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.copy(point).addScaledVector(n, 0.008);
-    mesh.setRotationFromMatrix(basisMat);
+    slot.mesh.position.copy(point).addScaledVector(n, 0.008);
+    slot.mesh.setRotationFromMatrix(basisMat);
 
     if (!isVertical) {
-        mesh.rotateZ((Math.random() - 0.5) * 0.12);
+        slot.mesh.rotateZ((Math.random() - 0.5) * 0.12);
     }
 
+    // 尺寸：原 PlaneGeometry(0.48, 0.06) + scale s
     const s = 0.9 + Math.random() * 0.25;
-    mesh.scale.set(s, s, s);
+    slot.mesh.scale.set(0.48 * s, 0.06 * s, 1);
 
-    mesh.renderOrder = 5;
-    scene.add(mesh);
+    slot.mat.opacity = 1;
+    slot.mesh.visible = true;
 
-    bulletHoles.push({ mesh, born: performance.now() });
+    slot.active = true;
+    slot.born   = performance.now();
+    slot.until  = slot.born + BULLET_HOLE_LIFE_MS;
 
-    while (bulletHoles.length > MAX_BULLET_HOLES) {
-        const old = bulletHoles.shift();
-        if (old.mesh) {
-            scene.remove(old.mesh);
-            if (old.mesh.material) old.mesh.material.dispose();
-        }
-    }
+    _traceActive.push(slot);
 }
 window.spawnSlashMark = spawnSlashMark;
 
 // ============================================================
-// 弹痕 / 刀痕生命周期
+// 弹痕 / 刀痕生命周期更新
 // ============================================================
 function updateBulletHoles(now) {
-    for (let i = bulletHoles.length - 1; i >= 0; i--) {
-        const bh = bulletHoles[i];
-        const age = now - bh.born;
+    for (let i = _traceActive.length - 1; i >= 0; i--) {
+        const slot = _traceActive[i];
+        const age  = now - slot.born;
+
         if (age >= BULLET_HOLE_LIFE_MS) {
-            scene.remove(bh.mesh);
-            if (bh.mesh.material) bh.mesh.material.dispose();
-            bulletHoles.splice(i, 1);
-        } else {
-            const remain = BULLET_HOLE_LIFE_MS - age;
-            if (remain < BULLET_HOLE_FADE_MS) {
-                bh.mesh.material.opacity = Math.max(0, remain / BULLET_HOLE_FADE_MS);
-            }
+            _releaseTraceSlot(slot);
+            continue;
+        }
+
+        const remain = BULLET_HOLE_LIFE_MS - age;
+        if (remain < BULLET_HOLE_FADE_MS) {
+            slot.mat.opacity = Math.max(0, remain / BULLET_HOLE_FADE_MS);
         }
     }
 }
 
 function clearAllBulletHoles() {
-    for (const bh of bulletHoles) {
-        if (bh.mesh) {
-            scene.remove(bh.mesh);
-            if (bh.mesh.material) bh.mesh.material.dispose();
-        }
+    for (let i = _traceActive.length - 1; i >= 0; i--) {
+        _releaseTraceSlot(_traceActive[i]);
     }
-    bulletHoles.length = 0;
+    _traceActive.length = 0;
 }
 window.clearAllBulletHoles = clearAllBulletHoles;
 
@@ -578,7 +625,6 @@ function spawnSparks(point, color) {
     for (let i = 0; i < 6; i++) {
         const s = _acquireSpark();
         if (!s) {
-            // 池满：跳过剩余火花（视觉上几乎无感，只是少几粒）
             _sparkPoolStarved++;
             return;
         }
@@ -613,6 +659,28 @@ window.dumpSparkPool = function () {
     };
 };
 
+// ★ 调试：查看弹痕池状态
+window.dumpTracePool = function () {
+    console.log(
+        `[effects] 弹痕池: 活跃 ${_traceActive.length} / 总 ${TRACE_POOL_SIZE}`
+    );
+    return {
+        active: _traceActive.length,
+        total: TRACE_POOL_SIZE,
+    };
+};
+
+// ★ 调试：查看投掷轨迹池状态
+window.dumpTrajPool = function () {
+    console.log(
+        `[effects] 投掷轨迹池: 容量 ${TRAJ_POOL_SIZE} / 当前索引 ${_trajPoolIdx}`
+    );
+    return {
+        size: TRAJ_POOL_SIZE,
+        idx: _trajPoolIdx,
+    };
+};
+
 // ===== 投掷轨迹线 =====
 let smokeTrajLine = null;
 let flashTrajLine = null;
@@ -620,11 +688,40 @@ let flashTrajLine = null;
 const SMOKE_TRAJ_STEPS = 144;
 const SMOKE_TRAJ_DT = 1 / 60;
 
+// ============================================================
+// ★ 投掷轨迹 Vector3 对象池
+//   每次模拟需要 144 个 Vector3（抛物线上每个点一个）
+//   池容量取 288 = 两套，留出安全余量
+// ============================================================
+const TRAJ_POOL_SIZE = 288;
+const _trajPool = [];
+for (let i = 0; i < TRAJ_POOL_SIZE; i++) {
+    _trajPool.push(new THREE.Vector3());
+}
+let _trajPoolIdx = 0;
+
+function _acquireTrajVec() {
+    const v = _trajPool[_trajPoolIdx];
+    _trajPoolIdx = (_trajPoolIdx + 1) % TRAJ_POOL_SIZE;
+    return v;
+}
+
+// 复用的临时向量（原来每个函数调用都会 new 两个）
+const _trajTmpVel = new THREE.Vector3();
+const _trajTmpPos = new THREE.Vector3();
+
+// ============================================================
+// ★ 投掷轨迹模拟（池化版 · 不再分配 Vector3）
+// ============================================================
 function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounces, friction, steps, dt) {
+    // ★ 每帧从池头重新开始借
+    _trajPoolIdx = 0;
+
     const pts = [];
-    const vel = dir.clone().multiplyScalar(throwSpeed);
+    // ★ 复用临时向量，不再 clone / new
+    const vel = _trajTmpVel.copy(dir).multiplyScalar(throwSpeed);
     vel.y += upBias * throwSpeed;
-    const pos = origin.clone();
+    const pos = _trajTmpPos.copy(origin);
 
     let stopped = false;
     let restX = pos.x, restY = pos.y, restZ = pos.z;
@@ -635,10 +732,17 @@ function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounc
 
     for (let i = 0; i < steps; i++) {
         if (stopped) {
-            pts.push(new THREE.Vector3(restX, restY, restZ));
+            // ★ 从池借 Vector3，只改值
+            const v = _acquireTrajVec();
+            v.set(restX, restY, restZ);
+            pts.push(v);
             continue;
         }
-        pts.push(pos.clone());
+
+        // ★ 从池借 Vector3，只改值
+        const v = _acquireTrajVec();
+        v.copy(pos);
+        pts.push(v);
 
         vel.multiplyScalar(dampFactor);
 
@@ -782,3 +886,10 @@ function updateFlashIndicators(now) {
     }
 }
 window.updateFlashIndicators = updateFlashIndicators;
+
+// ============================================================
+// 启动时初始化弹痕池（如场景已存在）
+// ============================================================
+if (typeof scene !== 'undefined' && scene) {
+    _initTracePool();
+}

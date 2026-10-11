@@ -208,7 +208,6 @@ function explodeBarrel(barrel, from) {
 
     // 视觉 + 音效
     spawnExplosionVisual(ex, ey, ez);
-    // ★ 空间化：油桶爆炸音效（从爆炸点发出）
     if (typeof emitWorldSound === 'function') {
         emitWorldSound('explosion', ex, ey, ez, false);
     } else if (typeof sExplosion === 'function') {
@@ -230,6 +229,9 @@ function explodeBarrel(barrel, from) {
     }
 }
 
+// ============================================================
+// ★ 爆炸伤害（含易伤）
+// ============================================================
 function _applyExplosionDamageToPlayer(p, ex, ey, ez, from) {
     if (!p) return;
     if (typeof running !== 'undefined' && !running) return;
@@ -247,9 +249,14 @@ function _applyExplosionDamageToPlayer(p, ex, ey, ez, from) {
     if (dist > BARREL_EXPLODE_RADIUS) return;
 
     const t = 1 - dist / BARREL_EXPLODE_RADIUS;
-    const dmg = BARREL_EXPLODE_MAX_DMG * Math.pow(t, 1.5);
+    let dmg = BARREL_EXPLODE_MAX_DMG * Math.pow(t, 1.5);
 
     if (dmg <= 1) return;
+
+    // ★ 应用易伤（如果适用）
+    if (typeof window._applyVulnerabilityBonus === 'function') {
+        dmg = window._applyVulnerabilityBonus(p, dmg, now);
+    }
 
     if (typeof damage === 'function') {
         const attacker = from || p;
@@ -332,9 +339,7 @@ function _applyBarrelExplosionClientSide(barrel) {
         window.markShotTargetsDirty();
     }
 
-    // 视觉 + 音效
     spawnExplosionVisual(barrel.x, barrel.y, barrel.z);
-    // ★ 空间化：客户端本地 HRTF
     if (typeof emitWorldSound === 'function') {
         emitWorldSound('explosion', barrel.x, barrel.y, barrel.z, false);
     } else if (typeof sExplosion === 'function') {

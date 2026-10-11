@@ -388,7 +388,6 @@ function updateP2ShadowState() {
 
 // ============================================================
 // ★ 远端玩家插值（固定时间常数 · 帧率无关 · 抗抖动）
-//   k = 1 - exp(-18·dt)，τ ≈ 55ms
 // ============================================================
 function interpolateRemotePlayer(p, dt) {
     if (!p || !p._netTargetPos) return;
@@ -536,6 +535,11 @@ function loop() {
                 L.visible = (dx * dx + dz * dz) < LAMP_CULL_DIST_SQ;
             }
         }
+    }
+
+    // ★ 滑索塔警示灯呼吸效果
+    if (typeof updateZiplineTowerLights === 'function') {
+        updateZiplineTowerLights(now);
     }
 
     updateEffects(dt, now);

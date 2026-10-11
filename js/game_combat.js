@@ -18,7 +18,7 @@ const _rcRecoilPos = new THREE.Vector3();
 const _rcRecoilRot = new THREE.Euler();
 
 // ============================================================
-// ★ 命中部位 → 伤害解析（新增 distance 参数，支持距离衰减）
+// ★ 命中部位 → 伤害解析
 // ============================================================
 function _resolveDamage(weaponCfg, part, distance) {
     if (!weaponCfg) return 0;
@@ -44,6 +44,18 @@ function _resolveDamage(weaponCfg, part, distance) {
 window._resolveDamage = _resolveDamage;
 
 // ============================================================
+// ★★★ 易伤：统一入口 ★★★
+//   - tryFire / tryMelee / barrels 里调用
+//   - 在 _addDamage 之前应用，保证"统计值 = 实际扣血值"
+// ============================================================
+function _applyVulnerabilityBonus(victim, dmg, now) {
+    if (!victim) return dmg;
+    if (victim.vulnerableUntil > now) return dmg * 2;
+    return dmg;
+}
+window._applyVulnerabilityBonus = _applyVulnerabilityBonus;
+
+// ============================================================
 // 伤害统计
 // ============================================================
 function _ensureDmgEntry(p, targetId) {
@@ -64,7 +76,6 @@ function _addDamage(p, targetId, part, dmg) {
 // ★★★ 后坐力系统 ★★★
 // ============================================================
 
-// 判断玩家是否正在移动（用于移动开火倍率）
 function _isPlayerMoving(p) {
     if (!p || !p.input) return false;
     return (Math.abs(p.input.forward || 0) > 0.1)
@@ -72,12 +83,24 @@ function _isPlayerMoving(p) {
 }
 
 // ============================================================
-// 应用后坐力：每次开火后调用（★ 必须在弹丸发射完成之后）
-//
-//   ★ 时序说明：
-//     1. 弹丸沿"当前 cam 方向"射出（此时不含本发后坐力）
-//     2. 所有弹丸处理完之后，才调用本函数累积偏移
-//     3. 因此第一枪永远精准，从第二发开始上抬
+// ★★★ 移动/跳跃散布 ★★★
+// ============================================================
+function _getMovementSpread(p) {
+    const w = p.weapon;
+    if (!w) return 0;
+    if (p.isMelee || p.isSmoke || p.isFlash) return 0;
+
+    if (!p.onGround) {
+        return (w.airSpread !== undefined) ? w.airSpread : 0;
+    }
+    if (_isPlayerMoving(p)) {
+        return (w.moveSpread !== undefined) ? w.moveSpread : 0;
+    }
+    return 0;
+}
+
+// ============================================================
+// 应用后坐力
 // ============================================================
 function applyRecoil(p, w, now) {
     const cfg = w.recoil;
@@ -86,7 +109,6 @@ function applyRecoil(p, w, now) {
 
     const r = p.recoil;
 
-    // ---- 判断是否是新连发序列 ----
     const timeSinceLastShot = now - r.lastShotTime;
     if (timeSinceLastShot > 250) {
         r.bulletCount = 0;
@@ -95,13 +117,11 @@ function applyRecoil(p, w, now) {
     r.lastShotTime = now;
     r.bulletCount++;
 
-    const shotIdx = r.bulletCount - 1;   // 0-based
+    const shotIdx = r.bulletCount - 1;
 
-    // ---- 垂直后坐力（每发递增，到上限后稳定）----
     const vertRaw    = cfg.vertFirst + shotIdx * cfg.vertPerShot;
     const vertAmount = Math.min(vertRaw, cfg.vertMax);
 
-    // ---- 水平后坐力（前 N 发保护）----
     let horizAmount = 0;
     if (r.bulletCount > cfg.horizStart) {
         if (Math.random() < cfg.horizSwitchRate) {
@@ -112,22 +132,18 @@ function applyRecoil(p, w, now) {
         horizAmount = cfg.horizMax * horizGrowth * r.horizontalDir;
     }
 
-    // ---- 姿态倍率 ----
     let mul = 1.0;
     if (p.input && p.input.crouch) mul *= cfg.crouchMul;
     if (p.aiming)                  mul *= cfg.adsMul;
     if (_isPlayerMoving(p))        mul *= cfg.moveMul;
 
-    // ---- 施加到后坐力偏移（不污染 p.pitch / p.yaw）----
     r.offsetPitch += vertAmount * mul;
     r.offsetYaw   += horizAmount * mul;
 
-    // ---- 上限钳制 ----
     if (r.offsetPitch > cfg.maxOffsetPitch) r.offsetPitch = cfg.maxOffsetPitch;
     if (r.offsetYaw > cfg.maxOffsetYaw)     r.offsetYaw   = cfg.maxOffsetYaw;
     if (r.offsetYaw < -cfg.maxOffsetYaw)    r.offsetYaw   = -cfg.maxOffsetYaw;
 
-    // ---- 立即更新摄像机，让下一发子弹方向正确 ----
     if (p.cam) {
         p.cam.rotation.x = p.pitch + r.offsetPitch;
         p.cam.rotation.y = p.yaw   + r.offsetYaw;
@@ -136,7 +152,7 @@ function applyRecoil(p, w, now) {
 }
 
 // ============================================================
-// 更新后坐力恢复（每帧调用）
+// 更新后坐力恢复
 // ============================================================
 function updateRecoilRecovery(p, dt, now) {
     if (!p || !p.recoil) return;
@@ -144,34 +160,30 @@ function updateRecoilRecovery(p, dt, now) {
     const r = p.recoil;
     const timeSinceLastShot = now - r.lastShotTime;
 
-    // 未到恢复延迟，或正在开火，直接跳过
     if (timeSinceLastShot < RECOIL_RECOVER_DELAY_MS) return;
 
-    // 指数衰减
     const decay = 1 - Math.exp(-RECOIL_RECOVER_RATE * dt);
 
     r.offsetPitch *= (1 - decay);
     r.offsetYaw   *= (1 - decay);
 
-    // 低于阈值时归零
     if (Math.abs(r.offsetPitch) < RECOIL_MIN_THRESHOLD) r.offsetPitch = 0;
     if (Math.abs(r.offsetYaw)   < RECOIL_MIN_THRESHOLD) r.offsetYaw   = 0;
 
-    // 完全恢复后重置连发计数
     if (r.offsetPitch === 0 && r.offsetYaw === 0) {
         r.bulletCount = 0;
     }
 }
 
 // ============================================================
-// 近战攻击（含油桶命中）
-//
-//   · 轻击（左键）：水平刀痕（挥砍）
-//   · 重击（右键）：垂直刀痕（往前刺）
+// 近战攻击
+//   ★ 硬直期间禁止近战
+//   ★ 易伤在 _addDamage 之前应用
 // ============================================================
 function tryMelee(p, now, isHeavy) {
     if (gameState !== 'combat') return;
     if (!p.isMelee) return;
+    if (typeof _isPlayerStunned === 'function' && _isPlayerStunned(p)) return;
     if (now < p.equipEnd || now < p.meleeRecovery || now < p.deadUntil) return;
 
     const m = MELEE;
@@ -227,8 +239,11 @@ function tryMelee(p, now, isHeavy) {
             const part = h.object.userData.part;
             if (part) {
                 const isBack = isBackAttack(p, o);
-                let dmg = isHeavy ? m.dmgHeavy : m.dmgLight;
-                if (isBack) dmg *= m.backMultiplier;
+                let rawDmg = isHeavy ? m.dmgHeavy : m.dmgLight;
+                if (isBack) rawDmg *= m.backMultiplier;
+
+                // ★ 应用易伤（在 _addDamage 之前）
+                const dmg = _applyVulnerabilityBonus(o, rawDmg, now);
 
                 _addDamage(p, o.id, 'body', dmg);
 
@@ -241,14 +256,12 @@ function tryMelee(p, now, isHeavy) {
                 emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                 damage(o, dmg, p);
             } else {
-                // ---- 命中墙面 / 箱子 ----
                 spawnSparks(h.point, 0xffd28a);
 
                 const n = (typeof getHitWorldNormal === 'function')
                     ? getHitWorldNormal(h)
                     : new THREE.Vector3(0, 1, 0);
 
-                // 轻击 → 水平刀痕；重击 → 垂直刀痕
                 if (typeof spawnSlashMark === 'function') {
                     spawnSlashMark(h.point, n, p.yaw, !!isHeavy);
                 }
@@ -267,16 +280,14 @@ function tryMelee(p, now, isHeavy) {
 }
 
 // ============================================================
-// 开火（含油桶命中 + 弹壳抛射 + 后坐力）
-//
-// ★ 后坐力时序（关键修复）：
-//   1. 用「当前 cam 方向」发射所有弹丸（不含本发后坐力）
-//   2. 所有弹丸处理完毕后，才调用 applyRecoil 累积偏移
-//   3. 因此第一枪永远精准，从第二发开始才上抬
+// 开火
+//   ★ 硬直期间禁止开火
+//   ★ 易伤在 _addDamage 之前应用
 // ============================================================
 function tryFire(p, now) {
     if (gameState !== 'combat') return;
     if (p.isMelee || p.isSmoke || p.isFlash) return;
+    if (typeof _isPlayerStunned === 'function' && _isPlayerStunned(p)) return;
 
     const w = p.weapon;
     if (now < p.nextShot || now < p.deadUntil || p.reloadEnd > now || now < p.boltEnd) return;
@@ -288,9 +299,6 @@ function tryFire(p, now) {
     }
     p.ammo--;
 
-    // ============================================================
-    // 射速计算（含开镜惩罚 + 奥丁 spin-up）
-    // ============================================================
     let currentFireMs = w.fireMs;
     if (w.spinUpMs && w.minFireMs) {
         if (p.aiming) {
@@ -321,7 +329,6 @@ function tryFire(p, now) {
         if (p.id === 1) mouse.aim = false;
     }
 
-    // ---- 音效 ----
     const _fxEyeY = p.pos.y + p.eyeH;
     const _fxIsSelf = (p.id === 1);
     switch (w.key) {
@@ -337,41 +344,42 @@ function tryFire(p, now) {
         window.spawnShellCasing(p, now);
     }
 
-    // ============================================================
-    // 联机客户端：只发射曳光弹
-    //   ★ 先发射（用当前 cam 方向，不含本发后坐力）
-    //   ★ 发射完之后再应用后坐力（影响下一发）
-    // ============================================================
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) {
         p.cam.getWorldPosition(_rcOrigin);
         _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
 
+        const cliSpread = (w.spread || 0) + _getMovementSpread(p);
+        _rcRandDir.copy(_rcDir);
+        if (cliSpread > 0) {
+            const theta = Math.random() * 2 * Math.PI;
+            const phi = Math.acos(1 - Math.random() * (1 - Math.cos(cliSpread)));
+            _rcAxis.crossVectors(_rcDir, _rcUp).normalize();
+            if (_rcAxis.length() < 0.01) _rcAxis.set(1, 0, 0);
+            _rcQ1.setFromAxisAngle(_rcAxis, phi);
+            _rcQ2.setFromAxisAngle(_rcDir, theta);
+            _rcRandDir.applyQuaternion(_rcQ1).applyQuaternion(_rcQ2);
+        }
+
         const localTargets = getShotTargets();
-        _ray.set(_rcOrigin, _rcDir);
+        _ray.set(_rcOrigin, _rcRandDir);
         _ray.near = 0;
         _ray.far = 150;
         const hitsLocal = _ray.intersectObjects(localTargets, false);
-        _rcEnd.copy(_rcOrigin).addScaledVector(_rcDir, 100);
+        _rcEnd.copy(_rcOrigin).addScaledVector(_rcRandDir, 100);
         if (hitsLocal.length > 0) _rcEnd.copy(hitsLocal[0].point);
         spawnTracer(muzzleWorld(p, _rcMuzzle), _rcEnd);
 
-        // ★ 发射后应用后坐力（只影响下一发）
         if (w.recoil) {
             applyRecoil(p, w, now);
         }
         return;
     }
 
-    // ============================================================
-    // 本地/房主：完整射击逻辑
-    //   ★ 关键：这里用当前 cam 方向（不含本发后坐力），
-    //     因为 applyRecoil 还没被调用
-    // ============================================================
     p.cam.getWorldPosition(_rcOrigin);
     _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
 
     const pellets = w.pellets || 1;
-    const spread = w.spread || 0;
+    const spread = (w.spread || 0) + _getMovementSpread(p);
 
     const targets = prepareShotTargets();
     const o = other(p);
@@ -384,10 +392,9 @@ function tryFire(p, now) {
 
     let hitmarkSent = false;
 
-    // ---------- 弹丸循环（每个弹丸都用同一"当前朝向"）----------
     for (let i = 0; i < pellets; i++) {
         _rcRandDir.copy(_rcDir);
-        if (pellets > 1) {
+        if (spread > 0) {
             const theta = Math.random() * 2 * Math.PI;
             const phi = Math.acos(1 - Math.random() * (1 - Math.cos(spread)));
             _rcAxis.crossVectors(_rcDir, _rcUp).normalize();
@@ -421,7 +428,11 @@ function tryFire(p, now) {
             } else {
                 const part = h.object.userData.part;
                 if (part) {
-                    const dmg = _resolveDamage(w, part, h.distance);
+                    const rawDmg = _resolveDamage(w, part, h.distance);
+
+                    // ★ 应用易伤（在 _addDamage 之前，保证统计一致）
+                    const dmg = _applyVulnerabilityBonus(o, rawDmg, now);
+
                     _addDamage(p, o.id, part, dmg);
 
                     spawnSparks(h.point, 0xff5040);
@@ -461,21 +472,23 @@ function tryFire(p, now) {
         }
     }
 
-    // ============================================================
-    // ★★★ 所有弹丸都射完了，才应用后坐力 ★★★
-    //   —— 只影响下一发的方向，本次开火方向保持不变
-    // ============================================================
     if (w.recoil) {
         applyRecoil(p, w, now);
     }
 }
 
+// ============================================================
+// ★ damage() —— 只负责扣血/护甲/击杀
+//   易伤翻倍已经在调用方（tryFire / tryMelee / barrels）应用
+// ============================================================
 function damage(victim, dmg, from) {
     if (gameState !== 'combat') return;
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) return;
     const now = performance.now();
     if (victim.hp <= 0) return;
     if (now < victim.invulnUntil) { sEmpty(from.id); return; }
+
+    // ★ 注意：dmg 是"已经应用易伤后"的最终值
     let hpDamage = dmg;
     if (victim.armor > 0) {
         const wantAbsorb = dmg * ARMOR_ABSORB;
@@ -485,11 +498,13 @@ function damage(victim, dmg, from) {
     }
     victim.hp -= hpDamage;
     dmgFlash(victim);
+
     if (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost) {
         if (victim === p2 && typeof NET_sendDamageEvent === 'function') {
             NET_sendDamageEvent('p2', dmg);
         }
     }
+
     if (victim.hp <= 0) kill(victim, from, now);
 }
 
@@ -505,6 +520,14 @@ function kill(victim, from, now) {
 
     victim.hp = 0;
     victim.deadUntil = Infinity;
+
+    // ★ 死亡时清理滑索/硬直/易伤状态
+    if (victim.zipline && victim.zipline.active) {
+        victim.zipline.active = false;
+    }
+    victim._zipStunPending  = false;
+    victim.stunUntil        = 0;
+    victim.vulnerableUntil  = 0;
 
     const emptyDmg = { body: 0, head: 0, leg: 0, total: 0 };
     const dmgByAttacker = scoringPlayer.damageDealt[victim.id] || emptyDmg;
@@ -585,7 +608,7 @@ function computeSniperRecoil(p, now) {
 }
 
 // ============================================================
-// ★ 第一人称换弹动画（步枪 · 拆弹匣 → 装新弹匣）
+// 第一人称换弹动画（步枪）
 // ============================================================
 function updateRifleReloadAnim(vm, p, now) {
     const w = p.weapon;
@@ -664,9 +687,6 @@ function updateRifleReloadAnim(vm, p, now) {
 // 第一人称视图模型动画
 // ============================================================
 function updateSniperViewmodel(p, dt, now) {
-    // ★ 只有本地视角玩家（p1）需要 viewmodel 动画。
-    //    p2 的 viewmodel 在 main.js 的 render() 里被强制隐藏，
-    //    永远不可见 → 在这里为它跑动画纯属浪费 CPU。
     if (p !== p1) return;
     if (!p.vm || p.vm.children.length === 0) return;
     const vm = p.vm.children[0];
@@ -845,7 +865,7 @@ function updateSniperViewmodel(p, dt, now) {
 }
 
 // ============================================================
-// ★★★ 第三人称动画（远端玩家看到的动画） ★★★
+// ★★★ 第三人称动画 ★★★
 // ============================================================
 function updateThirdPersonWeapon(p, dt, now) {
     if (!p.gunHolder) return;
@@ -1015,16 +1035,56 @@ function updatePlayer(p, dt, now) {
     if (now < p.deadUntil) {
         p.baseVisible = false;
         p.aiming = false; p.aimStage = 0;
+        if (p.zipline && p.zipline.active) {
+            p.zipline.active = false;
+        }
         if (p.id === 1) centerMsg(p, '回合结束');
         return;
     }
     p.baseVisible = true;
 
+    // ============================================================
+    // ★ 滑索：优先处理
+    // ============================================================
+    if (typeof updateZiplineMovement === 'function') {
+        if (updateZiplineMovement(p, dt, now)) {
+            p.mat.opacity = 1;
+            p.cam.position.set(p.pos.x, p.pos.y + p.eyeH, p.pos.z);
+            p.cam.rotation.y = p.yaw;
+            p.cam.rotation.x = p.pitch;
+            p.mesh.position.copy(p.pos);
+            p.mesh.rotation.y = p.yaw;
+            p.mesh.scale.y = p.height / HEIGHT_STAND;
+            updateThirdPersonWeapon(p, dt, now);
+            updateSniperViewmodel(p, dt, now);
+            if (p.id === 1) centerMsg(p, '');
+            return;
+        }
+    }
+
+    // ============================================================
+    // ★ 硬直状态：清空输入，物理继续
+    // ============================================================
+    const _stunned = p.stunUntil > now;
+    if (_stunned) {
+        if (p.input) {
+            p.input.forward = 0;
+            p.input.right   = 0;
+            p.input.jump    = false;
+            p.input.crouch  = false;
+            p.input.fire    = false;
+            p.input.aim     = false;
+        }
+        p.aiming = false;
+        p.aimStage = 0;
+        if (p.id === 1) mouse.aim = false;
+    }
+
     if (p.id === 1) {
         let msg = '';
         if (gameState === 'prep') msg = `第 ${roundNumber} 回合 · 准备阶段`;
         else if (gameState === 'roundEnd') msg = '回合结束';
-        centerMsg(p, msg);
+        if (!_stunned) centerMsg(p, msg);
     }
 
     if (p.equipEnd > 0 && now >= p.equipEnd) p.equipEnd = 0;
@@ -1038,7 +1098,7 @@ function updatePlayer(p, dt, now) {
         if (p.boltEnd > 0 && now >= p.boltEnd) p.boltEnd = 0;
     }
 
-    const wantAim = !!p.input.aim;
+    const wantAim = !!p.input.aim && !_stunned;
     const canAim = !p.isMelee && !p.isSmoke && !p.isFlash && (gameState === 'combat')
                    && (now >= p.boltEnd) && (p.reloadEnd <= now);
     p.aiming = wantAim && canAim;
@@ -1053,7 +1113,7 @@ function updatePlayer(p, dt, now) {
         p.cam.updateProjectionMatrix();
     }
 
-    const wantCrouch = !!p.input.crouch;
+    const wantCrouch = !!p.input.crouch && !_stunned;
     let targetH = wantCrouch ? HEIGHT_CROUCH : HEIGHT_STAND;
     if (targetH > p.height + 0.001 && !canFit(p, targetH)) targetH = p.height;
     const k = Math.min(1, dt * 12);
@@ -1075,7 +1135,7 @@ function updatePlayer(p, dt, now) {
     p.pos.x += (fx * f + rx * s) * spd * dt;
     p.pos.z += (fz * f + rz * s) * spd * dt;
 
-    if (p.input.jump && p.onGround) { p.vy = JUMP_V; p.onGround = false; }
+    if (p.input.jump && p.onGround && !_stunned) { p.vy = JUMP_V; p.onGround = false; }
 
     p.prevY = p.pos.y;
     p.vy -= GRAV * dt;
@@ -1093,12 +1153,11 @@ function updatePlayer(p, dt, now) {
         window.PHYSICS.syncPlayerToBody(p, dt);
     }
 
-    // ★ 后坐力恢复（在开火之前处理，保证本帧开火用的是恢复后的偏移）
     if (p.recoil) {
         updateRecoilRecovery(p, dt, now);
     }
 
-    if (p.input.fire) {
+    if (p.input.fire && !_stunned) {
         if (p.isMelee) tryMelee(p, now, false);
         else if (p.isSmoke || p.isFlash) { /* 由引信系统处理 */ }
         else tryFire(p, now);
@@ -1107,9 +1166,6 @@ function updatePlayer(p, dt, now) {
     p.mat.opacity = 1;
     p.cam.position.set(p.pos.x, p.pos.y + p.eyeH, p.pos.z);
 
-    // ============================================================
-    // ★ 摄像机旋转 = 玩家瞄准 + 后坐力偏移
-    // ============================================================
     const recoilPitch = p.recoil ? p.recoil.offsetPitch : 0;
     const recoilYaw   = p.recoil ? p.recoil.offsetYaw   : 0;
     p.cam.rotation.y = p.yaw   + recoilYaw;

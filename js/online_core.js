@@ -1,10 +1,8 @@
 // ===== js/online_core.js – P2P 联机核心（NET + 座位 + 房间 + 路由 + UI） =====
 
 const ICE_SERVERS = [
-    // Google STUN（基础穿透）
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    // Xirsys TURN 中继
     {
         username: 'iVhu6xd1fzssTwtLVCDSl1bfyFR0tbp20zbmIPPG-1i7kl79Iljkr5veYYSlbt2QAAAAAGrKT1d4dWFu',
         credential: '1ed8b33e-c4b9-11f1-8719-42684a6cc554',
@@ -36,6 +34,15 @@ const NET = {
     pendingFuseRelease: false,
     pendingMelee: false,
     pendingMeleeHeavy: false,
+
+    // ★ 滑索挂载事件：{ lineIdx, t, dir } 或 null
+    pendingZiplineMount: null,
+    // ★ 滑索脱离事件：true（只清滑索状态，不涉及易伤）
+    pendingZiplineDismount: false,
+    // ★ 硬直/易伤开始事件：落地时上报
+    //   { stunDuration, vulnDuration } 或 null
+    pendingVulnerableStart: null,
+
     tick: 0,
 
     remotePlayerState: {
@@ -53,12 +60,12 @@ const NET = {
     _heartbeatTimer: null,
     _pingTimer: null,
     _hostBroadcastTimer: null,
-    _hostBroadcastRaf: null,          // ★ rAF 驱动广播
+    _hostBroadcastRaf: null,
     _assignedPeers: new Set(),
-    _lastSentInput: null,             // ★ 上报变化检测缓存
-    _lastDrift: 0,                    // ★ 客户端位置漂移量（调试）
-    _lastHardSyncLogTime: 0,          // ★ 硬同步日志节流
-    connType: null                    // ★ 'p2p' / 'relay' / 'host'
+    _lastSentInput: null,
+    _lastDrift: 0,
+    _lastHardSyncLogTime: 0,
+    connType: null
 };
 window.NET = NET;
 
@@ -138,10 +145,6 @@ function updateOpponentInfo() {
 }
 window.NET_updateOpponentInfo = updateOpponentInfo;
 
-// ============================================================
-// 连接类型检测（★ 备用，不主动调用，避免干扰 PeerJS 事件流）
-//   如需调试时手动调用：detectConnectionType(NET.connections.get(id).conn)
-// ============================================================
 function detectConnectionType(conn) {
     if (!conn || !conn.peerConnection) return;
 
@@ -511,7 +514,6 @@ function createRoom() {
     });
     NET.peer.on('connection', (conn) => {
         NET.connections.set(conn.peer, { conn, lastSeen: Date.now() });
-        // ★ 注意：不在 open 事件里做任何额外事情，避免干扰 PeerJS 内部流程
         conn.on('data', (d) => handleRoomMessage(conn.peer, d));
         conn.on('close', () => {
             NET.connections.delete(conn.peer);
@@ -603,6 +605,12 @@ window.leaveOnlineRoom = function () {
     NET.pendingFuseRelease = false;
     NET.pendingMelee = false;
     NET.pendingMeleeHeavy = false;
+
+    // ★ 清理滑索 / 易伤事件
+    NET.pendingZiplineMount = null;
+    NET.pendingZiplineDismount = false;
+    NET.pendingVulnerableStart = null;
+
     NET.tick = 0;
     NET._assignedPeers.clear();
     NET._lastSentInput = null;

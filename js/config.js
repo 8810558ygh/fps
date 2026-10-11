@@ -26,9 +26,6 @@ const ROUND_END_MS = 2500;
 const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
 
 // ===== 后坐力恢复参数（全局，每帧更新） =====
-//   · RECOIL_RECOVER_DELAY_MS —— 松手后多久开始恢复
-//   · RECOIL_RECOVER_RATE     —— 每秒指数衰减速率（越大恢复越快）
-//   · RECOIL_MIN_THRESHOLD    —— 完全恢复的判定阈值
 const RECOIL_RECOVER_DELAY_MS = 100;
 const RECOIL_RECOVER_RATE     = 2.2;
 const RECOIL_MIN_THRESHOLD    = 0.0006;
@@ -36,13 +33,7 @@ const RECOIL_MIN_THRESHOLD    = 0.0006;
 // ===== 近战武器 =====
 const MELEE = {
     key: 'knife', name: '军刀',
-    // ★ 从 8.0 改为 1.6 米（对齐实战近战距离）
-    //   · 真实刀 + 手臂 ≈ 1.0~1.2 米
-    //   · CS:GO 约 1.2 米
-    //   · Valorant 约 1.5~1.8 米
-    //   1.6 米是"稍微宽裕但不失真实"的折中值
     range: 1.6,
-
     dmgLight: 50, dmgHeavy: 75,
     backMultiplier: 2.0,
     lightFireMs: 400, heavyFireMs: 900,
@@ -98,6 +89,12 @@ const FLASH = {
 // ★ 后坐力（可选配置）：
 //   · 未配置 recoil 字段的武器无后坐力
 //   · 数值单位为弧度（1 rad ≈ 57.3°）
+//
+// ★ 移动/跳跃散布（可选配置）：
+//   · spread     —— 基础散布（静止时也生效，一般 0 或霰弹枪自身散）
+//   · moveSpread —— 地面移动时额外叠加的散布（弧度）
+//   · airSpread  —— 空中时额外叠加的散布（弧度）
+//   未配置的字段视为 0，即不惩罚
 const WEAPONS = {
     // ============================================================
     // 狂徒（对齐《无畏契约》Vandal）
@@ -113,28 +110,29 @@ const WEAPONS = {
         zoomFov: 62, scope: false,
         speedMul: 1.0, adsSpeedMul: 0.76,
 
+        // ★ 新增：移动 / 跳跃散布
+        spread: 0,            // 静止时 0（保留第一发绝对精准）
+        moveSpread: 0.012,    // 地面移动：轻微飘
+        airSpread: 0.055,     // 空中：中远距离基本打空
+
         // ============================================================
         // ★★★ 后坐力配置（对齐无畏契约狂徒的"前几发精准"特性）★★★
         // ============================================================
         recoil: {
-            // ---- 垂直后坐力（每发向上推）----
-            vertFirst: 0.012,        // 第一发上抬 ≈ 0.7°
-            vertPerShot: 0.0035,     // 每发额外增量
-            vertMax: 0.028,          // 单发上限 ≈ 1.6°
+            vertFirst: 0.012,
+            vertPerShot: 0.0035,
+            vertMax: 0.028,
 
-            // ---- 水平后坐力（随机左右偏移）----
-            horizStart: 3,           // 前 3 发无水平偏移（保护子弹）
-            horizMax: 0.012,         // 最大单发水平偏移 ≈ 0.7°
-            horizSwitchRate: 0.12,   // 每次射击切换左右方向的概率
+            horizStart: 3,
+            horizMax: 0.012,
+            horizSwitchRate: 0.12,
 
-            // ---- 姿态倍率 ----
-            crouchMul: 0.85,         // 蹲下时后坐力 × 0.85
-            adsMul: 0.90,            // 开镜时后坐力 × 0.90
-            moveMul: 1.15,           // 移动中开火 × 1.15
+            crouchMul: 0.85,
+            adsMul: 0.90,
+            moveMul: 1.15,
 
-            // ---- 累积偏移上限（防止视角无限上飘）----
-            maxOffsetPitch: 0.32,    // 垂直累积上限 ≈ 18°
-            maxOffsetYaw: 0.22,      // 水平累积上限 ≈ 12°
+            maxOffsetPitch: 0.32,
+            maxOffsetYaw: 0.22,
         },
     },
 
@@ -148,7 +146,12 @@ const WEAPONS = {
         mag: 5, reserveMax: 10, startReserve: 10, reloadMs: 3700,
         zoomFov: 14, zoomFov2: 6,
         scope: true, boltMs: 850,
-        speedMul: 0.72, adsSpeedMul: 0.72
+        speedMul: 0.72, adsSpeedMul: 0.72,
+
+        // ★ 新增：移动 / 跳跃散布
+        spread: 0,
+        moveSpread: 0.025,    // 跑狙飘得明显
+        airSpread: 0.110,     // ★ 跳狙几乎必空
     },
 
     // ============================================================
@@ -160,7 +163,11 @@ const WEAPONS = {
         fireMs: 350, mag: 5, reserveMax: 15, startReserve: 15, reloadMs: 2400,
         zoomFov: 60, scope: false,
         speedMul: 0.80, adsSpeedMul: 0.78,
-        pellets: 10, spread: 0.08
+        pellets: 12, spread: 0.08,
+
+        // ★ 新增：移动 / 跳跃散布（霰弹本来就散，这两项几乎为 0）
+        moveSpread: 0.000,    // 走位不影响喷射
+        airSpread: 0.010,     // ★ 跳喷照旧
     },
 
     // ============================================================
@@ -181,34 +188,29 @@ const WEAPONS = {
         zoomFov: 60, scope: false,
         speedMul: 0.85, adsSpeedMul: 0.7,
 
+        // ★ 新增：移动 / 跳跃散布（站桩武器，惩罚重）
+        spread: 0,
+        moveSpread: 0.020,    // 重机枪移动更飘
+        airSpread: 0.090,     // ★ 跳起来扫射 = 浪费子弹
+
         // ============================================================
         // ★★★ 奥丁后坐力配置（站撸激光 · 跑打惩罚重）★★★
-        //
-        //   设计目标：
-        //     · 站立不动时弹道极稳，几乎是一条垂直线
-        //     · 蹲下 / 开镜时形成真正的"活体炮塔"
-        //     · 移动中开火惩罚极重（× 1.90），几乎无法压枪
-        //     · 明确引导玩家"站桩架枪"，而不是像冲锋枪那样跑打
         // ============================================================
         recoil: {
-            // ---- 垂直后坐力（每发小幅稳定上抬）----
-            vertFirst: 0.009,        // 第一发上抬 ≈ 0.52°
-            vertPerShot: 0.0011,     // 每发额外增量
-            vertMax: 0.016,          // 单发上限 ≈ 0.92°
+            vertFirst: 0.009,
+            vertPerShot: 0.0011,
+            vertMax: 0.016,
 
-            // ---- 水平后坐力（前 8 发极小，之后轻微摆动）----
-            horizStart: 8,           // 前 8 发无水平偏移
-            horizMax: 0.0050,        // 最大单发水平偏移 ≈ 0.29°
-            horizSwitchRate: 0.06,   // 方向切换概率
+            horizStart: 8,
+            horizMax: 0.0050,
+            horizSwitchRate: 0.06,
 
-            // ---- 姿态倍率 ----
-            crouchMul: 0.55,         // 蹲下时后坐力 × 0.55
-            adsMul: 0.65,            // 开镜时后坐力 × 0.65
-            moveMul: 1.90,           // ★ 移动中开火 × 1.90（跑打几乎不可控）
+            crouchMul: 0.55,
+            adsMul: 0.65,
+            moveMul: 1.90,
 
-            // ---- 累积偏移上限 ----
-            maxOffsetPitch: 0.24,    // 垂直累积上限 ≈ 13.7°
-            maxOffsetYaw: 0.11,      // 水平累积上限 ≈ 6.3°
+            maxOffsetPitch: 0.24,
+            maxOffsetYaw: 0.11,
         },
     }
 };

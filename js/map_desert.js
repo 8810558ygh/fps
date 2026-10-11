@@ -184,16 +184,18 @@ function createDesertGrassTexture(size = 256){
 }
 
 /* ---------- 干草风摆时间 ---------- */
-// ★ C1：不再单独跑 rAF 循环。
-//   时钟对象保留（grassMat.onBeforeCompile 引用它），
-//   但 value 由 main.js 的 loop() 每帧同步一次。
-//   好处：少一个独立 rAF 调度、与主循环帧对齐、避免双份性能开销。
 const desertGrassTime = { value: 0 };
 
 /* ---------- 注册地图 ---------- */
 registerMap('desert', {
   name: '沙漠',
   hideGround: true,
+
+  // ★ 沙漠地图活动半径（半宽）
+  arenaHalf: 80,
+  // ★ 阴影相机覆盖半径
+  shadowHalf: 80,
+
   terrainHeightFn: desertHeight,
   ambience: {
     background: 0xc19a68,
@@ -373,6 +375,57 @@ registerMap('desert', {
       grass1.instanceMatrix.needsUpdate = true;
       grass2.instanceMatrix.needsUpdate = true;
       currentMapGroup.add(grass1, grass2);
+    }
+
+    // ============================================================
+    // ★ 4. 滑索系统
+    // ============================================================
+    if (typeof window.registerZipline === 'function'
+        && typeof window.buildZiplineTower === 'function'
+        && typeof window.buildZiplineRope === 'function') {
+
+      const TOWER_DIST   = 68;   // 塔距中心的距离
+      const TOWER_HEIGHT = 15;   // 塔顶相对地形的高度
+
+      const towerPositions = [
+        { x: 0,           z: -TOWER_DIST },   // 北
+        { x: TOWER_DIST,  z: 0           },   // 东
+        { x: 0,           z: TOWER_DIST  },   // 南
+        { x: -TOWER_DIST, z: 0           },   // 西
+      ];
+
+      const tops = towerPositions.map(p => {
+        const groundY = desertHeight(p.x, p.z);
+        return {
+          x: p.x,
+          z: p.z,
+          groundY,
+          topY: groundY + TOWER_HEIGHT,
+        };
+      });
+
+      // 建塔
+      for (const t of tops) {
+        window.buildZiplineTower(
+          currentMapGroup,
+          t.x, t.topY, t.z,
+          t.groundY - 2
+        );
+      }
+
+      // 环形连接（4 根绳索）
+      for (let i = 0; i < 4; i++) {
+        const a = tops[i];
+        const b = tops[(i + 1) % 4];
+        window.registerZipline(a.x, a.topY, a.z, b.x, b.topY, b.z);
+      }
+
+      // 建绳索 mesh
+      for (const line of window.ZIPLINES) {
+        window.buildZiplineRope(currentMapGroup, line);
+      }
+
+      console.log('[desert] 滑索系统已部署：4 塔 + 4 绳');
     }
   }
 });

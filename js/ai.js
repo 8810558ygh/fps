@@ -161,10 +161,6 @@ function aiFire(now) {
 
     // ============================================================
     // ★ 射速计算（与 tryFire 保持一致）
-    //   优先级：
-    //     1. 奥丁（spinUpMs）→ 开镜直接满射速，腰射按 spin-up 曲线
-    //     2. 其他武器（如狂徒）→ 开镜时按 adsFireRateMul 缩放
-    //     3. 其余 → 固定 fireMs
     // ============================================================
     let currentFireMs = w.fireMs;
     if (w.spinUpMs && w.minFireMs) {
@@ -181,7 +177,6 @@ function aiFire(now) {
             currentFireMs = Math.max(w.minFireMs, w.fireMs - (w.fireMs - w.minFireMs) * p2.spinUpProgress);
         }
     } else if (p2.aiming && w.adsFireRateMul) {
-        // ★ 通用开镜射速惩罚（与 tryFire 保持一致）
         currentFireMs = currentFireMs / w.adsFireRateMul;
     }
     p2.nextShot = now + currentFireMs;
@@ -204,7 +199,8 @@ function aiFire(now) {
     _aiDir.set(0, 0, -1).applyEuler(_aiEuler);
 
     const pellets = w.pellets || 1;
-    const spread = w.spread || 0;
+    // ★ 加上移动 / 跳跃散布（复用 game_combat.js 里的函数）
+    const spread = (w.spread || 0) + (typeof _getMovementSpread === 'function' ? _getMovementSpread(p2) : 0);
 
     const targets = prepareShotTargets();
     if (now >= p1.deadUntil) {
@@ -214,7 +210,8 @@ function aiFire(now) {
 
     for (let i = 0; i < pellets; i++) {
         _aiRandDir.copy(_aiDir);
-        if (pellets > 1) {
+        // ★ 由 spread 决定是否加散布，单发武器也能生效
+        if (spread > 0) {
             const theta = Math.random() * 2 * Math.PI;
             const phi = Math.acos(1 - Math.random() * (1 - Math.cos(spread)));
             _aiAxis.crossVectors(_aiDir, _aiUp).normalize();
@@ -235,7 +232,6 @@ function aiFire(now) {
             _aiEnd.copy(h.point);
             const part = h.object.userData.part;
             if (part) {
-                // ★ 传入命中距离，支持距离衰减（奥丁 30m 分档）
                 const dmg = _resolveDamage(w, part, h.distance);
 
                 if (!p2.damageDealt[1]) {
@@ -248,7 +244,6 @@ function aiFire(now) {
 
                 spawnSparks(h.point, 0xff5040);
                 damage(p1, dmg, p2);
-                // ★ 空间化：AI 命中玩家
                 emitWorldSound('hit', h.point.x, h.point.y, h.point.z, false);
             } else {
                 spawnSparks(h.point, 0xffd28a);

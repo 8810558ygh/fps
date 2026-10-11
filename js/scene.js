@@ -50,6 +50,10 @@ let currentMapGroup = null;
 let currentMapId = null;
 let currentMapDef = null;
 window.currentMapSpawns = null;
+
+// ★ 新增：当前地图的活动半径（默认等于全局 ARENA）
+window.currentArenaHalf = (typeof ARENA !== 'undefined') ? ARENA : 26;
+
 const MAP_BUILDERS = {};
 
 function registerMap(id, def) {
@@ -286,6 +290,11 @@ function clearMap() {
         window.clearBarrels();
     }
 
+    // ★ 新增：清空滑索注册表
+    if (typeof window.clearZiplines === 'function') {
+        window.clearZiplines();
+    }
+
     _notifyShotTargetsDirty();
 }
 window.clearMap = clearMap;
@@ -324,6 +333,38 @@ function loadMap(mapId) {
         p1: { x: -21, z: -21, yaw: -3 * Math.PI / 4 },
         p2: { x: 21, z: 21, yaw: Math.PI / 4 }
     };
+
+    // ============================================================
+    // ★ 切换当前地图的活动半径
+    // ============================================================
+    window.currentArenaHalf = (typeof def.arenaHalf === 'number')
+        ? def.arenaHalf
+        : ARENA;
+
+    // ============================================================
+    // ★ 按地图调整阴影相机（含动态 far）
+    // ============================================================
+    (function updateShadowCamera() {
+        const baseHalf = (typeof IS_TOUCH !== 'undefined' && IS_TOUCH) ? 35 : 40;
+        const half = (typeof def.shadowHalf === 'number') ? def.shadowHalf : baseHalf;
+
+        sun.shadow.camera.left   = -half;
+        sun.shadow.camera.right  =  half;
+        sun.shadow.camera.top    =  half;
+        sun.shadow.camera.bottom = -half;
+
+        // ★ 动态 far：沙漠覆盖 2.4 倍半径；战场回退 130
+        sun.shadow.camera.far = (typeof def.shadowHalf === 'number')
+            ? half * 2.4
+            : 130;
+
+        sun.shadow.camera.updateProjectionMatrix();
+
+        if (typeof window.requestShadowUpdate === 'function') {
+            window.requestShadowUpdate();
+        }
+    })();
+
     if (typeof p1 !== 'undefined' && p1 && window.currentMapSpawns.p1) {
         p1.spawn.x = window.currentMapSpawns.p1.x;
         p1.spawn.z = window.currentMapSpawns.p1.z;
