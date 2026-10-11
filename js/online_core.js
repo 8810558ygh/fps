@@ -1,11 +1,22 @@
 // ===== js/online_core.js – P2P 联机核心（NET + 座位 + 房间 + 路由 + UI） =====
 
 const ICE_SERVERS = [
+    // 保留 Google STUN 作为基础穿透
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+    // Xirsys 提供的 TURN 中继（替换掉已失效的 openrelay.metered.ca）
+    {
+        username: 'iVhu6xd1fzssTwtLVCDSl1bfyFR0tbp20zbmIPPG-1i7kl79Iljkr5veYYSlbt2QAAAAAGrKT1d4dWFu', // 【替换这里】填入你刷新后的新用户名
+        credential: '1ed8b33e-c4b9-11f1-8719-42684a6cc554', // 【替换这里】填入你刷新后的新密码
+         urls: [
+            "turn:hk-turn1.xirsys.com:80?transport=udp",
+            "turn:hk-turn1.xirsys.com:3478?transport=udp",
+            "turn:hk-turn1.xirsys.com:80?transport=tcp",
+            "turn:hk-turn1.xirsys.com:3478?transport=tcp",
+            "turns:hk-turn1.xirsys.com:443?transport=tcp",
+            "turns:hk-turn1.xirsys.com:5349?transport=tcp"
+        ]
+    }
 ];
 
 const NET = {
