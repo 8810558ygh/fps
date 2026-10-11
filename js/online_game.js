@@ -45,7 +45,6 @@ const _clientPlayerState = {
 };
 
 // 生成 delta payload
-// 返回 { full: bool, data: {...} }
 function _buildPlayerPayload(full, baseline, forceFull) {
     if (forceFull || !baseline) {
         return { full: true, data: full };
@@ -71,7 +70,6 @@ function _buildPlayerPayload(full, baseline, forceFull) {
 }
 
 // 客户端合并 delta → 返回合并后的完整状态
-// 如果没有 baseline 且收到的是增量，返回 null（等下一次全量）
 function _mergeDelta(side, payload) {
     if (!payload) return null;
 
@@ -122,7 +120,7 @@ function handleJoinRequest(fromId, data) {
     broadcast({ type: 'seatUpdate', seats: NET.seats, members: membersArr }, fromId);
     renderRoomUI(); updateOpponentInfo();
 
-    // ★ 有新玩家加入 → 下次广播强制全量（让新客户端尽快拿到 baseline）
+    // ★ 有新玩家加入 → 下次广播强制全量
     _forceFullCounter = 9999;
 }
 
@@ -279,16 +277,51 @@ function enterOnlineGame() {
     _lastRoundNumber = -1;
     _lastConnCount = -1;
 
+    // ★ 新增：重置网络上报缓存
+    NET._lastSentInput = null;
+    NET._lastDrift = 0;
+
     if (NET.isHost) startHostBroadcast();
 }
 window.NET_enterOnlineGame = enterOnlineGame;
 
+// ============================================================
+// ★ 房主广播：rAF 驱动，60Hz
+//   · setInterval 在后台标签页会被节流到 1Hz，改用 rAF 更可靠
+//   · 前台 rAF 天然与显示器刷新对齐
+// ============================================================
+const HOST_BROADCAST_INTERVAL = 16;   // ms
+
 function startHostBroadcast() {
-    if (NET._hostBroadcastTimer) clearInterval(NET._hostBroadcastTimer);
-    NET._hostBroadcastTimer = setInterval(hostBroadcastTick, 33);
+    stopHostBroadcast();
+
+    let lastTick = 0;
+
+    function tick() {
+        if (!NET.isHost || !NET.roomId) {
+            NET._hostBroadcastRaf = null;
+            return;
+        }
+        const now = performance.now();
+        if (now - lastTick >= HOST_BROADCAST_INTERVAL) {
+            lastTick = now;
+            hostBroadcastTick();
+        }
+        NET._hostBroadcastRaf = requestAnimationFrame(tick);
+    }
+
+    NET._hostBroadcastRaf = requestAnimationFrame(tick);
 }
+
 function stopHostBroadcast() {
-    if (NET._hostBroadcastTimer) { clearInterval(NET._hostBroadcastTimer); NET._hostBroadcastTimer = null; }
+    if (NET._hostBroadcastRaf) {
+        cancelAnimationFrame(NET._hostBroadcastRaf);
+        NET._hostBroadcastRaf = null;
+    }
+    if (NET._hostBroadcastTimer) {
+        clearInterval(NET._hostBroadcastTimer);
+        NET._hostBroadcastTimer = null;
+    }
 }
 
 function serializePlayer(p) {
@@ -431,7 +464,7 @@ function handleClientInput(fromId, data) {
 }
 
 // ============================================================
-// ★ 客户端处理房主状态（增量合并版）
+// ★ 客户端处理房主状态（增量合并版 · 客户端位置完全信任本地预测）
 // ============================================================
 function handleHostState(data) {
     if (NET.isHost) return;
@@ -461,24 +494,36 @@ function handleHostState(data) {
                 applyWeaponToPlayer(p1, targetKey, true);
             }
 
+            // ============================================================
+            // ★★★ 关键优化：客户端位置完全信任本地预测 ★★★
+            //   房主只在误差 > 1m（严重不一致 / 传送 / 复活）时硬同步
+            //   小误差不做任何修正，避免把本地预测成果拉回去
+            // ============================================================
             const authX = myData.x, authY = myData.y, authZ = myData.z;
             const dx = authX - p1.pos.x;
             const dy = authY - p1.pos.y;
             const dz = authZ - p1.pos.z;
             const errSq = dx * dx + dy * dy + dz * dz;
 
-            const HARD_RESYNC_SQ = 4.0;
-            const SMOOTH_RATE = 0.25;
+            const HARD_RESYNC_SQ = 1.0;    // 1m
+            NET._lastDrift = Math.sqrt(errSq);
 
             if (errSq > HARD_RESYNC_SQ) {
                 p1.pos.set(authX, authY, authZ);
                 p1.vy = 0;
                 p1.prevY = authY;
-            } else {
-                p1.pos.x += dx * SMOOTH_RATE;
-                p1.pos.y += dy * SMOOTH_RATE;
-                p1.pos.z += dz * SMOOTH_RATE;
+                if (p1._netTargetPos) p1._netTargetPos.set(authX, authY, authZ);
+
+                // 硬同步日志节流（2 秒最多一条）
+                if (typeof console !== 'undefined') {
+                    const nowLog = performance.now();
+                    if (!NET._lastHardSyncLogTime || nowLog - NET._lastHardSyncLogTime > 2000) {
+                        NET._lastHardSyncLogTime = nowLog;
+                        console.log('[net] 客户端位置硬同步，漂移:', NET._lastDrift.toFixed(2), 'm');
+                    }
+                }
             }
+            // else：小误差不做任何位置修正
 
             p1.hp = myData.hp;
             p1.armor = myData.armor;
@@ -560,7 +605,7 @@ function handleHostState(data) {
 
             p2.hp = oppData.hp;
             p2.armor = oppData.armor;
-            p2.score = oppData.score;               // ★ 同步对手分数
+            p2.score = oppData.score;
             p2.baseVisible = oppData.visible;
             p2.height = oppData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
             p2.aiming = !!oppData.aiming;
@@ -650,7 +695,7 @@ function updateSpectatorView(dt) {
     p2.mesh.rotation.y = otherData.yaw;
     p2.hp = otherData.hp;
     p2.armor = otherData.armor;
-    p2.score = otherData.score;                 // ★ 观战视角同步对手分数
+    p2.score = otherData.score;
     p2.baseVisible = otherData.visible;
     p2.height = otherData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
     p2.mesh.scale.y = p2.height / HEIGHT_STAND;
@@ -884,7 +929,6 @@ function handleRoundEvent(data) {
         if (typeof running !== 'undefined' && running
             && typeof endMatch === 'function') {
 
-            // --- 同步最终比分 ---
             if (data.blueScore !== undefined && data.redScore !== undefined
                 && typeof NET !== 'undefined') {
 
@@ -898,7 +942,6 @@ function handleRoundEvent(data) {
                         if (typeof p2 !== 'undefined' && p2) p2.score = data.blueScore;
                     }
                 } else {
-                    // 玩家（客户端）
                     if (NET.mySeat === 'blue') {
                         if (typeof p1 !== 'undefined' && p1) p1.score = data.blueScore;
                         if (typeof p2 !== 'undefined' && p2) p2.score = data.redScore;
@@ -909,7 +952,6 @@ function handleRoundEvent(data) {
                 }
             }
 
-            // --- 判断本地哪个玩家对象是胜方 ---
             let winner = null;
             if (typeof p1 !== 'undefined' && typeof p2 !== 'undefined') {
                 if (p1.score > p2.score) winner = p1;
@@ -918,7 +960,7 @@ function handleRoundEvent(data) {
 
             endMatch(winner);
         }
-        return;   // ★ idle 状态不再往下走 reset 分支
+        return;
     }
 
     if (data.reset) {
@@ -926,10 +968,7 @@ function handleRoundEvent(data) {
         if (typeof clearAllFlashes === 'function') clearAllFlashes();
         if (typeof clearAllBulletHoles === 'function') clearAllBulletHoles();
 
-        // ★ 恢复油桶（与房主 startRound() 里做的事保持一致）
         if (typeof window.resetBarrels === 'function') window.resetBarrels();
-
-        // ★ 清空弹壳（与房主 startRound() 里做的事保持一致）
         if (typeof clearAllShellCasings === 'function') clearAllShellCasings();
 
         if (typeof p1 !== 'undefined' && p1) p1.flashUntil = 0;
@@ -946,6 +985,8 @@ function handleRoundEvent(data) {
         // ★ 回合重置 → 客户端 baseline 也重置，等下一次全量
         _clientPlayerState.blue = null;
         _clientPlayerState.red  = null;
+        // ★ 新增：上报缓存也重置
+        NET._lastSentInput = null;
     }
 }
 
@@ -973,9 +1014,6 @@ window.NET_sendKillEvent = function (killerSeat, victimSeat, round, dmgByKiller,
     });
 };
 
-// ============================================================
-// ★ 支持附带最终比分（比赛结束时由 endMatch 传入）
-// ============================================================
 window.NET_sendRoundEvent = function (gameStateStr, remain, reset, roundNum, extra) {
     if (!NET.isHost) return;
     const packet = {
@@ -992,21 +1030,51 @@ window.NET_sendRoundEvent = function (gameStateStr, remain, reset, roundNum, ext
     broadcast(packet);
 };
 
+// ============================================================
+// ★ 客户端上报（变化检测版 · 60Hz 上报，只在有变化时发送）
+// ============================================================
 window.NET_sendClientInput = function () {
     if (NET.isHost || NET.role !== 'player') return;
     if (!NET.roomId) return;
     if (typeof p1 === 'undefined' || !p1) return;
 
+    const inp = p1.input;
+
+    const hasPending = NET.pendingWeaponSwitch || NET.pendingReload
+        || NET.pendingFuseStart || NET.pendingFuseRelease
+        || NET.pendingMelee;
+
+    // ★ 变化检测：与上次发送的状态比较
+    const last = NET._lastSentInput;
+    const changed = !last
+        || last.f !== inp.forward || last.r !== inp.right
+        || last.j !== inp.jump || last.c !== inp.crouch
+        || last.fire !== inp.fire || last.aim !== inp.aim
+        || Math.abs(last.yaw   - p1.yaw)   > 0.0008
+        || Math.abs(last.pitch - p1.pitch) > 0.0008
+        || last.aimStage !== p1.aimStage
+        || hasPending;
+
+    if (!changed) return;
+
+    NET._lastSentInput = {
+        f: inp.forward, r: inp.right,
+        j: inp.jump,    c: inp.crouch,
+        fire: inp.fire, aim: inp.aim,
+        yaw: p1.yaw, pitch: p1.pitch,
+        aimStage: p1.aimStage
+    };
+
     sendToHost({
         type: 'clientInput',
         seq: NET.inputSeq++,
         input: {
-            forward: p1.input.forward,
-            right: p1.input.right,
-            jump: p1.input.jump,
-            crouch: p1.input.crouch,
-            fire: p1.input.fire,
-            aim: p1.input.aim
+            forward: inp.forward,
+            right: inp.right,
+            jump: inp.jump,
+            crouch: inp.crouch,
+            fire: inp.fire,
+            aim: inp.aim
         },
         yaw: p1.yaw,
         pitch: p1.pitch,

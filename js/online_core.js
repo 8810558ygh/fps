@@ -4,11 +4,14 @@ const ICE_SERVERS = [
     // 保留 Google STUN 作为基础穿透
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    // Xirsys 提供的 TURN 中继（替换掉已失效的 openrelay.metered.ca）
+    // ★ 新增：两个备用公共 STUN，提高打洞成功率
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.nextcloud.com:443' },
+    // Xirsys 提供的 TURN 中继
     {
-        username: 'iVhu6xd1fzssTwtLVCDSl1bfyFR0tbp20zbmIPPG-1i7kl79Iljkr5veYYSlbt2QAAAAAGrKT1d4dWFu', // 【替换这里】填入你刷新后的新用户名
-        credential: '1ed8b33e-c4b9-11f1-8719-42684a6cc554', // 【替换这里】填入你刷新后的新密码
-         urls: [
+        username: 'iVhu6xd1fzssTwtLVCDSl1bfyFR0tbp20zbmIPPG-1i7kl79Iljkr5veYYSlbt2QAAAAAGrKT1d4dWFu',
+        credential: '1ed8b33e-c4b9-11f1-8719-42684a6cc554',
+        urls: [
             "turn:hk-turn1.xirsys.com:80?transport=udp",
             "turn:hk-turn1.xirsys.com:3478?transport=udp",
             "turn:hk-turn1.xirsys.com:80?transport=tcp",
@@ -53,7 +56,12 @@ const NET = {
     _heartbeatTimer: null,
     _pingTimer: null,
     _hostBroadcastTimer: null,
-    _assignedPeers: new Set()
+    _hostBroadcastRaf: null,          // ★ 新增：rAF 驱动广播
+    _assignedPeers: new Set(),
+    _lastSentInput: null,             // ★ 新增：上报变化检测缓存
+    _lastDrift: 0,                    // ★ 新增：客户端位置漂移量（调试）
+    _lastHardSyncLogTime: 0,          // ★ 新增：硬同步日志节流
+    connType: null                    // ★ 新增：'p2p' / 'relay' / 'host'
 };
 window.NET = NET;
 
@@ -132,6 +140,46 @@ function updateOpponentInfo() {
     }
 }
 window.NET_updateOpponentInfo = updateOpponentInfo;
+
+// ============================================================
+// ★ 连接类型检测：区分 P2P 直连 / TURN 中继
+// ============================================================
+function detectConnectionType(conn) {
+    if (!conn || !conn.peerConnection) return;
+
+    setTimeout(() => {
+        const pc = conn.peerConnection;
+        if (!pc || typeof pc.getStats !== 'function') return;
+
+        pc.getStats().then(stats => {
+            let relay = false, p2p = false, host = false;
+
+            stats.forEach(report => {
+                if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                    const local  = stats.get(report.localCandidateId);
+                    const remote = stats.get(report.remoteCandidateId);
+                    if (!local || !remote) return;
+
+                    if (local.candidateType === 'relay' || remote.candidateType === 'relay') relay = true;
+                    else if (local.candidateType === 'srflx' || remote.candidateType === 'srflx') p2p = true;
+                    else host = true;
+                }
+            });
+
+            NET.connType = relay ? 'relay' : (p2p ? 'p2p' : (host ? 'host' : 'unknown'));
+            console.log('[NET] 连接类型:', NET.connType);
+
+            if (relay) {
+                const el = document.getElementById('onlineHint');
+                if (el) {
+                    el.textContent = '⚠️ 使用 TURN 中继连接，延迟可能偏高（建议切换网络环境）';
+                    el.style.color = '#ffd24a';
+                }
+            }
+        }).catch(e => console.warn('[NET] getStats 失败:', e));
+    }, 2000);
+}
+window.detectConnectionType = detectConnectionType;
 
 function setSeatYouTag(elId, show) {
     const el = document.getElementById(elId);
@@ -361,8 +409,6 @@ function handleRoomMessage(fromId, data) {
             break;
 
         // ★ 刀痕（房主 → 客户端）
-        //   · isVertical = false / undefined → 水平刀痕（轻击）
-        //   · isVertical = true              → 垂直刀痕（重击）
         case 'slashMark':
             if (!NET.isHost && typeof spawnSlashMark === 'function') {
                 spawnSlashMark(
@@ -479,6 +525,7 @@ function createRoom() {
     });
     NET.peer.on('connection', (conn) => {
         NET.connections.set(conn.peer, { conn, lastSeen: Date.now() });
+        conn.on('open', () => detectConnectionType(conn));   // ★ 新增
         conn.on('data', (d) => handleRoomMessage(conn.peer, d));
         conn.on('close', () => {
             NET.connections.delete(conn.peer);
@@ -521,6 +568,7 @@ function joinRoom(roomCode) {
             conn.send({ type: 'joinRequest', myId: NET.myPeerId, name: NET.myName });
             startHeartbeat();
             startPingLoop();
+            detectConnectionType(conn);   // ★ 新增
         });
         conn.on('data', (d) => handleRoomMessage(NET.roomId, d));
         conn.on('close', () => { NET.connections.delete(NET.roomId); toast('与房主断开连接'); });
@@ -572,6 +620,13 @@ window.leaveOnlineRoom = function () {
     NET.pendingMeleeHeavy = false;
     NET.tick = 0;
     NET._assignedPeers.clear();
+    // ★ 新增：清理网络优化字段
+    NET._lastSentInput = null;
+    NET._lastDrift = 0;
+    NET._lastHardSyncLogTime = 0;
+    NET.connType = null;
+    NET._hostBroadcastRaf = null;
+
     if (NET._heartbeatTimer) { clearInterval(NET._heartbeatTimer); NET._heartbeatTimer = null; }
     if (NET._pingTimer) { clearInterval(NET._pingTimer); NET._pingTimer = null; }
     stopHostBroadcast();

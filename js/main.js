@@ -386,10 +386,15 @@ function updateP2ShadowState() {
     p2.mesh.traverse(o => { if (o.isMesh) o.castShadow = cast; });
 }
 
+// ============================================================
+// ★ 远端玩家插值（固定时间常数 · 帧率无关 · 抗抖动）
+// ============================================================
 function interpolateRemotePlayer(p, dt) {
     if (!p || !p._netTargetPos) return;
 
-    const k = Math.min(1, dt * 22);
+    // k = 1 - exp(-18·dt)，τ ≈ 55ms，帧率无关
+    const k = 1 - Math.exp(-18 * dt);
+    const kYaw = 1 - Math.exp(-22 * dt);
 
     p.pos.x += (p._netTargetPos.x - p.pos.x) * k;
     p.pos.y += (p._netTargetPos.y - p.pos.y) * k;
@@ -398,7 +403,7 @@ function interpolateRemotePlayer(p, dt) {
     let dyaw = p._netTargetYaw - p.yaw;
     while (dyaw >  Math.PI) dyaw -= Math.PI * 2;
     while (dyaw < -Math.PI) dyaw += Math.PI * 2;
-    p.yaw += dyaw * k;
+    p.yaw += dyaw * kYaw;
 
     p.mesh.position.copy(p.pos);
     p.mesh.rotation.y = p.yaw;
@@ -441,7 +446,8 @@ function collectLocalInput(p) {
 }
 
 let _lastClientReportTime = 0;
-const CLIENT_REPORT_INTERVAL = 33;
+// ★ 33 → 16（60Hz 上报；变化检测在 NET_sendClientInput 里，空包不发）
+const CLIENT_REPORT_INTERVAL = 16;
 
 function loop() {
     requestAnimationFrame(loop);
@@ -490,7 +496,7 @@ function loop() {
             if (typeof NET_updateSpectatorView === 'function') NET_updateSpectatorView(dt);
         }
 
-        // ★ 只处理 AI 模式（'range' 分支已删除）
+        // ★ 只处理 AI 模式
         if (gameMode === 'ai' && typeof aiUpdate === 'function') {
             aiUpdate(dt, now);
         }
@@ -542,6 +548,29 @@ function loop() {
     updateFpsCounter(performance.now());
 }
 loop();
+
+// ============================================================
+// ★ 网络诊断接口（控制台调用 dumpNetStats()）
+// ============================================================
+window.dumpNetStats = function () {
+    const s = {
+        ping: NET.ping,
+        connType: NET.connType || 'unknown',
+        role: NET.role || '-',
+        isHost: NET.isHost,
+        reportInterval: (typeof CLIENT_REPORT_INTERVAL !== 'undefined') ? CLIENT_REPORT_INTERVAL : '-',
+        broadcastInterval: (typeof HOST_BROADCAST_INTERVAL !== 'undefined') ? HOST_BROADCAST_INTERVAL : '-',
+        clientDrift: NET._lastDrift ? NET._lastDrift.toFixed(3) + 'm' : '-',
+        connCount: NET.connections.size
+    };
+    console.table(s);
+    if (s.connType === 'relay') {
+        console.warn('%c⚠️ 当前使用 TURN 中继，延迟高的主要原因是走了中转服务器', 'color:#ffd24a;font-weight:bold;');
+    } else if (s.connType === 'p2p') {
+        console.log('%c✅ P2P 直连，网络条件良好', 'color:#6ee7b7;font-weight:bold;');
+    }
+    return s;
+};
 
 window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -653,7 +682,6 @@ function enterGame(mode) {
 }
 window.enterGame = enterGame;
 
-// ★ 靶场按钮已删除
 document.getElementById('lobbyAiBtn').addEventListener('click', () => enterGame('ai'));
 
 document.getElementById('lobbyOnlineBtn').addEventListener('click', () => {
