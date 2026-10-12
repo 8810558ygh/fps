@@ -13,8 +13,7 @@ function updateEffects(dt, now) {
             sparks.splice(i, 1);
         }
     }
-    if (p1.muzzle.intensity > 0) p1.muzzle.intensity = Math.max(0, p1.muzzle.intensity - 14 * dt);
-    if (p1.vmMuzzle.intensity > 0) p1.vmMuzzle.intensity = Math.max(0, p1.vmMuzzle.intensity - 14 * dt);
+    if (p1.muzzle && p1.muzzle.intensity > 0) p1.muzzle.intensity = Math.max(0, p1.muzzle.intensity - 14 * dt);
     if (p2.muzzle && p2.muzzle.intensity > 0) p2.muzzle.intensity = Math.max(0, p2.muzzle.intensity - 14 * dt);
 
     updateSmokes(dt, now);
@@ -106,6 +105,15 @@ function resetPlayer(p, now) {
     p.stunUntil        = 0;
     p.vulnerableUntil  = 0;
 
+    // ★ 清掉易伤 3D 光晕
+    if (p.vulnIndicator) {
+        p.vulnIndicator.visible = false;
+        const _vs = p.vulnIndicator.userData.sphere;
+        const _vc = p.vulnIndicator.userData.core;
+        if (_vs) _vs.material.opacity = 0;
+        if (_vc) _vc.material.opacity = 0;
+    }
+
     if (p.recoil) {
         p.recoil.offsetPitch = 0;
         p.recoil.offsetYaw = 0;
@@ -146,6 +154,18 @@ function startRound(now) {
     if (typeof clearAllShellCasings === 'function') clearAllShellCasings();
 
     resetPlayer(p1, now);
+
+    // ============================================================
+    // ★ 生存模式：不重置 p2，直接启动 SurvivalState
+    //   · 生存模式有自己的波次准备阶段（PREP_MS）
+    //   · gameState 直接设为 'combat'，让玩家能立刻开枪
+    // ============================================================
+    if (gameMode === 'survival') {
+        if (typeof startSurvivalMode === 'function') startSurvivalMode();
+        gameState = 'combat';
+        return;
+    }
+
     resetPlayer(p2, now);
 
     if (gameMode === 'ai' && typeof aiResetRound === 'function') aiResetRound(now);

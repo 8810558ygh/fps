@@ -14,23 +14,55 @@
         0 6px 16px rgba(0, 0, 0, 0.7);
 }
 
+/* ============================================================
+   ★ 改动 1：联机大厅覆盖层 —— 全屏背景 + 光晕
+   ============================================================ */
 #onlineLobbyOverlay {
     display: none;
     z-index: 58;
     background: radial-gradient(ellipse at center, #16263a 0%, #08131f 75%);
 }
 
+/* ★ 新增：全屏背景光晕，呼应大厅视觉，避免背景太空 */
+#onlineLobbyOverlay::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 900px; height: 900px;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle,
+        rgba(107, 179, 255, 0.15) 0%,
+        rgba(107, 179, 255, 0) 60%);
+    pointer-events: none;
+    animation: lobbyPulse 5s ease-in-out infinite;
+}
+
+/* ============================================================
+   ★ 改动 2：房间面板 —— 从"居中小卡片"改成"全屏铺满"
+   ============================================================ */
 .online-room-panel {
-    width: min(920px, 92vw);
-    max-height: 92vh;
+    position: relative;
+    width: 100%;
+    height: 100vh;
+    max-height: 100vh;
     overflow-y: auto;
-    background: rgba(13, 19, 30, 0.94);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 20px;
-    padding: 28px 32px;
-    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.85);
+
+    /* ★ 卡片特征全部去掉 */
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+
+    /* ★ 内容水平垂直居中铺满 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 24px;
+
     text-align: center;
 }
+
 .online-room-header h2 {
     font-size: 28px;
     color: #ffd24a;
@@ -108,8 +140,10 @@
     margin-bottom: 30px;
     flex-wrap: wrap;
 }
+
+/* ★ 改动 3：输入框略放大，宽屏更饱满 */
 #onlineJoinInput {
-    width: 240px;
+    width: min(320px, 40vw);
     padding: 14px 20px;
     font-size: 20px;
     font-family: Consolas, monospace;
@@ -158,8 +192,10 @@
     margin-bottom: 24px;
     flex-wrap: wrap;
 }
+
+/* ★ 改动 4：座位卡片放大，宽屏上更有存在感 */
 .seat-card {
-    width: 200px;
+    width: min(280px, 22vw);
     padding: 18px 16px;
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.05);
@@ -307,16 +343,17 @@
 }
 
 @media (pointer: coarse) {
-    .online-room-panel { padding: 20px 18px; }
+    /* ★ 移动端：保留全屏，但内边距收紧 */
+    .online-room-panel { padding: 20px 16px; }
     .online-room-header h2 { font-size: 22px; }
     .room-code-display { font-size: 24px; padding: 6px 18px; letter-spacing: 4px; }
-    .seat-card { width: 160px; padding: 14px 12px; }
+    .seat-card { width: min(160px, 42vw); padding: 14px 12px; }
     .seat-avatar { width: 46px; height: 46px; font-size: 18px; }
     .seat-name { font-size: 14px; }
     .seat-vs { font-size: 22px; }
     .online-start-btn, .online-leave-btn { font-size: 15px !important; padding: 10px 26px !important; }
     .online-create-btn { font-size: 17px !important; padding: 14px 44px !important; }
-    #onlineJoinInput { width: 180px; font-size: 17px; padding: 12px 14px; }
+    #onlineJoinInput { width: min(180px, 46vw); font-size: 17px; padding: 12px 14px; }
     .online-join-btn { font-size: 16px !important; padding: 12px 28px !important; }
     .online-my-role { font-size: 13px; padding: 6px 16px; }
     .online-my-role .my-role-value { font-size: 15px; }

@@ -1,9 +1,7 @@
 // ===== js/main_entry.js – 大厅入口 / enterGame / 退出 / 地图选择 =====
-// 从 main.js 拆出，不改变任何对外接口
-// 依赖：main.js 的 renderer / getDesiredPixelRatio；main_input.js 的 enterFullscreenAndLock
 
 // ============================================================
-// 退出到大厅（仅单机模式）
+// 退出到大厅
 // ============================================================
 function exitToLobby() {
     audio();
@@ -11,6 +9,11 @@ function exitToLobby() {
     running = false;
     gameState = 'idle';
     if (typeof setOver === 'function') setOver(true);
+
+    if (typeof gameMode !== 'undefined' && gameMode === 'survival'
+        && typeof stopSurvivalMode === 'function') {
+        stopSurvivalMode();
+    }
 
     if (document.pointerLockElement) document.exitPointerLock();
 
@@ -80,12 +83,11 @@ document.getElementById('exitBtn').addEventListener('click', (e) => {
 });
 
 // ============================================================
-// 开始游戏入口
+// 开始游戏
 // ============================================================
 function enterGame(mode) {
     audio();
 
-    // ★ 新增：如果从设置面板直接开始，先关闭设置面板
     if (typeof window.SETTINGS_Close === 'function') window.SETTINGS_Close();
 
     if (!window.getCurrentMapId() && window.loadMap) {
@@ -93,10 +95,7 @@ function enterGame(mode) {
     }
     window.GAME_setMode(mode);
 
-    // ★ 人机对战：每次进入默认开启 AI
-    if (mode === 'ai') {
-        aiEnabled = true;
-    }
+    if (mode === 'ai') aiEnabled = true;
 
     p2.gunHolder.visible = (mode === 'ai' || mode === 'online');
     document.getElementById('lobbyOverlay').style.display = 'none';
@@ -110,20 +109,31 @@ function enterGame(mode) {
 window.enterGame = enterGame;
 
 // ============================================================
-// Lobby 按钮
+// ★ 生存模式入口
+//   —— loading 已加载战场图，这里只负责切模式 + 开始
 // ============================================================
-// ★ 人机对战按钮的 click 由 loading.js 的 installLobbyHooks() 统一绑定：
-//   它会把按钮克隆后重新挂上 beginSinglePlayerLoading('ai')，
-//   走"加载进度页 → enterGame"的完整流程。
-//
-//   这里【不要】再绑一次，否则：
-//     · 当前加载顺序下，此处绑的是被 cloneNode 替换掉的废弃节点
-//       （不报错，但监听器永远收不到点击 —— 隐蔽的坑）
-//     · 一旦加载顺序变化（比如给本文件加 defer），会和 loading.js 的监听器
-//       并存于同一个按钮上 → 点击触发两次：
-//         enterGame('ai') 立即进游戏 + beginSinglePlayerLoading('ai') 又启动加载
-//
-//   联机按钮不经过 loading 劫持，仍在此处绑定。
+function enterSurvival() {
+    audio();
+    if (typeof window.SETTINGS_Close === 'function') window.SETTINGS_Close();
+
+    // ★ 不再判断 getCurrentMapId / loadMap —— loading 已经强制加载了 battlefield
+    window.GAME_setMode('survival');
+
+    document.getElementById('lobbyOverlay').style.display = 'none';
+
+    const exitBtn = document.getElementById('exitBtn');
+    if (exitBtn) exitBtn.style.display = 'block';
+
+    resetMatch();   // startRound → startSurvivalMode
+    enterFullscreenAndLock();
+}
+window.enterSurvival = enterSurvival;
+
+// ============================================================
+// Lobby 按钮
+//   · lobbyAiBtn / lobbySurvivalBtn：由 loading.js 的 installLobbyHooks() 劫持
+//   · lobbyOnlineBtn：走自己的逻辑
+// ============================================================
 document.getElementById('lobbyOnlineBtn').addEventListener('click', () => {
     audio();
     document.getElementById('lobbyOverlay').style.display = 'none';

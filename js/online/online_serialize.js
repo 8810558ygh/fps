@@ -8,7 +8,8 @@ const HIGH_FREQ_FIELDS = [
     'reloadRemain', 'boltRemain', 'equipRemain',
     'meleeEndRemain', 'meleeRecoveryRemain',
     'throwFuseActive', 'throwFuseEndRemain',
-    'flashRemain'
+    'flashRemain',
+    'vulnerableRemain'          // ★ 新增：易伤剩余时间（对手端用来显示紫光）
 ];
 
 const LOW_FREQ_FIELDS = [
@@ -171,6 +172,9 @@ function serializePlayer(p, out) {
     out.throwFuseEndRemain = p.throwFuseActive ? Math.max(0, p.throwFuseEnd - now) : 0;
     out.throwFuseInHand = !!p.throwFuseInHand;
     out.flashRemain = p.flashUntil > now ? (p.flashUntil - now) : 0;
+
+    // ★ 新增：易伤剩余时间
+    out.vulnerableRemain = p.vulnerableUntil > now ? (p.vulnerableUntil - now) : 0;
 
     const zip = p.zipline;
     out.ziplineActive  = !!(zip && zip.active);

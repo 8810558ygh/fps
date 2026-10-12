@@ -7,6 +7,17 @@
 // ============================================================
 function damage(victim, dmg, from) {
     if (gameState !== 'combat') return;
+
+    // ============================================================
+    // ★ 僵尸分支：走僵尸专用伤害逻辑
+    // ============================================================
+    if (victim && victim._isZombie) {
+        if (typeof damageZombie === 'function') {
+            damageZombie(victim, dmg, from);
+        }
+        return;
+    }
+
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) return;
     const now = performance.now();
     if (victim.hp <= 0) return;
@@ -29,7 +40,50 @@ function damage(victim, dmg, from) {
         }
     }
 
-    if (victim.hp <= 0) kill(victim, from, now);
+    if (victim.hp <= 0) {
+        // ============================================================
+        // ★ 生存模式：玩家血量归零 → 进入"倒下"状态
+        //
+        //   关键点：
+        //     · 必须把 deadUntil 设为 Infinity
+        //       updatePlayer() 里 `if (now < p.deadUntil) return;`
+        //       才能拦住输入 → 不能再开枪/移动
+        //     · baseVisible = false → 隐藏第三人称模型
+        //     · 清 input → 保证这一帧后续也不会误触发
+        //
+        //   然后调一次 checkSurvivalDefeat()（事件驱动），
+        //   由它判断是否"全员倒下"，只有全员倒下才进失败流程
+        // ============================================================
+        if (gameMode === 'survival') {
+            victim.hp = 0;
+            victim.deadUntil = Infinity;
+            victim.baseVisible = false;
+            victim.aiming = false;
+            victim.aimStage = 0;
+
+            // 清空玩家输入
+            if (victim.input) {
+                victim.input.aim     = false;
+                victim.input.fire    = false;
+                victim.input.jump    = false;
+                victim.input.crouch  = false;
+                victim.input.forward = 0;
+                victim.input.right   = 0;
+            }
+
+            // 本地玩家：清鼠标状态
+            if (victim.id === 1 && typeof mouse !== 'undefined') {
+                mouse.leftDown = false;
+                mouse.aim = false;
+            }
+
+            if (typeof checkSurvivalDefeat === 'function') {
+                checkSurvivalDefeat();
+            }
+            return;
+        }
+        kill(victim, from, now);
+    }
 }
 
 // ============================================================
@@ -45,7 +99,6 @@ function kill(victim, from, now) {
     victim.hp = 0;
     victim.deadUntil = Infinity;
 
-    // ★ 死亡时清理滑索/硬直/易伤状态
     if (victim.zipline && victim.zipline.active) {
         victim.zipline.active = false;
     }

@@ -1,4 +1,4 @@
-// ===== js/hud_effects.js – 硬直 / 易伤 视觉反馈 =====
+// ===== js/hud_effects.js – 硬直 / 易伤 / 闪光指示器 =====
 // 从 hud.js 拆出，不改变任何对外接口
 
 let _stunOverlayEl = null;
@@ -60,7 +60,6 @@ function updateStunUI(p, now) {
         const alpha = Math.min(1, remain / 1000) * 0.9;
         el.style.opacity = String(alpha);
 
-        // 只在硬直期间显示中心提示（复用 hud.js 的 H 缓存）
         const h = (typeof H !== 'undefined') ? H[1] : null;
         if (h && h.center) {
             h.center.textContent = `落地受伤 · ${(remain / 1000).toFixed(1)}s`;
@@ -71,7 +70,7 @@ function updateStunUI(p, now) {
 }
 
 // ============================================================
-// ★★★ 易伤视觉反馈（紫色脉冲 + 顶部倒计时）★★★
+// ★★★ 易伤视觉反馈（本地 HUD：紫色脉冲 + 顶部倒计时）★★★
 // ============================================================
 function ensureVulnOverlay() {
     if (_vulnOverlayEl) return _vulnOverlayEl;
@@ -105,7 +104,7 @@ window.onVulnerableStart = function (now) {
     if (typeof sEmpty === 'function') sEmpty(1);
 };
 
-// 每帧更新易伤视觉
+// 每帧更新易伤 HUD（仅本地玩家）
 function updateVulnUI(p, now) {
     const el = ensureVulnOverlay();
     if (!el) return;
@@ -148,3 +147,85 @@ function updateVulnUI(p, now) {
         if (tipEl) tipEl.style.display = 'none';
     }
 }
+
+// ============================================================
+// ★★★ 易伤 3D 视觉：紫色光晕（对所有玩家生效，用于看对手）★★★
+//
+//   · 只在"易伤状态 + 活着 + 可见"时显示
+//   · 无 PointLight（避免 shader 重编译）
+// ============================================================
+function updateVulnIndicator(p, now) {
+    if (!p || !p.vulnIndicator) return;
+
+    const active = p.vulnerableUntil > now
+        && p.baseVisible
+        && p.hp > 0
+        && p.deadUntil <= now;
+
+    if (active) {
+        if (!p.vulnIndicator.visible) p.vulnIndicator.visible = true;
+
+        const remain = p.vulnerableUntil - now;
+        const t = Math.min(1, remain / 3000);
+        const pulse = 0.7 + 0.3 * Math.sin(now * 0.008);
+
+        const sphere = p.vulnIndicator.userData.sphere;
+        const core   = p.vulnIndicator.userData.core;
+
+        if (sphere) {
+            sphere.material.opacity = 0.32 * t * pulse;
+            const s = 1 + 0.06 * Math.sin(now * 0.01);
+            sphere.scale.setScalar(s);
+        }
+        if (core) {
+            core.material.opacity = 0.14 * t * pulse;
+            const s = 1 + 0.10 * Math.sin(now * 0.014 + 1.3);
+            core.scale.setScalar(s);
+        }
+    } else if (p.vulnIndicator.visible) {
+        p.vulnIndicator.visible = false;
+    }
+}
+
+function updateVulnIndicators(now) {
+    if (typeof p1 !== 'undefined' && p1) updateVulnIndicator(p1, now);
+    if (typeof p2 !== 'undefined' && p2) updateVulnIndicator(p2, now);
+}
+window.updateVulnIndicators = updateVulnIndicators;
+
+// ============================================================
+// ★★★ 闪光指示器（★ 删掉 fiLight 后，只更新球体透明度）★★★
+// ============================================================
+function updateFlashIndicators(now) {
+    if (typeof p1 === 'undefined' || typeof p2 === 'undefined') return;
+
+    for (const p of [p1, p2]) {
+        if (!p || !p.flashIndicator) continue;
+
+        const isFlashed = p.flashUntil > now
+            && p.baseVisible
+            && p.hp > 0
+            && p.deadUntil <= now;
+
+        if (isFlashed) {
+            const remain = p.flashUntil - now;
+            const total = FLASH.flashDurationMs;
+            const t = Math.max(0, Math.min(1, remain / total));
+
+            p.flashIndicator.visible = true;
+
+            const pulse = 1 + Math.sin(now * 0.012) * 0.12;
+            p.flashIndicator.scale.setScalar(pulse);
+
+            const sphere = p.flashIndicator.userData.sphere;
+            const halo   = p.flashIndicator.userData.halo;
+            // ★ fiLight 已删除
+
+            if (sphere) sphere.material.opacity = 0.85 * t;
+            if (halo)   halo.material.opacity   = 0.45 * t;
+        } else if (p.flashIndicator.visible) {
+            p.flashIndicator.visible = false;
+        }
+    }
+}
+window.updateFlashIndicators = updateFlashIndicators;

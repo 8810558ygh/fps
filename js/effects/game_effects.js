@@ -44,3 +44,4 @@ function muzzleWorld(p, out) {
     }
     return out.set(0.28, -0.2, -1.25).applyMatrix4(p.cam.matrixWorld);
 }
+window.muzzleWorld = muzzleWorld;

@@ -176,6 +176,13 @@ function handleHostState(data) {
                 p2.flashUntil = 0;
             }
 
+            // ★ 新增：同步对手的易伤状态（用于显示 p2 身上的紫光）
+            if (oppData.vulnerableRemain > 0) {
+                p2.vulnerableUntil = now + oppData.vulnerableRemain;
+            } else {
+                p2.vulnerableUntil = 0;
+            }
+
             p2.reloadEnd = oppData.reloadRemain > 0 ? now + oppData.reloadRemain : 0;
             p2.boltEnd   = oppData.boltRemain > 0   ? now + oppData.boltRemain   : 0;
             p2.meleeEnd  = oppData.meleeEndRemain > 0 ? now + oppData.meleeEndRemain : 0;

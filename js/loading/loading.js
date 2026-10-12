@@ -1,15 +1,4 @@
-// ===== js/loading.js – 深度预加载（UI 层 + 单机入口） =====
-//
-// 拆分说明：
-//   · loading_warmup.js —— 所有 warmup* 预热函数（音频 / 纹理 / shader / 武器 / 特效 / 物理 / HUD）
-//   · loading_tasks.js  —— buildGameLoadTasks 任务表
-//   · loading_online.js —— 联机加载同步 + onlineStartGame hook
-//
-// 本文件保留：
-//   · UI 层（进度条 / 玩家列表 / 任务执行器）
-//   · 单机入口 beginSinglePlayerLoading
-//   · Lobby 按钮劫持
-//   · window.LoadingManager 对外接口
+// ===== js/loading.js – 深度预加载（UI 层 + 单机入口 + 切地图加载） =====
 
 (function () {
     'use strict';
@@ -39,9 +28,7 @@
         players: {},
     };
 
-    // ============================================================
-    // 基础 UI
-    // ============================================================
+    // ---------- UI 基础 ----------
     function show(title) {
         state.active = true;
         state.progress = 0;
@@ -171,6 +158,8 @@
 
     // ============================================================
     // 单机入口
+    //   · mode 'ai'       → 用大厅选的地图
+    //   · mode 'survival' → 强制 battlefield（不受大厅地图选择影响）
     // ============================================================
     async function beginSinglePlayerLoading(mode) {
         if (typeof audio === 'function') audio();
@@ -178,11 +167,19 @@
         const ll = document.getElementById('lobbyOverlay');
         if (ll) ll.style.display = 'none';
 
-        show('正在载入人机对战');
+        const isSurvival = (mode === 'survival');
+        show(isSurvival ? '正在载入生存模式' : '正在载入人机对战');
 
-        const mapId = (window.getCurrentMapId && window.getCurrentMapId()) || 'battlefield';
+        // ★ 生存模式强制从战场图开始
+        let mapId;
+        if (isSurvival) {
+            mapId = 'battlefield';
+        } else {
+            mapId = (window.getCurrentMapId && window.getCurrentMapId()) || 'battlefield';
+        }
+
         const tasks = (typeof window.buildGameLoadTasks === 'function')
-            ? window.buildGameLoadTasks(mapId)
+            ? window.buildGameLoadTasks(mapId, mode)
             : [];
         await runTasks(tasks);
 
@@ -191,14 +188,49 @@
 
         hide();
 
-        if (typeof window.enterGame === 'function') {
-            window.enterGame(mode);
+        if (isSurvival) {
+            if (typeof window.enterSurvival === 'function') {
+                window.enterSurvival();
+            } else {
+                console.warn('[loading] enterSurvival 未定义');
+            }
+        } else {
+            if (typeof window.enterGame === 'function') {
+                window.enterGame(mode);
+            }
         }
     }
 
     // ============================================================
-    // Lobby 按钮劫持（去掉旧的事件监听，重新绑定）
+    // ★ 切地图加载（生存模式传送门 → 按 F → 切下一张图）
+    //
+    //   · 弹出 loading 页
+    //   · 只跑轻量任务：清理 + 加载新地图 + 上传纹理 + 编译 shader
+    //   · 完成后调用 onComplete()
     // ============================================================
+    async function beginMapSwitchLoading(mapId, onComplete) {
+        if (typeof audio === 'function') audio();
+
+        show('正在进入下一区域');
+
+        const tasks = (typeof window.buildMapSwitchTasks === 'function')
+            ? window.buildMapSwitchTasks(mapId)
+            : [];
+        await runTasks(tasks);
+
+        await nextFrame();
+        await nextFrame();
+
+        hide();
+
+        if (typeof onComplete === 'function') {
+            try { onComplete(); } catch (e) {
+                console.warn('[loading] onComplete 出错:', e);
+            }
+        }
+    }
+
+    // ---------- Lobby 按钮劫持 ----------
     function hijackClick(id, handler) {
         const old = document.getElementById(id);
         if (!old) return;
@@ -209,11 +241,10 @@
 
     function installLobbyHooks() {
         hijackClick('lobbyAiBtn', () => beginSinglePlayerLoading('ai'));
+        hijackClick('lobbySurvivalBtn', () => beginSinglePlayerLoading('survival'));
     }
 
-    // ============================================================
-    // 对外暴露
-    // ============================================================
+    // ---------- 对外暴露 ----------
     window.LoadingManager = {
         show,
         hide,
@@ -227,10 +258,11 @@
     };
 
     window.beginSinglePlayerLoading = beginSinglePlayerLoading;
+    window.beginMapSwitchLoading = beginMapSwitchLoading;   // ★ 新增
 
     function init() {
         installLobbyHooks();
-        console.log('[loading] UI 层 + 单机入口已就绪');
+        console.log('[loading] UI 层 + 单机入口 + 切地图入口已就绪');
     }
 
     if (document.readyState === 'loading') {

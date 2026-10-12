@@ -22,7 +22,6 @@ function tryFire(p, now) {
     p.ammo--;
 
     // ★ 射速计算已抽到 combat_shared.js 的 _computeFireInterval
-    //   —— 与 ai.js 的 aiFire 共用同一份逻辑
     const currentFireMs = _computeFireInterval(p, w, now);
     p.nextShot = now + currentFireMs;
     p.lastShotTime = now;
@@ -42,8 +41,7 @@ function tryFire(p, now) {
         case 'odin':    emitWorldSound('odin',    p.pos.x, _fxEyeY, p.pos.z, _fxIsSelf); break;
         default:        emitWorldSound('rifle',   p.pos.x, _fxEyeY, p.pos.z, _fxIsSelf); break;
     }
-    p.muzzle.intensity = 2.2;
-    if (p.id === 1) p.vmMuzzle.intensity = 2.2;
+    if (p.muzzle) p.muzzle.intensity = 2.2;
 
     if (typeof window.spawnShellCasing === 'function') {
         window.spawnShellCasing(p, now);
@@ -86,11 +84,29 @@ function tryFire(p, now) {
     const pellets = w.pellets || 1;
     const spread = (w.spread || 0) + _getMovementSpread(p);
 
+    // ============================================================
+    // ★ targets 拼装
+    //   · 生存模式：加所有存活僵尸的 hitMeshes
+    //   · 其他模式：加 p2（对手）的 hitMeshes
+    // ============================================================
     const targets = prepareShotTargets();
     const o = other(p);
-    if (now >= o.deadUntil) {
-        const parts = getPlayerHitMeshes(o);
-        for (let i = 0; i < parts.length; i++) targets.push(parts[i]);
+
+    if (gameMode === 'survival') {
+        if (typeof getAllZombies === 'function') {
+            const zombies = getAllZombies();
+            for (let zi = 0; zi < zombies.length; zi++) {
+                const z = zombies[zi];
+                if (!z.alive) continue;
+                const zParts = z.hitMeshes;
+                for (let pi = 0; pi < zParts.length; pi++) targets.push(zParts[pi]);
+            }
+        }
+    } else {
+        if (now >= o.deadUntil) {
+            const parts = getPlayerHitMeshes(o);
+            for (let i = 0; i < parts.length; i++) targets.push(parts[i]);
+        }
     }
 
     const isOnlineHost = (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost);
@@ -132,7 +148,34 @@ function tryFire(p, now) {
                 emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
             } else {
                 const part = h.object.userData.part;
-                if (part) {
+
+                // ============================================================
+                // ★ 命中僵尸
+                //   · 部位映射：zombie_head → head，zombie_leg → leg，其他 → body
+                //   · 走 damageZombie()，不走玩家的 damage()/护甲/复活
+                // ============================================================
+                if (part && part.startsWith('zombie_')) {
+                    const zombie = h.object.userData.zombieRef;
+                    if (zombie && zombie.alive) {
+                        const dmgPart = (part === 'zombie_head') ? 'head'
+                                      : (part === 'zombie_leg')  ? 'leg'
+                                      : 'body';
+                        const dmg = _resolveDamage(w, dmgPart, h.distance);
+
+                        if (typeof damageZombie === 'function') {
+                            damageZombie(zombie, dmg, p);
+                        }
+
+                        spawnSparks(h.point, 0xff5040);
+                        if (p.id === 1) {
+                            hitmark(p);
+                        }
+                        emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
+                    }
+                } else if (part) {
+                    // ============================================================
+                    // ★ 命中玩家（原有逻辑）
+                    // ============================================================
                     const rawDmg = _resolveDamage(w, part, h.distance);
 
                     // ★ 应用易伤（在 _addDamage 之前，保证统计一致）
@@ -170,6 +213,7 @@ function tryFire(p, now) {
                 NET_broadcast({
                     type: 'shootEvent',
                     weapon: w.key,
+                    shooter: (p === p1) ? 'p1' : 'p2',
                     sx: mw.x, sy: mw.y, sz: mw.z,
                     ex: _rcEnd.x, ey: _rcEnd.y, ez: _rcEnd.z
                 });

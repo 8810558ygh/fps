@@ -28,11 +28,12 @@
     -webkit-user-select: none;
     -webkit-tap-highlight-color: transparent;
 }
+/* ★ 去掉 rotate(45deg)，只保留上浮 + 高亮，与军械库按钮一致 */
 #settingsBtn:hover {
     color: #ffd24a;
     border-color: rgba(255, 210, 74, 0.6);
     background: rgba(255, 210, 74, 0.08);
-    transform: translateY(-2px) rotate(45deg);
+    transform: translateY(-2px);
 }
 #settingsBtn:active {
     transform: translateY(0) scale(0.95);

@@ -3,6 +3,9 @@
 // 依赖：online_serialize.js 提供 _clientPlayerState / _lastLowFreqBlue / _lastLowFreqRed
 
 function handleShootEvent(data) {
+    // ============================================================
+    // 近战事件（knife_light / knife_heavy）
+    // ============================================================
     if (data.weapon === 'knife_light' || data.weapon === 'knife_heavy') {
         const isHeavy = data.weapon === 'knife_heavy';
         if (typeof sMelee === 'function') sMelee(isHeavy);
@@ -14,6 +17,29 @@ function handleShootEvent(data) {
         return;
     }
 
+    // ============================================================
+    // ★ 修复重复弹道：
+    //
+    //   房主广播 shootEvent 时带的 shooter 字段：
+    //     'p1' → 房主自己开的枪 → 客户端应显示 tracer
+    //     'p2' → 客户端（= 我）开的枪 → 客户端本地已经 spawnTracer 过，
+    //            收到房主回传的广播时必须跳过，否则会画两条弹道
+    //
+    //   注意：这个字段是新加的，如果收到老版本（无 shooter）的广播，
+    //         走下面的兜底逻辑按"正常显示"处理（宁可重复也不漏掉对方开枪）
+    // ============================================================
+    if (data.shooter === 'p2') {
+        // 这是客户端自己开的枪：
+        //   · tracer 已在本地 tryFire 的 client 分支里 spawn 过
+        //   · 音效也已在本地 emitWorldSound 播过
+        //   · p2 的枪口光更新也不必要（p2 是房主的模型，不是我）
+        // → 直接跳过，避免重复
+        return;
+    }
+
+    // ============================================================
+    // 房主开的枪（shooter === 'p1' 或未定义）
+    // ============================================================
     if (typeof p2 !== 'undefined' && p2) {
         if (p2.muzzle) p2.muzzle.intensity = 2.2;
         if (typeof spawnTracer === 'function'
@@ -25,12 +51,20 @@ function handleShootEvent(data) {
         }
     }
 
-    switch (data.weapon) {
-        case 'sniper': sShootSniper(2); break;
-        case 'shotgun': sShootShotgun(2); break;
-        case 'odin': sShootOdin(2); break;
-        default: sShootRifle(2); break;
-    }
+    // ★ 音效
+    //   房主开枪时，房主侧的 emitWorldSound('rifle', ..., isSelf=false)
+    //   已经通过 worldSound 广播把空间化音效发过来了，客户端会走
+    //   handleRemoteWorldSound 播放。
+    //
+    //   这里的 2D 音效（sShootRifle(2)）是早期遗留代码，与空间化系统
+    //   冲突（永远播到右声道）。所以保留注释，不再播放。
+    //
+    // switch (data.weapon) {
+    //     case 'sniper': sShootSniper(2); break;
+    //     case 'shotgun': sShootShotgun(2); break;
+    //     case 'odin': sShootOdin(2); break;
+    //     default: sShootRifle(2); break;
+    // }
 }
 
 function getPlayerNameBySeat(seat) {
@@ -53,13 +87,7 @@ function handleKillEvent(data) {
     //       emitWorldSound('death', ...) / emitWorldSound('kill', ...)
     //     广播了【空间化】的击杀/死亡音效，客户端会通过
     //     handleRemoteWorldSound 收到并定位播放。
-    //   · 这里再调 sKill(1) / sDeath() 有两个问题：
-    //       1) 它俩只接受"声道号"，最终落到 masterGain[1]（pan = -0.6），
-    //          永远偏左，不跟随声源位置 —— 与空间音频系统冲突；
-    //       2) 客户端作为受害者时会和房主广播的音效【重复播放】。
-    //
-    // 删除后，联机击杀音效统一由 emitWorldSound 负责，
-    // 客户端作为击杀者/受害者/旁观者都能听到正确空间化的音效。
+    //   · 这里再调 sKill(1) / sDeath() 会重复播放。
     // ============================================================
 
     const mySeat     = NET.mySeat;

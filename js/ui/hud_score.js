@@ -27,6 +27,9 @@ function showScorePanel() {
     if (typeof running === 'undefined' || !running) return;
     if (typeof isOver === 'function' && isOver()) return;
 
+    // ★ 生存模式：没有战绩，直接禁用
+    if (typeof gameMode !== 'undefined' && gameMode === 'survival') return;
+
     _scorePanelVisible = true;
     _scorePanelEl.classList.add('visible');
     _updateScorePanelContent();
@@ -121,6 +124,8 @@ function _tickScorePanel() {
     if (!_scorePanelEl) return;
     if (typeof running === 'undefined' || !running) { hideScorePanel(); return; }
     if (typeof isOver === 'function' && isOver()) { hideScorePanel(); return; }
+    // ★ 生存模式：强制关闭
+    if (typeof gameMode !== 'undefined' && gameMode === 'survival') { hideScorePanel(); return; }
     _updateScorePanelContent();
 }
 

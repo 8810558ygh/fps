@@ -44,6 +44,7 @@ const colliders = [];
 window.platforms = [];
 
 // ★ C3：路灯 PointLight 列表
+//   ★ 优化后：不再往里添加任何 light（保留数组本身，兼容 main_loop.js 的遍历）
 window.lampLights = [];
 
 let currentMapGroup = null;
@@ -216,6 +217,19 @@ function addCar(x, z, col, ry) {
 
 // ============================================================
 // 路灯
+//
+//   ★ 性能优化：不再创建 PointLight
+//
+//     原因：three.js 使用 forward rendering，每个材质的 shader 里
+//           都有 `for (int i = 0; i < NUM_POINT_LIGHTS; i++)` 的循环，
+//           NUM_POINT_LIGHTS 是编译时常量，等于"当前场景里可见的
+//           PointLight 数量"。
+//           而路灯的 PointLight 是按距离动态显隐的（main_loop.js 里
+//           每帧根据距离改 L.visible），一旦某个路灯显隐切换，
+//           就会触发全局 shader 重编译 → 卡顿。
+//
+//     视觉：灯头本身用 emissive 材质表现"亮着"，从远处看依然是
+//           亮黄的路灯。视觉损失很小，收益很大。
 // ============================================================
 const _lampPoleGeo = new THREE.CylinderGeometry(0.09, 0.12, 4.4, 8);
 _lampPoleGeo._shared = true;
@@ -227,23 +241,25 @@ let _lampHeadMat = null;
 function addLamp(x, z) {
     if (!_lampPoleMat) {
         _lampPoleMat = new THREE.MeshLambertMaterial({ color: 0x3a3f46 });
-        _lampHeadMat = new THREE.MeshLambertMaterial({ color: 0xffd9a0, emissive: 0xffc070, emissiveIntensity: 0.9 });
+        _lampHeadMat = new THREE.MeshLambertMaterial({
+            color: 0xffd9a0,
+            emissive: 0xffc070,
+            // ★ 从 0.9 调到 1.4，弥补没有真实光的损失
+            emissiveIntensity: 1.4,
+        });
     }
     const pole = new THREE.Mesh(_lampPoleGeo, _lampPoleMat);
     pole.position.set(x, 2.2, z);
     pole.castShadow = true;
     const head = new THREE.Mesh(_lampHeadGeo, _lampHeadMat);
     head.position.set(x, 4.35, z);
-    const light = new THREE.PointLight(0xffd9a0, 0.85, 15);
-    light.position.set(x, 4.1, z);
     if (currentMapGroup) {
         currentMapGroup.add(pole);
         currentMapGroup.add(head);
-        currentMapGroup.add(light);
     } else {
-        scene.add(pole, head, light);
+        scene.add(pole, head);
     }
-    window.lampLights.push(light);
+    // ★ 不再创建 PointLight，也不再 push 到 lampLights
 }
 
 function addFloatingSlab(x, z, w, h, d, y, tex) {
@@ -282,7 +298,7 @@ function clearMap() {
     colliders.length = 0;
     window.platforms.length = 0;
 
-    // ★ C3：清空路灯列表
+    // ★ 清空路灯列表（现在永远是空数组，保留兼容）
     window.lampLights.length = 0;
 
     // ★ 清空油桶注册表

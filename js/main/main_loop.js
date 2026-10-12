@@ -108,6 +108,16 @@ function interpolateRemotePlayer(p, dt) {
 // 渲染一帧
 // ============================================================
 function render() {
+    // ============================================================
+    // ★ 军械库优先：打开时用主 renderer 渲染军械库的 scene/camera
+    // ============================================================
+    if (typeof window.Armory !== 'undefined'
+        && typeof window.Armory.isOpen === 'function'
+        && window.Armory.isOpen()) {
+        window.Armory.render();
+        return;
+    }
+
     updateP2ShadowState();
 
     p1.mesh.visible = false;
@@ -149,7 +159,6 @@ function collectLocalInput(p) {
 // 客户端上报节流
 // ============================================================
 let _lastClientReportTime = 0;
-// ★ 33 → 16（60Hz 上报；变化检测在 NET_sendClientInput 里，空包不发）
 const CLIENT_REPORT_INTERVAL = 16;
 
 // ============================================================
@@ -160,7 +169,6 @@ function loop() {
     const dt = Math.min(clock.getDelta(), 0.05);
     const now = performance.now();
 
-    // ★ 每帧同步音频监听器到相机位置（HRTF 听声辨位）
     if (typeof updateAudioListener === 'function') updateAudioListener();
 
     if (typeof desertGrassTime !== 'undefined') desertGrassTime.value = now / 1000;
@@ -205,6 +213,16 @@ function loop() {
         // ★ 只处理 AI 模式
         if (gameMode === 'ai' && typeof aiUpdate === 'function') {
             aiUpdate(dt, now);
+        }
+
+        // ★ 生存模式 tick
+        if (gameMode === 'survival' && typeof survivalTick === 'function') {
+            survivalTick(dt, now);
+        }
+
+        // ★ 传送门动画（仅生存模式）
+        if (gameMode === 'survival' && typeof updateSurvivalPortal === 'function') {
+            updateSurvivalPortal(dt, now);
         }
 
         // 物理步进 + 同步

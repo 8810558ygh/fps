@@ -192,6 +192,8 @@ window.getPlayerHitMeshes = getPlayerHitMeshes;
 
 // ============================================================
 // makePlayer
+//
+//   ★ 性能优化：删除了 vmMuzzle 和 fiLight 两个 PointLight
 // ============================================================
 function makePlayer(id, color, spawn, weaponKey) {
     const mat = new THREE.MeshLambertMaterial({ color, transparent: true });
@@ -260,6 +262,8 @@ function makePlayer(id, color, spawn, weaponKey) {
     // ---- 武器挂点 ----
     const gunHolder = new THREE.Group();
     gunHolder.position.set(0.26, 1.28, -0.42);
+
+    // ★ 保留 muzzle：第三人称枪口光
     const light = new THREE.PointLight(0xffcc66, 0, 9);
     light.position.set(0.26, 1.3, -0.85);
 
@@ -271,6 +275,9 @@ function makePlayer(id, color, spawn, weaponKey) {
         gunHolder, light
     );
 
+    // ============================================================
+    // 闪光指示器（★ 删掉了 fiLight）
+    // ============================================================
     const flashIndicator = new THREE.Group();
     flashIndicator.position.set(0, 1.69, -0.28);
     flashIndicator.visible = false;
@@ -300,19 +307,59 @@ function makePlayer(id, color, spawn, weaponKey) {
     fiHalo.castShadow = false;
     flashIndicator.add(fiHalo);
 
-    const fiLight = new THREE.PointLight(0xffffff, 0, 8);
-    fiLight.position.set(0, 0, 0);
-    flashIndicator.add(fiLight);
-
     flashIndicator.userData.sphere = fiSphere;
     flashIndicator.userData.halo   = fiHalo;
-    flashIndicator.userData.light  = fiLight;
 
     g.add(flashIndicator);
+
+    // ============================================================
+    // ★ 易伤指示器（紫色球壳 + 内核，无 PointLight）
+    // ============================================================
+    const vulnIndicator = new THREE.Group();
+    vulnIndicator.position.set(0, 1.0, 0);
+    vulnIndicator.visible = false;
+
+    const vulnSphereMat = new THREE.MeshBasicMaterial({
+        color: 0xaa44ff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+    });
+    const vulnSphere = new THREE.Mesh(
+        new THREE.SphereGeometry(1.05, 20, 14),
+        vulnSphereMat
+    );
+    vulnSphere.renderOrder = 97;
+    vulnSphere.castShadow = false;
+    vulnIndicator.add(vulnSphere);
+
+    const vulnCoreMat = new THREE.MeshBasicMaterial({
+        color: 0xcc66ff,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+    });
+    const vulnCore = new THREE.Mesh(
+        new THREE.SphereGeometry(0.72, 16, 12),
+        vulnCoreMat
+    );
+    vulnCore.renderOrder = 98;
+    vulnCore.castShadow = false;
+    vulnIndicator.add(vulnCore);
+
+    vulnIndicator.userData.sphere = vulnSphere;
+    vulnIndicator.userData.core   = vulnCore;
+
+    g.add(vulnIndicator);
 
     g.traverse(o => { if (o.isMesh) o.castShadow = true; });
     fiSphere.castShadow = false;
     fiHalo.castShadow = false;
+    vulnSphere.castShadow = false;
+    vulnCore.castShadow = false;
     scene.add(g);
 
     const cam = new THREE.PerspectiveCamera(BASE_FOV, window.innerWidth / window.innerHeight, 0.1, 250);
@@ -320,13 +367,11 @@ function makePlayer(id, color, spawn, weaponKey) {
     scene.add(cam);
     const vm = new THREE.Group();
     cam.add(vm);
-    const vmMuzzle = new THREE.PointLight(0xffcc66, 0, 7);
-    vmMuzzle.position.set(0.28, -0.18, -1.3);
-    cam.add(vmMuzzle);
 
     const p = {
-        id, mesh: g, mat, muzzle: light, gunHolder, cam, vm, vmMuzzle,
+        id, mesh: g, mat, muzzle: light, gunHolder, cam, vm,
         flashIndicator,
+        vulnIndicator,
 
         head,
         body,

@@ -143,6 +143,7 @@ function collideWorld(p) {
 
 function collidePlayers() {
     if (gameMode === 'online') return;
+    if (gameMode === 'survival') return;   // ★ 生存模式跳过（p2 隐藏了，僵尸与玩家不互推）
     const dx = p2.pos.x - p1.pos.x, dz = p2.pos.z - p1.pos.z;
     const d2 = dx * dx + dz * dz;
     if (d2 < 0.64 && d2 > 1e-6) {
@@ -184,17 +185,12 @@ function updateFootsteps(p, dt, now, isRemote) {
 
         // ============================================================
         // ★ 主动脱离滑索后落地 → 1s 硬直 + 3s 易伤
-        //   ★ 联机客户端：落地时才上报 vulnerableStart 给房主
-        //     —— 让房主端 p2.vulnerableUntil 和客户端 p1.vulnerableUntil 时间戳对齐
         // ============================================================
         if (p._zipStunPending) {
             p._zipStunPending = false;
-            p.stunUntil       = now + 1000;    // 1s 硬直
-            p.vulnerableUntil = now + 3000;    // 3s 易伤（伤害 ×2）
+            p.stunUntil       = now + 1000;
+            p.vulnerableUntil = now + 3000;
 
-            // ★ 联机客户端：落地时上报硬直/易伤给房主
-            //   房主收到后立即设置 p2.stunUntil / p2.vulnerableUntil
-            //   → 房主端 damage(p2, ...) 会正确翻倍
             if (p.id === 1
                 && typeof gameMode !== 'undefined' && gameMode === 'online'
                 && typeof NET !== 'undefined'
@@ -205,7 +201,6 @@ function updateFootsteps(p, dt, now, isRemote) {
                 };
             }
 
-            // 硬直音效
             if (p.id === 1) {
                 if (typeof sLandingSelf === 'function') sLandingSelf(1.5);
             } else {
@@ -217,7 +212,6 @@ function updateFootsteps(p, dt, now, isRemote) {
                 }
             }
 
-            // ★ 本地视觉反馈
             if (p.id === 1 && typeof window.onStunStart === 'function') {
                 window.onStunStart(now);
             }

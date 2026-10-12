@@ -75,21 +75,6 @@ function _addDamage(p, targetId, part, dmg) {
 // ============================================================
 // ★ 射速计算（tryFire / aiFire 共用）
 //   —— 支持"奥丁转管预热"和"开镜射速倍率"
-//
-//   参数：
-//     p   —— 玩家对象（使用 p.aiming / p.lastShotTime / p.spinUpProgress）
-//     w   —— 武器配置（使用 w.fireMs / w.spinUpMs / w.minFireMs / w.adsFireRateMul）
-//     now —— 当前时间戳（performance.now()）
-//
-//   返回：
-//     本次射击后，距离下一次可射击的毫秒数
-//
-//   行为：
-//     · 若 w 有 spinUpMs 和 minFireMs（奥丁），
-//       开镜 → 直接峰值射速；否则按距上次射击的间隔累积预热进度
-//     · 否则若开镜且 w 有 adsFireRateMul（如狂徒开镜 0.9×），
-//       按倍率调整射速
-//     · 两者都不满足 → 直接用 w.fireMs
 // ============================================================
 function _computeFireInterval(p, w, now) {
     let ms = w.fireMs;

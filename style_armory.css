@@ -1,0 +1,326 @@
+/* ===== style_armory.css – 军械库 ===== */
+
+/* ---------- 大厅入口按钮（放设置左边） ---------- */
+#armoryBtn {
+    position: absolute;
+    top: 24px;
+    right: 80px;
+    z-index: 5;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #cfe0f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+#armoryBtn:hover {
+    color: #ffd24a;
+    border-color: rgba(255, 210, 74, 0.6);
+    background: rgba(255, 210, 74, 0.08);
+    transform: translateY(-2px);
+}
+#armoryBtn:active {
+    transform: translateY(0) scale(0.95);
+}
+#armoryBtn svg { pointer-events: none; }
+
+@media (pointer: coarse) {
+    #armoryBtn {
+        top: 16px;
+        right: 62px;
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+    }
+    #armoryBtn svg { width: 19px; height: 19px; }
+}
+
+/* ---------- 军械库全屏页 ---------- */
+#armoryOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: none;
+    flex-direction: column;
+    background: transparent;
+}
+
+body.armory-open #hud1,
+body.armory-open #timer,
+body.armory-open #fpsCounter,
+body.armory-open #minimap,
+body.armory-open #exitBtn,
+body.armory-open #aiToggle,
+body.armory-open #opponentInfo,
+body.armory-open #chatBox,
+body.armory-open #mobile-controls {
+    display: none !important;
+}
+
+/* ---------- 顶部栏 ---------- */
+.armory-topbar {
+    display: grid;
+    grid-template-columns: 200px 1fr 200px;
+    align-items: center;
+    padding: 16px 28px;
+    background: rgba(8, 13, 20, 0.75);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    flex-shrink: 0;
+}
+
+.armory-back-btn {
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    color: #cfe0f0;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+.armory-back-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 210, 74, 0.5);
+    color: #ffd24a;
+    transform: translateX(-2px);
+}
+.armory-back-btn .arrow { font-size: 16px; line-height: 1; }
+
+.armory-title {
+    text-align: center;
+    font-size: 22px;
+    letter-spacing: 10px;
+    color: #ffd24a;
+    font-weight: 700;
+    text-shadow: 0 2px 16px rgba(255, 210, 74, 0.35);
+    margin: 0;
+}
+
+.armory-topbar-spacer {
+    justify-self: end;
+}
+
+/* ---------- Tab 栏 ---------- */
+.armory-tabs {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    padding: 18px 28px 6px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.armory-tab {
+    position: relative;
+    padding: 10px 26px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    color: #cfe0f0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.18s;
+    font-family: inherit;
+}
+.armory-tab:hover {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 210, 74, 0.4);
+    color: #ffe9a8;
+    transform: translateY(-1px);
+}
+.armory-tab.active {
+    background: linear-gradient(180deg, rgba(255, 210, 74, 0.9), rgba(240, 169, 46, 0.9));
+    color: #08131f;
+    border-color: #ffd24a;
+    box-shadow: 0 4px 18px rgba(255, 210, 74, 0.45);
+}
+
+/* ---------- 主体区（左皮肤栏 + 右视口） ---------- */
+.armory-body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* ---------- 3D 视口（拖拽区） ---------- */
+.armory-viewport {
+    flex: 1;
+    position: relative;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+.armory-viewport:active {
+    cursor: grabbing;
+}
+
+.armory-hint {
+    position: absolute;
+    left: 50%;
+    bottom: 34px;
+    transform: translateX(-50%);
+    padding: 6px 18px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 20px;
+    color: #9fb2c8;
+    font-size: 12px;
+    letter-spacing: 2px;
+    pointer-events: none;
+    user-select: none;
+}
+
+/* ============================================================
+   ★ 左侧皮肤栏 —— 无背景框，直接浮在场景上
+   ============================================================ */
+.armory-skins {
+    width: 200px;
+    flex-shrink: 0;
+    padding: 18px 14px;
+    overflow-y: auto;
+}
+
+/* 滚动条 */
+.armory-skins::-webkit-scrollbar { width: 6px; }
+.armory-skins::-webkit-scrollbar-track { background: transparent; }
+.armory-skins::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.25);
+    border-radius: 3px;
+}
+.armory-skins::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.42);
+}
+
+/* ★ 标题文字 + 分割线提亮 */
+.armory-skins-title {
+    font-size: 13px;
+    color: #ffffff;
+    letter-spacing: 5px;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.55);
+    text-align: center;
+    text-shadow:
+        0 0 8px rgba(255, 255, 255, 0.5),
+        0 1px 4px rgba(0, 0, 0, 0.85);
+    font-weight: 700;
+}
+
+.armory-skins-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* 皮肤条目 */
+.armory-skin-item {
+    position: relative;
+    padding: 11px 16px;
+    background: rgba(10, 18, 28, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    color: #cfe0f0;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 14px;
+    letter-spacing: 1px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+.armory-skin-item:hover {
+    background: rgba(20, 32, 46, 0.85);
+    border-color: rgba(255, 210, 74, 0.5);
+    color: #ffe9a8;
+    transform: translateX(2px);
+}
+.armory-skin-item.active {
+    background: linear-gradient(180deg,
+        rgba(255, 210, 74, 0.28),
+        rgba(240, 169, 46, 0.14));
+    border-color: #ffd24a;
+    color: #ffd24a;
+    font-weight: 700;
+    box-shadow:
+        0 0 0 1px rgba(255, 210, 74, 0.4),
+        0 4px 16px rgba(255, 210, 74, 0.28);
+}
+.armory-skin-item.active::before {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 60%;
+    background: #ffd24a;
+    border-radius: 3px 0 0 3px;
+    box-shadow: 0 0 8px rgba(255, 210, 74, 0.8);
+}
+
+.armory-skin-empty {
+    padding: 14px 12px;
+    text-align: center;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.6);
+    letter-spacing: 1px;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+
+/* ---------- 移动端 ---------- */
+@media (pointer: coarse) {
+    .armory-topbar {
+        grid-template-columns: 130px 1fr 50px;
+        padding: 10px 14px;
+    }
+    .armory-title { font-size: 16px; letter-spacing: 5px; }
+    .armory-back-btn { padding: 8px 14px; font-size: 12px; letter-spacing: 1px; }
+    .armory-back-btn .arrow { font-size: 14px; }
+    .armory-tabs { padding: 12px 14px 4px; gap: 6px; }
+    .armory-tab { padding: 8px 14px; font-size: 12px; letter-spacing: 1px; }
+    .armory-hint { font-size: 11px; bottom: 20px; padding: 4px 12px; }
+
+    .armory-skins {
+        width: 120px;
+        padding: 12px 8px;
+    }
+    .armory-skins-title {
+        font-size: 12px;
+        letter-spacing: 3px;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom-width: 2px;
+    }
+    .armory-skin-item {
+        padding: 9px 10px;
+        font-size: 12px;
+        letter-spacing: 0;
+    }
+    .armory-skin-empty { font-size: 11px; padding: 10px 6px; }
+}

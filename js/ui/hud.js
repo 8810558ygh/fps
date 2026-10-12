@@ -1,7 +1,4 @@
 // ===== js/hud.js – HUD DOM 缓存 + 工具函数 + 主 HUD 更新 =====
-// 回合结算 → hud_report.js
-// TAB 战绩 / AI 开关 / TAB 键 → hud_score.js
-// 硬直 / 易伤视觉反馈 → hud_effects.js
 
 function q(s) { return document.querySelector(s); }
 
@@ -31,28 +28,14 @@ const _crossEl   = q('#hud1 .cross');
 const _adsRetEl  = document.getElementById('adsReticle');
 
 const _hudState = {
-    score: -1,
-    hp: -1,
-    armor: -1,
-    armorColor: '',
-    ammoHtml: '',
-    wtagText: '',
-    scopeDisplay: '',
-    timerText: '',
-    timerColor: '',
-    crossOpacity: '',
-    adsRetDisplay: '',
-    cdDisplay: '',
-    hintDisplay: '',
-    cdIcon: '',
-    cdLabel: '',
-    cdTime: '',
-    cdTimeColor: '',
+    score: -1, hp: -1, armor: -1, armorColor: '',
+    ammoHtml: '', wtagText: '', scopeDisplay: '',
+    timerText: '', timerColor: '', timerBg: '',
+    crossOpacity: '', adsRetDisplay: '',
+    cdDisplay: '', hintDisplay: '',
+    cdIcon: '', cdLabel: '', cdTime: '', cdTimeColor: '',
 };
 
-// ============================================================
-// 反馈工具（feed / centerMsg / dmgFlash / hitmark）
-// ============================================================
 function feed(p, html) {
     if (p.id !== 1) return;
     const d = document.createElement('div');
@@ -87,23 +70,18 @@ function hitmark(p) {
     el.classList.add('pop');
 }
 
-// ============================================================
-// 缓存式 DOM 更新工具
-// ============================================================
 function _setText(el, val, cacheKey) {
     if (!el) return;
     if (_hudState[cacheKey] === val) return;
     el.textContent = val;
     _hudState[cacheKey] = val;
 }
-
 function _setHtml(el, val, cacheKey) {
     if (!el) return;
     if (_hudState[cacheKey] === val) return;
     el.innerHTML = val;
     _hudState[cacheKey] = val;
 }
-
 function _setStyle(el, prop, val, cacheKey) {
     if (!el) return;
     if (_hudState[cacheKey] === val) return;
@@ -159,7 +137,6 @@ function updateHUD(now) {
         }
         ammoHtml = ammoText + ` <span class="rsv">/ ${p.reserve}</span>`;
         wtagText = p.weapon.name;
-
         const tips = [];
         if (p.smokeCharges > 0 && gameState === 'combat') tips.push(`💨${p.smokeCharges}`);
         if (p.flashCharges > 0 && gameState === 'combat') tips.push(`⚡${p.flashCharges}`);
@@ -172,16 +149,11 @@ function updateHUD(now) {
         if (running && gameState === 'combat' && p.throwFuseActive && p.throwFuseType) {
             const remain = Math.max(0, p.throwFuseEnd - now);
             const isSmoke = (p.throwFuseType === 'smoke');
-
             _setText(_cdIconEl,  isSmoke ? '💨' : '⚡', 'cdIcon');
             _setText(_cdLabelEl, isSmoke ? '烟雾倒计时' : '闪光倒计时', 'cdLabel');
             _setText(_cdTimeEl,  (remain / 1000).toFixed(1) + 's', 'cdTime');
             _setStyle(_cdTimeEl, 'color', remain > 0 ? '#ffd24a' : '#7ee08a', 'cdTimeColor');
-
-            if (_hudState.cdDisplay !== 'flex') {
-                _cdEl.style.display = 'flex';
-                _hudState.cdDisplay = 'flex';
-            }
+            if (_hudState.cdDisplay !== 'flex') { _cdEl.style.display = 'flex'; _hudState.cdDisplay = 'flex'; }
         } else if (_hudState.cdDisplay !== 'none') {
             _cdEl.style.display = 'none';
             _hudState.cdDisplay = 'none';
@@ -196,21 +168,66 @@ function updateHUD(now) {
         _hudState.scopeDisplay = scopeDisplay;
     }
 
-    if (running && gameState === 'prep') {
+    // ============================================================
+    // ★ 顶部 timer
+    // ============================================================
+    const isSurvival = (running
+        && typeof gameMode !== 'undefined' && gameMode === 'survival'
+        && typeof SurvivalState !== 'undefined' && SurvivalState.active);
+
+    if (isSurvival) {
+        let svText = '';
+        let svColor = '#fff';
+        const svBg = 'rgba(70, 15, 15, 0.72)';
+
+        const mapName = (SurvivalState.mapIndex === 0) ? '战场' : '沙漠';
+
+        if (SurvivalState.phase === 'prep') {
+            const remain = Math.max(0, (SurvivalState.prepEndTime - now) / 1000);
+            svText = `🧟 ${mapName} · 准备 ${remain.toFixed(1)}s`;
+            svColor = '#ffd24a';
+        } else if (SurvivalState.phase === 'wave') {
+            const alive = (typeof getZombiesAliveCount === 'function')
+                ? getZombiesAliveCount() : 0;
+            svText = `${mapName} · 第 ${SurvivalState.wave} / ${SurvivalState.maxWaves} 波 · 🧟 ${alive}`;
+            svColor = '#7ee08a';
+        } else if (SurvivalState.phase === 'portal') {
+            svText = `✨ 传送门已开启 · 前往中央高台`;
+            svColor = '#66ffee';
+        } else if (SurvivalState.phase === 'loading') {
+            svText = `📍 正在进入下一区域...`;
+            svColor = '#66ffee';
+        } else if (SurvivalState.phase === 'victory') {
+            svText = '🎉 通 关 ！';
+            svColor = '#ffd24a';
+        } else if (SurvivalState.phase === 'defeat') {
+            svText = '💀 失 败';
+            svColor = '#ff7a6d';
+        } else {
+            svText = '生存模式';
+            svColor = '#fff';
+        }
+
+        _setText(_timerEl, svText, 'timerText');
+        _setStyle(_timerEl, 'color', svColor, 'timerColor');
+        _setStyle(_timerEl, 'background', svBg, 'timerBg');
+
+    } else if (running && gameState === 'prep') {
         const remain = Math.max(0, (stateEndTime - now) / 1000);
         _setText(_timerEl, `准备 ${remain.toFixed(1)}s`, 'timerText');
         _setStyle(_timerEl, 'color', '#ffd24a', 'timerColor');
+        _setStyle(_timerEl, 'background', 'rgba(0, 0, 0, 0.45)', 'timerBg');
     } else {
         const left = Math.max(0, MATCH_MS - (now - matchStart));
         const mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);
         _setText(_timerEl, `${mm}:${String(ss).padStart(2, '0')}`, 'timerText');
         _setStyle(_timerEl, 'color', '#fff', 'timerColor');
+        _setStyle(_timerEl, 'background', 'rgba(0, 0, 0, 0.45)', 'timerBg');
         if (running && left <= 0) endMatch(p1.score === p2.score ? null : (p1.score > p2.score ? p1 : p2));
     }
 
     const hintDisplay = (
-        running
-        && gameState === 'prep'
+        running && gameState === 'prep'
         && document.pointerLockElement !== renderer.domElement
         && !isOver()
     ) ? 'block' : 'none';
@@ -237,22 +254,11 @@ function updateHUD(now) {
         _hudState.adsRetDisplay = adsRetDisplay;
     }
 
-    // ★ 拆分后：这两项现在来自 hud_score.js，加 typeof 保护
     if (typeof _tickScorePanel === 'function') _tickScorePanel();
     if (typeof _updateAiToggleUI === 'function') _updateAiToggleUI();
-
-    // ★ 滑索 UI 提示
-    if (typeof updateZiplinePrompt === 'function') {
-        updateZiplinePrompt(p);
-    }
-
-    // ★ 硬直视觉反馈（来自 hud_effects.js）
-    if (typeof updateStunUI === 'function') {
-        updateStunUI(p, now);
-    }
-
-    // ★ 易伤视觉反馈（来自 hud_effects.js）
-    if (typeof updateVulnUI === 'function') {
-        updateVulnUI(p, now);
-    }
+    if (typeof updateZiplinePrompt === 'function') updateZiplinePrompt(p);
+    if (typeof updateSurvivalPortalPrompt === 'function') updateSurvivalPortalPrompt();
+    if (typeof updateStunUI === 'function') updateStunUI(p, now);
+    if (typeof updateVulnUI === 'function') updateVulnUI(p, now);
+    if (typeof updateVulnIndicators === 'function') updateVulnIndicators(now);
 }

@@ -3,14 +3,7 @@ const keys = {};
 const mouse = { aim: false, leftDown: false };
 
 // ============================================================
-// ★ 安全访问 NET —— 避免加载顺序变化时 NET 未定义直接报错
-//
-//   原来多处直接调用 NET.isSpectator()，依赖 online_net.js
-//   在 input.js 之前加载。一旦加载顺序被调换 / online_net.js
-//   加载失败 / 未来改成可选模块，都会炸：
-//       "Cannot read properties of undefined (reading 'isSpectator')"
-//
-//   统一走 _isSpectatorSafe()，内部先判 NET 是否存在。
+// ★ 安全访问 NET
 // ============================================================
 function _isSpectatorSafe() {
     return typeof NET !== 'undefined'
@@ -33,16 +26,6 @@ function _requestFuseStart(type) {
     }
 }
 
-// ============================================================
-// ★ 修复：客户端释放引信时，本地计算 origin/vel/fuseMs 并上报
-//
-// 之前的问题：客户端只上报 fuseRelease = true，房主用 p2.cam 推算 origin，
-// 而 p2.cam 是房主端根据客户端上报的位置/朝向插值出来的（滞后 + 有误差），
-// 于是房主 spawn 的烟/闪位置 ≠ 客户端本地轨迹线终点 → 两边看到的不一样。
-//
-// 现在：客户端在松手瞬间用 p1.cam 计算 origin/vel/fuseMs，一起上报，
-// 房主直接用它 spawn 并广播，两端 origin 完全一致。
-// ============================================================
 function _requestFuseRelease() {
     if (_isOnlineClient()) {
         if (typeof p1 !== 'undefined' && p1
@@ -66,7 +49,6 @@ function _requestFuseRelease() {
                 fuseMs: remainMs,
             };
         } else {
-            // 兜底：拿不到本地状态时，退回旧行为
             if (typeof NET !== 'undefined') NET.pendingFuseRelease = true;
         }
     } else {
@@ -81,7 +63,6 @@ function _requestFuseRelease() {
 window.addEventListener('keydown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
-    // ★ 原：if (NET.isSpectator()) { ... }
     if (_isSpectatorSafe()) {
         if (e.code === 'Enter' || e.code === 'NumpadEnter') {
             if (running && !isOver() && typeof openChat === 'function') {
@@ -178,7 +159,20 @@ window.addEventListener('keydown', e => {
             return;
         }
 
+        // ============================================================
+        // ★ F 键：先试传送门，失败就试滑索
+        //   两个系统空间上不重叠：
+        //     · tryEnterPortal() 内部会检测（生存模式 + portal 阶段 + 玩家靠近）
+        //       只要有一个不满足，立刻返回 false
+        //     · 剩下交给 tryMountZipline()
+        // ============================================================
         if (e.code === 'KeyF') {
+            // 1. 试传送门（不满足条件直接 false，不消耗 F 键）
+            if (typeof tryEnterPortal === 'function' && tryEnterPortal()) {
+                return;
+            }
+
+            // 2. 试滑索
             if (running && !isOver() && gameState === 'combat') {
                 if (typeof p1 !== 'undefined' && p1
                     && typeof window.tryMountZipline === 'function') {
@@ -221,7 +215,6 @@ window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; }
 document.addEventListener('mousedown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
-    // ★ 原：if (NET.isSpectator()) { ... }
     if (_isSpectatorSafe()) {
         if (e.button === 0) {
             e.preventDefault(); e.stopPropagation();
@@ -261,10 +254,7 @@ document.addEventListener('mousedown', e => {
 
 document.addEventListener('mouseup', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
-
-    // ★ 原：if (NET.isSpectator()) { e.preventDefault(); ... return; }
     if (_isSpectatorSafe()) { e.preventDefault(); e.stopPropagation(); return; }
-
     if (e.button === 0) {
         mouse.leftDown = false;
         _requestFuseRelease();
@@ -274,10 +264,7 @@ document.addEventListener('mouseup', e => {
 
 document.addEventListener('wheel', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
-
-    // ★ 原：if (NET.isSpectator()) return;
     if (_isSpectatorSafe()) return;
-
     e.preventDefault(); e.stopPropagation();
     if (!running || isOver()) return;
     if (typeof p1 === 'undefined' || !p1) return;
