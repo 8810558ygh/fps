@@ -1,0 +1,219 @@
+// ===== js/main_entry.js – 大厅入口 / enterGame / 退出 / 地图选择 =====
+// 从 main.js 拆出，不改变任何对外接口
+// 依赖：main.js 的 renderer / getDesiredPixelRatio；main_input.js 的 enterFullscreenAndLock
+
+// ============================================================
+// 退出到大厅（仅单机模式）
+// ============================================================
+function exitToLobby() {
+    audio();
+
+    running = false;
+    gameState = 'idle';
+    if (typeof setOver === 'function') setOver(true);
+
+    if (document.pointerLockElement) document.exitPointerLock();
+
+    if (window.closeCombatReport) window.closeCombatReport();
+    if (typeof closeChat === 'function') closeChat();
+    document.getElementById('endOverlay').style.display = 'none';
+    document.getElementById('weaponPanel').style.display = 'none';
+    document.getElementById('exitBtn').style.display = 'none';
+
+    document.body.classList.remove('in-game');
+
+    document.getElementById('lobbyOverlay').style.display = 'flex';
+
+    console.log('[game] 已退出到大厅');
+}
+window.exitToLobby = exitToLobby;
+
+// ============================================================
+// 返回联机房间
+// ============================================================
+function returnToOnlineRoom(isRemote) {
+    audio();
+
+    running = false;
+    gameState = 'idle';
+    if (typeof setOver === 'function') setOver(true);
+
+    if (document.pointerLockElement) document.exitPointerLock();
+
+    if (window.closeCombatReport) window.closeCombatReport();
+    if (typeof closeChat === 'function') closeChat();
+    document.getElementById('endOverlay').style.display = 'none';
+    document.getElementById('weaponPanel').style.display = 'none';
+    document.getElementById('exitBtn').style.display = 'none';
+
+    document.body.classList.remove('in-game');
+    document.body.classList.remove('online-mode');
+
+    if (typeof NET !== 'undefined') {
+        NET.started = false;
+        NET.role = null;
+        NET.pendingWeaponSwitch = null;
+        NET.pendingReload = false;
+        NET.pendingFuseStart = null;
+        NET.pendingFuseRelease = false;
+        NET.pendingMelee = false;
+        NET.pendingMeleeHeavy = false;
+
+        if (NET.isHost && !isRemote && typeof NET_broadcast === 'function') {
+            NET_broadcast({ type: 'returnToRoom' });
+        }
+    }
+
+    document.getElementById('onlineLobbyOverlay').style.display = 'flex';
+    if (typeof renderOnlineRoomUI === 'function') renderOnlineRoomUI();
+
+    console.log('[game] 已返回联机房间', isRemote ? '(远端触发)' : '');
+}
+window.returnToOnlineRoom = returnToOnlineRoom;
+
+// ============================================================
+// 退出按钮
+// ============================================================
+document.getElementById('exitBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    exitToLobby();
+});
+
+// ============================================================
+// 开始游戏入口
+// ============================================================
+function enterGame(mode) {
+    audio();
+
+    // ★ 新增：如果从设置面板直接开始，先关闭设置面板
+    if (typeof window.SETTINGS_Close === 'function') window.SETTINGS_Close();
+
+    if (!window.getCurrentMapId() && window.loadMap) {
+        window.loadMap('battlefield');
+    }
+    window.GAME_setMode(mode);
+
+    // ★ 人机对战：每次进入默认开启 AI
+    if (mode === 'ai') {
+        aiEnabled = true;
+    }
+
+    p2.gunHolder.visible = (mode === 'ai' || mode === 'online');
+    document.getElementById('lobbyOverlay').style.display = 'none';
+
+    const exitBtn = document.getElementById('exitBtn');
+    if (exitBtn) exitBtn.style.display = (mode !== 'online') ? 'block' : 'none';
+
+    resetMatch();
+    enterFullscreenAndLock();
+}
+window.enterGame = enterGame;
+
+// ============================================================
+// Lobby 按钮
+// ============================================================
+// ★ 人机对战按钮的 click 由 loading.js 的 installLobbyHooks() 统一绑定：
+//   它会把按钮克隆后重新挂上 beginSinglePlayerLoading('ai')，
+//   走"加载进度页 → enterGame"的完整流程。
+//
+//   这里【不要】再绑一次，否则：
+//     · 当前加载顺序下，此处绑的是被 cloneNode 替换掉的废弃节点
+//       （不报错，但监听器永远收不到点击 —— 隐蔽的坑）
+//     · 一旦加载顺序变化（比如给本文件加 defer），会和 loading.js 的监听器
+//       并存于同一个按钮上 → 点击触发两次：
+//         enterGame('ai') 立即进游戏 + beginSinglePlayerLoading('ai') 又启动加载
+//
+//   联机按钮不经过 loading 劫持，仍在此处绑定。
+document.getElementById('lobbyOnlineBtn').addEventListener('click', () => {
+    audio();
+    document.getElementById('lobbyOverlay').style.display = 'none';
+    document.getElementById('onlineLobbyOverlay').style.display = 'flex';
+    if (typeof NET !== 'undefined' && NET.roomId) {
+        if (typeof renderOnlineRoomUI === 'function') renderOnlineRoomUI();
+    } else {
+        const entry = document.getElementById('onlineEntrySection');
+        const room = document.getElementById('onlineRoomSection');
+        const codeWrap = document.getElementById('onlineRoomCode');
+        const badge = document.getElementById('onlineMyRole');
+        if (entry) entry.style.display = 'block';
+        if (room) room.style.display = 'none';
+        if (codeWrap) codeWrap.style.display = 'none';
+        if (badge) badge.style.display = 'none';
+    }
+});
+
+document.getElementById('againBtn').addEventListener('click', () => {
+    audio();
+    if (gameMode === 'online') {
+        returnToOnlineRoom(false);
+    } else {
+        resetMatch();
+        enterFullscreenAndLock();
+    }
+});
+
+// ============================================================
+// 游戏模式切换
+// ============================================================
+window.GAME_setMode = function (mode) {
+    const wasOnline = (gameMode === 'online');
+    gameMode = mode;
+    const isOnline = (mode === 'online');
+    if (wasOnline !== isOnline && typeof renderer !== 'undefined' && renderer) {
+        renderer.setPixelRatio(getDesiredPixelRatio());
+        console.log('[perf] pixelRatio →', renderer.getPixelRatio(), '(mode:', mode + ')');
+    }
+};
+
+// ============================================================
+// 地图选择器
+// ============================================================
+function buildMapSelect() {
+    const row = document.getElementById('mapSelectRow');
+    if (!row) return;
+
+    const maps = (window.getAvailableMaps && window.getAvailableMaps()) || [];
+    row.innerHTML = '';
+
+    const container = row.closest('.lobby-map-select');
+    if (maps.length <= 1) {
+        if (container) container.style.display = 'none';
+        const only = maps[0];
+        if (only && window.loadMap) {
+            const cur = (window.getCurrentMapId && window.getCurrentMapId()) || null;
+            if (cur !== only.id) window.loadMap(only.id);
+        }
+        return;
+    }
+    if (container) container.style.display = '';
+
+    maps.forEach(m => {
+        const btn = document.createElement('button');
+        btn.className = 'map-btn';
+        btn.dataset.mapId = m.id;
+        btn.textContent = m.name;
+        btn.addEventListener('click', () => {
+            if (typeof running !== 'undefined' && running) return;
+            audio();
+            if (window.loadMap && window.loadMap(m.id)) {
+                row.querySelectorAll('.map-btn').forEach(b => {
+                    b.classList.toggle('active', b.dataset.mapId === m.id);
+                });
+            }
+        });
+        row.appendChild(btn);
+    });
+
+    const cur = (window.getCurrentMapId && window.getCurrentMapId()) || 'battlefield';
+    row.querySelectorAll('.map-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.mapId === cur);
+    });
+}
+
+// ============================================================
+// 初始化
+// ============================================================
+(function init() {
+    if (window.loadMap) window.loadMap('battlefield');
+    buildMapSelect();
+})();
