@@ -1,12 +1,7 @@
 // ===== js/survival/survival_state.js – 生存模式状态机 =====
-// 单人生存模式：打僵尸、多地图推进、传送门通关
-//
-// 地图流程：
-//   战场图 → 5 波 → 传送门 → 按 F → [加载页] → 沙漠图 → 5 波 → 传送门 → 按 F → 通关
 
 const SurvivalState = {
     active: false,
-    // 'idle' | 'prep' | 'wave' | 'portal' | 'loading' | 'victory' | 'defeat'
     phase: 'idle',
     wave: 0,
     maxWaves: 5,
@@ -16,6 +11,17 @@ const SurvivalState = {
     PREP_MS: 15000,
     SUMMARY_MS: 3000,
     PORTAL_TRIGGER_RADIUS: 2.5,
+
+    MAX_ALIVE_ZOMBIES: 8,
+    REFILL_DELAY_MS: 1500,
+    waveQueue: [],
+    nextSpawnAt: 0,
+
+    // ★ 已解锁的武器（每局重置为只有狂徒）
+    unlockedWeapons: ['rifle'],
+
+    // ★ 金币（每局重置为 0）
+    coins: 0,
 };
 window.SurvivalState = SurvivalState;
 
@@ -23,6 +29,22 @@ let _defeatHandled  = false;
 let _victoryHandled = false;
 let _summaryTimer = null;
 let _portalPromptEl = null;
+
+// ============================================================
+// 武器中文名 / 描述
+// ============================================================
+const WEAPON_NAMES_ZH = {
+    rifle: '狂徒',
+    sniper: '冥驹',
+    shotgun: '判官',
+    odin: '奥丁',
+};
+const WEAPON_DESCS_ZH = {
+    rifle: '25发 · 高伤',
+    sniper: '5发 · 一枪致命',
+    shotgun: '5发 · 散射',
+    odin: '100发 · 越打越快',
+};
 
 // ============================================================
 // 玩家列表
@@ -56,8 +78,70 @@ function checkSurvivalDefeat() {
 window.checkSurvivalDefeat = checkSurvivalDefeat;
 
 // ============================================================
-// 把玩家挪到当前地图正中心
+// ★ 切地图补弹（对所有已解锁武器）
+//
+//   ★ 生存模式不提供烟/闪，这里强制清零
 // ============================================================
+function _refillPlayerOnNextMap(p) {
+    if (!p) return;
+
+    if (!p.weaponAmmo) p.weaponAmmo = {};
+
+    const unlocked = (SurvivalState.unlockedWeapons && SurvivalState.unlockedWeapons.length)
+        ? SurvivalState.unlockedWeapons
+        : ['rifle'];
+
+    for (const key of unlocked) {
+        const wk = (typeof WEAPONS !== 'undefined') ? WEAPONS[key] : null;
+        if (!wk || wk.mag === undefined) continue;
+
+        if (!p.weaponAmmo[key]) {
+            p.weaponAmmo[key] = { ammo: wk.mag, reserve: wk.startReserve };
+        } else {
+            p.weaponAmmo[key].ammo = wk.mag;
+            p.weaponAmmo[key].reserve = Math.max(p.weaponAmmo[key].reserve, wk.startReserve);
+        }
+    }
+
+    if (p.weapon && p.weapon.mag !== undefined && !p.isMelee && !p.isSmoke && !p.isFlash) {
+        const cur = p.weaponAmmo[p.weaponKey];
+        if (cur) {
+            p.ammo = cur.ammo;
+            p.reserve = cur.reserve;
+        }
+    }
+
+    if (typeof ARMOR_MAX !== 'undefined') p.armor = ARMOR_MAX;
+
+    // ★ 生存模式不提供烟/闪
+    p.smokeCharges = 0;
+    p.flashCharges = 0;
+
+    p.reloadEnd = 0;
+    p.nextShot = 0;
+    p.boltEnd = 0;
+    p.aiming = false;
+    p.aimStage = 0;
+}
+
+function _clearInputState() {
+    if (typeof keys !== 'undefined' && keys) {
+        for (const k in keys) keys[k] = false;
+    }
+    if (typeof mouse !== 'undefined' && mouse) {
+        mouse.leftDown = false;
+        mouse.aim = false;
+    }
+    if (typeof p1 !== 'undefined' && p1 && p1.input) {
+        p1.input.aim = false;
+        p1.input.fire = false;
+        p1.input.jump = false;
+        p1.input.crouch = false;
+        p1.input.forward = 0;
+        p1.input.right = 0;
+    }
+}
+
 function _teleportPlayerToMapCenter() {
     if (typeof p1 === 'undefined' || !p1) return;
 
@@ -65,24 +149,17 @@ function _teleportPlayerToMapCenter() {
         ? window.getCurrentMapId() : null;
 
     let spawnY;
-    if (mapId === 'battlefield') {
-        spawnY = 2.5;
-    } else {
-        spawnY = (typeof terrainGroundAt === 'function')
-            ? terrainGroundAt(0, 0) : 0;
-    }
+    if (mapId === 'battlefield') spawnY = 2.5;
+    else spawnY = (typeof terrainGroundAt === 'function')
+        ? terrainGroundAt(0, 0) : 0;
 
     p1.pos.set(0, spawnY, 0);
-    p1.vy = 0;
-    p1.prevY = spawnY;
-    p1.onGround = true;
-    p1.yaw = 0;
-    p1.pitch = 0;
+    p1.vy = 0; p1.prevY = spawnY; p1.onGround = true;
+    p1.yaw = 0; p1.pitch = 0;
     p1.mesh.position.copy(p1.pos);
     p1.mesh.rotation.y = 0;
     p1.cam.position.set(0, spawnY + p1.eyeH, 0);
-    p1.cam.rotation.y = 0;
-    p1.cam.rotation.x = 0;
+    p1.cam.rotation.y = 0; p1.cam.rotation.x = 0;
     if (p1._netTargetPos) p1._netTargetPos.set(0, spawnY, 0);
     if (p1._netTargetYaw !== undefined) p1._netTargetYaw = 0;
 
@@ -91,6 +168,51 @@ function _teleportPlayerToMapCenter() {
     }
 }
 
+function _spawnZombieAroundPlayer(type) {
+    const player = (typeof p1 !== 'undefined' && p1) ? p1 : null;
+    if (!player) return;
+
+    const half = (typeof window.currentArenaHalf === 'number')
+        ? window.currentArenaHalf : ARENA;
+    const lim = half - 3;
+
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 20 + Math.random() * 15;
+
+    let x = player.pos.x + Math.cos(angle) * dist;
+    let z = player.pos.z + Math.sin(angle) * dist;
+
+    x = Math.max(-lim, Math.min(lim, x));
+    z = Math.max(-lim, Math.min(lim, z));
+
+    spawnZombie(x, z, SurvivalState.wave, type);
+}
+
+// ============================================================
+// ★ 刷新武器面板的锁定状态（按 B 打开前调用，非生存模式）
+// ============================================================
+function updateWeaponPanelLocks() {
+    const panel = document.getElementById('weaponPanel');
+    if (!panel) return;
+
+    const isSurvival = (typeof gameMode !== 'undefined' && gameMode === 'survival');
+    const unlocked = (isSurvival && SurvivalState.unlockedWeapons)
+        ? SurvivalState.unlockedWeapons : null;
+
+    panel.querySelectorAll('.weapon-btn').forEach(btn => {
+        const key = btn.dataset.weapon;
+        if (!key) return;
+        if (unlocked && !unlocked.includes(key)) {
+            btn.classList.add('locked');
+            btn.disabled = true;
+        } else {
+            btn.classList.remove('locked');
+            btn.disabled = false;
+        }
+    });
+}
+window.updateWeaponPanelLocks = updateWeaponPanelLocks;
+
 // ============================================================
 // 启动 / 停止
 // ============================================================
@@ -98,8 +220,14 @@ function startSurvivalMode() {
     SurvivalState.active = true;
     SurvivalState.phase = 'prep';
     SurvivalState.wave = 0;
-    SurvivalState.mapIndex = 0;      // 从战场图开始
+    SurvivalState.mapIndex = 0;
     SurvivalState.prepEndTime = performance.now() + SurvivalState.PREP_MS;
+
+    SurvivalState.waveQueue = [];
+    SurvivalState.nextSpawnAt = 0;
+
+    SurvivalState.unlockedWeapons = ['rifle'];
+    SurvivalState.coins = 0;
 
     _defeatHandled  = false;
     _victoryHandled = false;
@@ -108,8 +236,12 @@ function startSurvivalMode() {
     if (endOv) endOv.style.display = 'none';
     _hideWaveSummary(true);
     _hidePortalPrompt();
+    if (window.Shop && window.Shop.isOpen && window.Shop.isOpen()) {
+        window.Shop.close();
+    }
 
     if (typeof despawnSurvivalPortal === 'function') despawnSurvivalPortal();
+    if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
 
     if (typeof p2 !== 'undefined' && p2) {
         p2.mesh.visible = false;
@@ -122,6 +254,29 @@ function startSurvivalMode() {
 
     _teleportPlayerToMapCenter();
 
+    // ============================================================
+    // ★ 修复：重置武器到狂徒
+    // ============================================================
+    if (typeof p1 !== 'undefined' && p1) {
+        p1.primaryWeaponKey = 'rifle';
+        if (typeof setWeapon === 'function') {
+            setWeapon(p1, 'rifle');
+        }
+
+        // ============================================================
+        // ★ 生存模式不提供烟/闪
+        //   —— 充能置 0，且取消可能残留的引信状态
+        // ============================================================
+        p1.smokeCharges = 0;
+        p1.flashCharges = 0;
+        p1.throwFuseActive = false;
+        p1.throwFuseType = null;
+        p1.throwFuseInHand = false;
+        p1.throwFuseStart = 0;
+        p1.throwFuseEnd = 0;
+        p1.throwFuseEnd = 0;
+    }
+
     console.log('[survival] 模式已启动，地图:', SurvivalState.maps[SurvivalState.mapIndex],
                 '，准备阶段', SurvivalState.PREP_MS / 1000, '秒');
 }
@@ -133,6 +288,9 @@ function stopSurvivalMode() {
     _defeatHandled  = false;
     _victoryHandled = false;
 
+    SurvivalState.waveQueue = [];
+    SurvivalState.nextSpawnAt = 0;
+
     if (typeof clearAllZombies === 'function') clearAllZombies();
 
     const endOv = document.getElementById('survivalEndOverlay');
@@ -140,7 +298,12 @@ function stopSurvivalMode() {
     _hideWaveSummary(true);
     _hidePortalPrompt();
 
+    if (window.Shop && window.Shop.isOpen && window.Shop.isOpen()) {
+        window.Shop.close();
+    }
+
     if (typeof despawnSurvivalPortal === 'function') despawnSurvivalPortal();
+    if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
 
     console.log('[survival] 模式已停止');
 }
@@ -152,6 +315,10 @@ window.stopSurvivalMode = stopSurvivalMode;
 function survivalTick(dt, now) {
     if (!SurvivalState.active) return;
 
+    if (typeof updateAmmoDrop === 'function') {
+        updateAmmoDrop(dt, now);
+    }
+
     if (SurvivalState.phase === 'prep') {
         if (now >= SurvivalState.prepEndTime) {
             SurvivalState.wave++;
@@ -161,12 +328,27 @@ function survivalTick(dt, now) {
         if (typeof updateAllZombies === 'function') {
             updateAllZombies(dt, now);
         }
-        if (typeof getZombiesAliveCount === 'function'
-            && getZombiesAliveCount() === 0) {
+
+        const alive = (typeof getZombiesAliveCount === 'function')
+            ? getZombiesAliveCount() : 0;
+        const queueLen = SurvivalState.waveQueue.length;
+
+        if (queueLen > 0
+            && alive < SurvivalState.MAX_ALIVE_ZOMBIES
+            && now >= SurvivalState.nextSpawnAt) {
+            const type = SurvivalState.waveQueue.shift();
+            _spawnZombieAroundPlayer(type);
+            SurvivalState.nextSpawnAt = now + SurvivalState.REFILL_DELAY_MS;
+        }
+
+        if (alive === 0 && queueLen === 0) {
             onSurvivalWaveCleared(now);
         }
+    } else if (SurvivalState.phase === 'victory') {
+        _handleVictory();
+    } else if (SurvivalState.phase === 'defeat') {
+        _handleDefeat();
     }
-    // portal / loading / victory / defeat 阶段不做波次逻辑
 }
 window.survivalTick = survivalTick;
 
@@ -197,51 +379,58 @@ function tryEnterPortal() {
 window.tryEnterPortal = tryEnterPortal;
 
 // ============================================================
-// ★ 进入下一张地图（走加载页）
+// 进入下一张地图
 // ============================================================
 function _enterNextMap() {
     const nextIndex = SurvivalState.mapIndex + 1;
 
-    // ---- 最后一关 → 通关 ----
     if (nextIndex >= SurvivalState.maps.length) {
         SurvivalState.phase = 'victory';
+
         if (typeof despawnSurvivalPortal === 'function') despawnSurvivalPortal();
+        if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
         _hidePortalPrompt();
+
+        running = false;
+        if (document.pointerLockElement) document.exitPointerLock();
+
         console.log('[survival] 全部地图完成，通关！');
+        _handleVictory();
         return;
     }
 
     const nextMapId = SurvivalState.maps[nextIndex];
 
-    // ---- 清理当前状态 ----
     if (typeof despawnSurvivalPortal === 'function') despawnSurvivalPortal();
+    if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
     _hidePortalPrompt();
     if (typeof clearAllZombies === 'function') clearAllZombies();
 
-    // ---- 进入 loading 阶段：冻结游戏逻辑 ----
+    SurvivalState.waveQueue = [];
+    SurvivalState.nextSpawnAt = 0;
+
     SurvivalState.phase = 'loading';
 
-    // 暂停主循环 + 释放鼠标锁
     const wasRunning = running;
     running = false;
     if (document.pointerLockElement) document.exitPointerLock();
 
-    // ---- 走加载流程 ----
     if (typeof window.beginMapSwitchLoading === 'function') {
         window.beginMapSwitchLoading(nextMapId, () => {
-            // 加载完成
             SurvivalState.mapIndex = nextIndex;
             SurvivalState.wave = 0;
             SurvivalState.phase = 'prep';
             SurvivalState.prepEndTime = performance.now() + SurvivalState.PREP_MS;
 
-            // 玩家挪到新地图中心
-            _teleportPlayerToMapCenter();
+            if (typeof p1 !== 'undefined' && p1) {
+                _refillPlayerOnNextMap(p1);
+            }
 
-            // 恢复主循环
+            _teleportPlayerToMapCenter();
+            _clearInputState();
+
             running = true;
 
-            // 重新锁鼠标
             if (typeof enterFullscreenAndLock === 'function') {
                 enterFullscreenAndLock();
             }
@@ -249,15 +438,22 @@ function _enterNextMap() {
             console.log('[survival] 进入下一张地图:', nextMapId);
         });
     } else {
-        // 兜底（不应发生）：直接切
         console.warn('[survival] beginMapSwitchLoading 未定义，直接切图');
         if (typeof window.loadMap === 'function') window.loadMap(nextMapId);
         SurvivalState.mapIndex = nextIndex;
         SurvivalState.wave = 0;
         SurvivalState.phase = 'prep';
         SurvivalState.prepEndTime = performance.now() + SurvivalState.PREP_MS;
+
+        if (typeof p1 !== 'undefined' && p1) _refillPlayerOnNextMap(p1);
         _teleportPlayerToMapCenter();
+        _clearInputState();
+
         running = wasRunning;
+
+        if (typeof enterFullscreenAndLock === 'function') {
+            enterFullscreenAndLock();
+        }
     }
 }
 window._enterNextMap = _enterNextMap;
@@ -409,6 +605,9 @@ function _handleVictory() {
     if (_victoryHandled) return;
     _victoryHandled = true;
     _hidePortalPrompt();
+    if (window.Shop && window.Shop.isOpen && window.Shop.isOpen()) {
+        window.Shop.close();
+    }
     console.log('[survival] 通关');
 
     const endOv = document.getElementById('survivalEndOverlay');
@@ -435,6 +634,9 @@ function _handleDefeat() {
     if (_defeatHandled) return;
     _defeatHandled = true;
     _hidePortalPrompt();
+    if (window.Shop && window.Shop.isOpen && window.Shop.isOpen()) {
+        window.Shop.close();
+    }
     console.log('[survival] 失败');
 
     const endOv = document.getElementById('survivalEndOverlay');
@@ -458,33 +660,59 @@ function _handleDefeat() {
 }
 
 // ============================================================
-// 波次生成
+// 波次开始
 // ============================================================
 function startSurvivalWave(wave) {
     SurvivalState.phase = 'wave';
 
-    const count = 3 + wave * 2;
+    if (typeof despawnAmmoDrop === 'function') {
+        despawnAmmoDrop();
+    }
+
+    const players = getSurvivalPlayers();
+    for (const p of players) {
+        if (p) p.survivalKills = 0;
+    }
+
+    const globalWave = SurvivalState.mapIndex * SurvivalState.maxWaves + wave;
+
+    let typeList;
+    if (typeof buildWaveComposition === 'function') {
+        typeList = buildWaveComposition(globalWave);
+    } else {
+        const total = 3 + globalWave * 2;
+        typeList = [];
+        for (let i = 0; i < total; i++) typeList.push('normal');
+    }
+
+    for (let i = typeList.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = typeList[i];
+        typeList[i] = typeList[j];
+        typeList[j] = tmp;
+    }
+
+    const total = typeList.length;
     const player = (typeof p1 !== 'undefined' && p1) ? p1 : null;
     if (!player) return;
 
-    const half = (typeof window.currentArenaHalf === 'number')
-        ? window.currentArenaHalf : ARENA;
-    const lim = half - 3;
+    const initialCount = Math.min(total, SurvivalState.MAX_ALIVE_ZOMBIES);
+    const remaining    = typeList.slice(initialCount);
 
-    for (let i = 0; i < count; i++) {
-        const baseAngle = (i / count) * Math.PI * 2;
-        const angle = baseAngle + (Math.random() - 0.5) * 0.6;
-        const dist = 20 + Math.random() * 15;
+    SurvivalState.waveQueue = remaining;
+    SurvivalState.nextSpawnAt = performance.now() + SurvivalState.REFILL_DELAY_MS;
 
-        let x = player.pos.x + Math.cos(angle) * dist;
-        let z = player.pos.z + Math.sin(angle) * dist;
-
-        x = Math.max(-lim, Math.min(lim, x));
-        z = Math.max(-lim, Math.min(lim, z));
-
-        spawnZombie(x, z, wave);
+    for (let i = 0; i < initialCount; i++) {
+        _spawnZombieAroundPlayer(typeList[i]);
     }
 
-    console.log('[survival] 第', wave, '波已启动，生成', count, '只僵尸');
+    const stat = {};
+    for (const t of typeList) stat[t] = (stat[t] || 0) + 1;
+
+    console.log('[survival] 地图', SurvivalState.mapIndex, '内第', wave,
+                '波（全局', globalWave, '波）已启动',
+                '总数', total, '，首刷', initialCount,
+                '，队列剩余', remaining.length,
+                '，构成:', stat);
 }
 window.startSurvivalWave = startSurvivalWave;

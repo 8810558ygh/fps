@@ -1,4 +1,7 @@
 // ===== js/hud.js – HUD DOM 缓存 + 工具函数 + 主 HUD 更新 =====
+// 回合结算 → hud_report.js
+// TAB 战绩 / AI 开关 / TAB 键 → hud_score.js
+// 硬直 / 易伤视觉反馈 → hud_effects.js
 
 function q(s) { return document.querySelector(s); }
 
@@ -36,6 +39,9 @@ const _hudState = {
     cdIcon: '', cdLabel: '', cdTime: '', cdTimeColor: '',
 };
 
+// ============================================================
+// 反馈工具（feed / centerMsg / dmgFlash / hitmark）
+// ============================================================
 function feed(p, html) {
     if (p.id !== 1) return;
     const d = document.createElement('div');
@@ -70,18 +76,23 @@ function hitmark(p) {
     el.classList.add('pop');
 }
 
+// ============================================================
+// 缓存式 DOM 更新工具
+// ============================================================
 function _setText(el, val, cacheKey) {
     if (!el) return;
     if (_hudState[cacheKey] === val) return;
     el.textContent = val;
     _hudState[cacheKey] = val;
 }
+
 function _setHtml(el, val, cacheKey) {
     if (!el) return;
     if (_hudState[cacheKey] === val) return;
     el.innerHTML = val;
     _hudState[cacheKey] = val;
 }
+
 function _setStyle(el, prop, val, cacheKey) {
     if (!el) return;
     if (_hudState[cacheKey] === val) return;
@@ -97,7 +108,8 @@ function updateHUD(now) {
     const h = H[1];
     if (!h) return;
 
-    const hpVal = Math.max(0, Math.round(p.hp));
+    // HP 显示用 Math.ceil（hp = 0.4 时显示 1，显示 0 就一定是真死）
+    const hpVal = Math.max(0, Math.ceil(p.hp));
     if (hpVal !== _hudState.hp) {
         h.hpText.textContent = hpVal;
         _hudState.hp = hpVal;
@@ -137,6 +149,7 @@ function updateHUD(now) {
         }
         ammoHtml = ammoText + ` <span class="rsv">/ ${p.reserve}</span>`;
         wtagText = p.weapon.name;
+
         const tips = [];
         if (p.smokeCharges > 0 && gameState === 'combat') tips.push(`💨${p.smokeCharges}`);
         if (p.flashCharges > 0 && gameState === 'combat') tips.push(`⚡${p.flashCharges}`);
@@ -149,11 +162,16 @@ function updateHUD(now) {
         if (running && gameState === 'combat' && p.throwFuseActive && p.throwFuseType) {
             const remain = Math.max(0, p.throwFuseEnd - now);
             const isSmoke = (p.throwFuseType === 'smoke');
+
             _setText(_cdIconEl,  isSmoke ? '💨' : '⚡', 'cdIcon');
             _setText(_cdLabelEl, isSmoke ? '烟雾倒计时' : '闪光倒计时', 'cdLabel');
             _setText(_cdTimeEl,  (remain / 1000).toFixed(1) + 's', 'cdTime');
             _setStyle(_cdTimeEl, 'color', remain > 0 ? '#ffd24a' : '#7ee08a', 'cdTimeColor');
-            if (_hudState.cdDisplay !== 'flex') { _cdEl.style.display = 'flex'; _hudState.cdDisplay = 'flex'; }
+
+            if (_hudState.cdDisplay !== 'flex') {
+                _cdEl.style.display = 'flex';
+                _hudState.cdDisplay = 'flex';
+            }
         } else if (_hudState.cdDisplay !== 'none') {
             _cdEl.style.display = 'none';
             _hudState.cdDisplay = 'none';
@@ -170,6 +188,8 @@ function updateHUD(now) {
 
     // ============================================================
     // ★ 顶部 timer
+    //   · 生存模式：波次 + 本波剩余总数（场上 + 队列）
+    //   · 其他模式：准备倒计时 / 比赛剩余时间
     // ============================================================
     const isSurvival = (running
         && typeof gameMode !== 'undefined' && gameMode === 'survival'
@@ -189,10 +209,13 @@ function updateHUD(now) {
         } else if (SurvivalState.phase === 'wave') {
             const alive = (typeof getZombiesAliveCount === 'function')
                 ? getZombiesAliveCount() : 0;
-            svText = `${mapName} · 第 ${SurvivalState.wave} / ${SurvivalState.maxWaves} 波 · 🧟 ${alive}`;
+            const queue = (SurvivalState.waveQueue && SurvivalState.waveQueue.length)
+                ? SurvivalState.waveQueue.length : 0;
+            const remain = alive + queue;
+            svText = `${mapName} · 第 ${SurvivalState.wave} / ${SurvivalState.maxWaves} 波 · 🧟 ${remain}`;
             svColor = '#7ee08a';
         } else if (SurvivalState.phase === 'portal') {
-            svText = `✨ 传送门已开启 · 前往中央高台`;
+            svText = `✨ 传送门已开启`;
             svColor = '#66ffee';
         } else if (SurvivalState.phase === 'loading') {
             svText = `📍 正在进入下一区域...`;
@@ -217,6 +240,7 @@ function updateHUD(now) {
         _setText(_timerEl, `准备 ${remain.toFixed(1)}s`, 'timerText');
         _setStyle(_timerEl, 'color', '#ffd24a', 'timerColor');
         _setStyle(_timerEl, 'background', 'rgba(0, 0, 0, 0.45)', 'timerBg');
+
     } else {
         const left = Math.max(0, MATCH_MS - (now - matchStart));
         const mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);
@@ -227,7 +251,8 @@ function updateHUD(now) {
     }
 
     const hintDisplay = (
-        running && gameState === 'prep'
+        running
+        && gameState === 'prep'
         && document.pointerLockElement !== renderer.domElement
         && !isOver()
     ) ? 'block' : 'none';
@@ -254,11 +279,32 @@ function updateHUD(now) {
         _hudState.adsRetDisplay = adsRetDisplay;
     }
 
+    // ★ 拆分后：这两项现在来自 hud_score.js，加 typeof 保护
     if (typeof _tickScorePanel === 'function') _tickScorePanel();
     if (typeof _updateAiToggleUI === 'function') _updateAiToggleUI();
-    if (typeof updateZiplinePrompt === 'function') updateZiplinePrompt(p);
-    if (typeof updateSurvivalPortalPrompt === 'function') updateSurvivalPortalPrompt();
-    if (typeof updateStunUI === 'function') updateStunUI(p, now);
-    if (typeof updateVulnUI === 'function') updateVulnUI(p, now);
-    if (typeof updateVulnIndicators === 'function') updateVulnIndicators(now);
+
+    // ★ 滑索 UI 提示
+    if (typeof updateZiplinePrompt === 'function') {
+        updateZiplinePrompt(p);
+    }
+
+    // ★ 传送门提示（生存模式 portal 阶段）
+    if (typeof updateSurvivalPortalPrompt === 'function') {
+        updateSurvivalPortalPrompt();
+    }
+
+    // ★ 硬直视觉反馈（来自 hud_effects.js）
+    if (typeof updateStunUI === 'function') {
+        updateStunUI(p, now);
+    }
+
+    // ★ 易伤视觉反馈（来自 hud_effects.js）
+    if (typeof updateVulnUI === 'function') {
+        updateVulnUI(p, now);
+    }
+
+    // ★ 易伤 3D 紫光（对所有玩家，包括对手；来自 hud_effects.js）
+    if (typeof updateVulnIndicators === 'function') {
+        updateVulnIndicators(now);
+    }
 }

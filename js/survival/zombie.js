@@ -1,19 +1,132 @@
-// ===== js/survival/zombie.js – 僵尸系统 =====
-// 工厂 / 池 / AI / 伤害 / 击杀 / 物理碰撞
+// ===== js/survival/zombie.js – 僵尸系统（多类型注册表版 · 动态波次） =====
+// 工厂 / 池 / AI / 伤害 / 击杀 / 物理碰撞 / 跳跃 / 类型系统 / 弹药掉落 / 金币掉落
+//
+// 架构：
+//   · ZOMBIE_TYPES 注册表定义每种僵尸的属性
+//   · 僵尸实例带 type 字段，属性从注册表读
+//   · 池是"混合池"，同一个实例可以装任何类型
+//   · 类型可以覆盖 AI（type.ai）
+//
+// 波次生成（动态公式）：
+//   总数   N = 3 + 2n
+//   精英数 E = max(0, n - 2)
+//   普通数   = N - E
+//   精英从 ZOMBIE_ELITE_TYPES 里随机挑
+//
+// 易伤：
+//   僵尸攻击玩家前会应用 _applyVulnerabilityBonus()
+//
+// 弹药掉落：
+//   偶数波清空时，最后一个死亡的僵尸掉落弹药箱
+//
+// ★ 金币掉落：
+//   普通僵尸：1/3 掉 1，1/3 掉 2，1/3 不掉
+//   精英僵尸：1/2 掉 1，1/2 掉 2
 
 // ============================================================
-// 配置
+// ★★★ 僵尸类型注册表 ★★★
 // ============================================================
-const ZOMBIE_BASE_HP          = 100;
-const ZOMBIE_WALK_SPEED_MUL   = 0.7;
-const ZOMBIE_ATTACK_RANGE     = 2.2;
-const ZOMBIE_ATTACK_HEIGHT    = 2.5;
-const ZOMBIE_ATTACK_COOLDOWN  = 1000;
-const ZOMBIE_ATTACK_DAMAGE    = 15;
-const ZOMBIE_POOL_SIZE        = 24;
+const ZOMBIE_TYPES = {
+
+    // ---------------------------------------------
+    // 普通僵尸（标准体型）
+    // ---------------------------------------------
+    normal: {
+        name: '普通僵尸',
+        hp: 100,
+        speedMul: 0.7,
+        attackDamage: 15,
+        attackRange: 1.6,
+        attackHeight: 2.0,
+        attackCooldown: 1000,
+        jumpV: 11,
+        sizeMul: 1.0,
+        color: 0x4a6a3a,
+        headColor: 0x5a7a4a,
+        darkColor: 0x2a3a2a,
+        ai: null,
+    },
+
+    // ---------------------------------------------
+    // 跑者：血少、快、伤害低、体型小
+    // ---------------------------------------------
+    runner: {
+        name: '跑者',
+        hp: 60,
+        speedMul: 1.2,
+        attackDamage: 10,
+        attackRange: 1.2,
+        attackHeight: 1.6,
+        attackCooldown: 800,
+        jumpV: 13,
+        sizeMul: 0.75,
+        color: 0x8a3a3a,
+        headColor: 0xaa4a4a,
+        darkColor: 0x3a1a1a,
+        ai: null,
+    },
+
+    // ---------------------------------------------
+    // 坦克：血厚、慢、伤害高、体型大
+    // ---------------------------------------------
+    tank: {
+        name: '坦克',
+        hp: 400,
+        speedMul: 0.4,
+        attackDamage: 30,
+        attackRange: 2.2,
+        attackHeight: 2.6,
+        attackCooldown: 1400,
+        jumpV: 8,
+        sizeMul: 1.4,
+        color: 0x2a3a4a,
+        headColor: 0x3a4a5a,
+        darkColor: 0x1a2a3a,
+        ai: null,
+    },
+};
+
+// ============================================================
+// ★ 精英僵尸池
+// ============================================================
+const ZOMBIE_ELITE_TYPES = ['runner', 'tank'];
+
+// ============================================================
+// 全局常量（跨类型通用）
+// ============================================================
+const ZOMBIE_JUMP_COOLDOWN    = 900;
+const ZOMBIE_STUCK_THRESHOLD  = 0.3;
+const ZOMBIE_STUCK_MOVE_RATIO = 0.3;
+const ZOMBIE_POOL_SIZE        = 32;
+
+const ZOMBIE_BASE_HEIGHT = 1.8;
+const ZOMBIE_BASE_EYE_H  = 1.6;
 
 const _zombiePool = [];
 let _zombiePoolInited = false;
+
+// ============================================================
+// ★ 波次生成公式
+// ============================================================
+function buildWaveComposition(wave) {
+    const total   = 3 + wave * 2;
+    const elites  = Math.max(0, wave - 2);
+    const normals = Math.max(0, total - elites);
+
+    const list = [];
+    for (let i = 0; i < normals; i++) list.push('normal');
+
+    const elitePool = (typeof ZOMBIE_ELITE_TYPES !== 'undefined' && ZOMBIE_ELITE_TYPES.length > 0)
+        ? ZOMBIE_ELITE_TYPES
+        : ['runner'];
+
+    for (let i = 0; i < elites; i++) {
+        const t = elitePool[Math.floor(Math.random() * elitePool.length)];
+        list.push(t);
+    }
+
+    return list;
+}
 
 // ============================================================
 // 僵尸工厂
@@ -55,6 +168,9 @@ function _makeZombieMesh() {
     return { group: g, body, head, armL, armR, legL, legR };
 }
 
+// ============================================================
+// 初始化僵尸池
+// ============================================================
 function _initZombiePool() {
     if (_zombiePoolInited) return;
     if (typeof scene === 'undefined' || !scene) return;
@@ -68,12 +184,13 @@ function _initZombiePool() {
             id: 100 + i,
             poolIndex: i,
             alive: false,
+            type: 'normal',
             hp: 0,
-            maxHp: ZOMBIE_BASE_HP,
+            maxHp: 0,
             pos: new THREE.Vector3(0, 0, 0),
             yaw: 0,
-            height: 1.8,
-            eyeH: 1.6,
+            height: ZOMBIE_BASE_HEIGHT,
+            eyeH: ZOMBIE_BASE_EYE_H,
             deadUntil: 0,
             invulnUntil: 0,
             armor: 0,
@@ -86,14 +203,15 @@ function _initZombiePool() {
             legL: parts.legL,
             legR: parts.legR,
 
-            // ============================================================
-            // ★ 物理字段（供 collideWorld() 使用）
-            //   collideWorld 是通用函数，读这些字段处理墙体 / 台阶 / 地形
-            // ============================================================
             vy: 0,
             prevY: 0,
             onGround: true,
             _vyBeforeLand: 0,
+
+            _stuckTime: 0,
+            _nextJumpAt: 0,
+
+            _aiState: {},
         };
 
         zombie.hitMeshes = [
@@ -114,7 +232,6 @@ function _initZombiePool() {
     console.log('[zombie] 僵尸池已初始化:', ZOMBIE_POOL_SIZE);
 }
 
-// ★ 对外暴露
 window.initZombiePool = function () {
     _initZombiePool();
 };
@@ -127,7 +244,43 @@ function _acquireZombie() {
     return null;
 }
 
-function spawnZombie(x, z, wave) {
+// ============================================================
+// 应用颜色
+// ============================================================
+function _applyZombieColors(zombie, cfg) {
+    const bodyColor = (cfg.color !== undefined) ? cfg.color : 0x4a6a3a;
+    const headColor = (cfg.headColor !== undefined) ? cfg.headColor : bodyColor;
+    const darkColor = (cfg.darkColor !== undefined) ? cfg.darkColor : 0x2a3a2a;
+
+    if (zombie.body && zombie.body.material) {
+        zombie.body.material.color.setHex(bodyColor);
+    }
+    if (zombie.head && zombie.head.material) {
+        zombie.head.material.color.setHex(headColor);
+    }
+    if (zombie.legL && zombie.legL.material) {
+        zombie.legL.material.color.setHex(darkColor);
+    }
+}
+
+// ============================================================
+// 应用体型
+// ============================================================
+function _applyZombieSize(zombie, cfg) {
+    const sizeMul = (cfg.sizeMul !== undefined) ? cfg.sizeMul : 1.0;
+
+    zombie.mesh.scale.setScalar(sizeMul);
+    zombie.height = ZOMBIE_BASE_HEIGHT * sizeMul;
+    zombie.eyeH   = ZOMBIE_BASE_EYE_H  * sizeMul;
+}
+
+// ============================================================
+// 生成僵尸
+// ============================================================
+function spawnZombie(x, z, wave, type) {
+    type = type || 'normal';
+    const cfg = ZOMBIE_TYPES[type] || ZOMBIE_TYPES.normal;
+
     const zombie = _acquireZombie();
     if (!zombie) {
         console.warn('[zombie] 池已满，无法生成');
@@ -138,19 +291,27 @@ function spawnZombie(x, z, wave) {
         ? terrainGroundAt(x, z) : 0;
 
     zombie.alive = true;
-    zombie.hp = ZOMBIE_BASE_HP;
-    zombie.maxHp = ZOMBIE_BASE_HP;
+    zombie.type = type;
+    zombie.hp = cfg.hp;
+    zombie.maxHp = cfg.hp;
     zombie.pos.set(x, groundY, z);
     zombie.yaw = Math.random() * Math.PI * 2;
     zombie.nextAttackTime = 0;
     zombie.deadUntil = 0;
     zombie.invulnUntil = 0;
 
-    // ★ 重置物理字段
     zombie.vy = 0;
     zombie.prevY = groundY;
     zombie.onGround = true;
     zombie._vyBeforeLand = 0;
+
+    zombie._stuckTime = 0;
+    zombie._nextJumpAt = 0;
+
+    zombie._aiState = {};
+
+    _applyZombieColors(zombie, cfg);
+    _applyZombieSize(zombie, cfg);
 
     zombie.mesh.visible = true;
     zombie.mesh.position.copy(zombie.pos);
@@ -183,23 +344,30 @@ function _findNearestPlayer(zombie) {
 }
 
 // ============================================================
-// ★ 僵尸 AI + 物理
-//
-//   物理步进（和玩家一样走 collideWorld）：
-//     1. 水平移动（追玩家）
-//     2. 施加重力
-//     3. collideWorld() —— 处理墙体、台阶上移、侧向推动、地形高度
-//     4. 地面钳制
-//
-//   效果：
-//     · 不能穿墙（会被侧向推开）
-//     · 遇到台阶会走上去（STEP_UP = 0.55 内自动抬升）
-//     · 遇到高台（> 0.55）会被挡住
-//     · 会站到地形高度上（沙漠图沙丘）
+// 更新单个僵尸（AI 分发）
 // ============================================================
 function updateZombie(zombie, dt, now) {
     if (!zombie.alive) return;
 
+    const cfg = ZOMBIE_TYPES[zombie.type] || ZOMBIE_TYPES.normal;
+
+    if (typeof cfg.ai === 'function') {
+        const handled = cfg.ai(zombie, dt, now, cfg);
+        if (handled) {
+            _applyZombiePhysics(zombie, dt, now, undefined, undefined, undefined, cfg);
+            zombie.mesh.position.copy(zombie.pos);
+            zombie.mesh.rotation.y = zombie.yaw;
+            return;
+        }
+    }
+
+    _defaultZombieAI(zombie, dt, now, cfg);
+}
+
+// ============================================================
+// 默认 AI：直线追 + 近战
+// ============================================================
+function _defaultZombieAI(zombie, dt, now, cfg) {
     const target = _findNearestPlayer(zombie);
     if (!target) {
         zombie.mesh.position.copy(zombie.pos);
@@ -211,32 +379,45 @@ function updateZombie(zombie, dt, now) {
     const dy = target.pos.y - zombie.pos.y;
     const distH = Math.hypot(dx, dz);
 
-    // 朝向玩家
     if (distH > 0.001) {
         zombie.yaw = Math.atan2(-dx, -dz);
     }
 
-    // 攻击判定：水平够近 + 高度差在允许范围内
-    const inAttackRange = (distH <= ZOMBIE_ATTACK_RANGE)
-                       && (Math.abs(dy) <= ZOMBIE_ATTACK_HEIGHT);
+    const inAttackRange = (distH <= cfg.attackRange)
+                       && (Math.abs(dy) <= cfg.attackHeight);
 
-    // ---- 1. 水平移动 / 攻击 ----
+    const beforeX = zombie.pos.x;
+    const beforeZ = zombie.pos.z;
+
+    let intendedMoveDist = 0;
     if (!inAttackRange) {
         if (distH > 0.001) {
             const nx = dx / distH;
             const nz = dz / distH;
-            const speed = SPEED * ZOMBIE_WALK_SPEED_MUL;
+            const speed = SPEED * cfg.speedMul;
+            intendedMoveDist = speed * dt;
             zombie.pos.x += nx * speed * dt;
             zombie.pos.z += nz * speed * dt;
         }
     } else {
         if (now >= zombie.nextAttackTime) {
-            zombie.nextAttackTime = now + ZOMBIE_ATTACK_COOLDOWN;
-            _zombieAttack(zombie, target);
+            zombie.nextAttackTime = now + cfg.attackCooldown;
+            _zombieAttack(zombie, target, cfg);
         }
     }
 
-    // ---- 2. 物理步进（重力 + collideWorld） ----
+    _applyZombiePhysics(zombie, dt, now, intendedMoveDist, beforeX, beforeZ, cfg);
+
+    zombie.mesh.position.copy(zombie.pos);
+    zombie.mesh.rotation.y = zombie.yaw;
+}
+
+// ============================================================
+// 通用物理
+// ============================================================
+function _applyZombiePhysics(zombie, dt, now, intendedMoveDist, beforeX, beforeZ, cfg) {
+    cfg = cfg || ZOMBIE_TYPES[zombie.type] || ZOMBIE_TYPES.normal;
+
     zombie.prevY = zombie.pos.y;
     zombie.vy -= GRAV * dt;
     zombie.pos.y += zombie.vy * dt;
@@ -246,7 +427,6 @@ function updateZombie(zombie, dt, now) {
         collideWorld(zombie);
     }
 
-    // ---- 3. 地面钳制 ----
     if (zombie.pos.y <= 0) {
         zombie.pos.y = 0;
         zombie.vy = 0;
@@ -260,9 +440,30 @@ function updateZombie(zombie, dt, now) {
         zombie.onGround = true;
     }
 
-    // ---- 4. 同步 mesh ----
-    zombie.mesh.position.copy(zombie.pos);
-    zombie.mesh.rotation.y = zombie.yaw;
+    if (intendedMoveDist !== undefined && beforeX !== undefined && beforeZ !== undefined) {
+        const actualMoveDist = Math.hypot(
+            zombie.pos.x - beforeX,
+            zombie.pos.z - beforeZ
+        );
+
+        const isMoving = intendedMoveDist > 0.001;
+        const isStuck = isMoving && actualMoveDist < intendedMoveDist * ZOMBIE_STUCK_MOVE_RATIO;
+
+        if (isStuck) {
+            zombie._stuckTime += dt;
+        } else {
+            zombie._stuckTime = 0;
+        }
+
+        if (zombie._stuckTime > ZOMBIE_STUCK_THRESHOLD
+            && zombie.onGround
+            && now >= zombie._nextJumpAt) {
+            zombie.vy = cfg.jumpV;
+            zombie.onGround = false;
+            zombie._nextJumpAt = now + ZOMBIE_JUMP_COOLDOWN;
+            zombie._stuckTime = 0;
+        }
+    }
 }
 
 function updateAllZombies(dt, now) {
@@ -274,19 +475,35 @@ function updateAllZombies(dt, now) {
 window.updateAllZombies = updateAllZombies;
 
 // ============================================================
-// 僵尸攻击玩家
+// ★ 僵尸攻击玩家
+//
+//   ★ 应用易伤：玩家 vulnerableUntil > now 时，伤害 ×2
 // ============================================================
-function _zombieAttack(zombie, target) {
+function _zombieAttack(zombie, target, cfg) {
     if (!target) return;
     if (target.hp <= 0) return;
     if (target.deadUntil > performance.now()) return;
 
-    let hpDamage = ZOMBIE_ATTACK_DAMAGE;
-    if (target.armor > 0) {
-        const absorb = Math.min(target.armor, ZOMBIE_ATTACK_DAMAGE * ARMOR_ABSORB);
-        target.armor = Math.max(0, target.armor - absorb);
-        hpDamage = ZOMBIE_ATTACK_DAMAGE - absorb;
+    cfg = cfg || ZOMBIE_TYPES[zombie.type] || ZOMBIE_TYPES.normal;
+
+    const now = performance.now();
+
+    // ---- 1. 原始伤害 ----
+    let rawDmg = cfg.attackDamage;
+
+    // ---- 2. 应用易伤（统一入口） ----
+    if (typeof window._applyVulnerabilityBonus === 'function') {
+        rawDmg = window._applyVulnerabilityBonus(target, rawDmg, now);
     }
+
+    // ---- 3. 护甲吸收 ----
+    let hpDamage = rawDmg;
+    if (target.armor > 0) {
+        const absorb = Math.min(target.armor, rawDmg * ARMOR_ABSORB);
+        target.armor = Math.max(0, target.armor - absorb);
+        hpDamage = rawDmg - absorb;
+    }
+
     target.hp -= hpDamage;
 
     if (typeof dmgFlash === 'function') dmgFlash(target);
@@ -340,10 +557,26 @@ function damageZombie(zombie, dmg, from) {
 }
 window.damageZombie = damageZombie;
 
+// ============================================================
+// ★ 僵尸阵亡 + 弹药掉落 + 金币掉落
+//
+//   弹药掉落条件（同时满足）：
+//     · 场上僵尸数 = 0（最后一个死的）
+//     · 补刷队列也为空
+//     · 当前是偶数波（wave % 2 === 0）
+//
+//   金币掉落：
+//     · 普通僵尸：1/3 掉 1，1/3 掉 2，1/3 不掉
+//     · 精英僵尸（runner / tank）：1/2 掉 1，1/2 掉 2
+// ============================================================
 function _killZombie(zombie, from) {
     zombie.alive = false;
     zombie.hp = 0;
     zombie.mesh.visible = false;
+
+    zombie.mesh.scale.setScalar(1);
+    zombie.height = ZOMBIE_BASE_HEIGHT;
+    zombie.eyeH   = ZOMBIE_BASE_EYE_H;
 
     if (from && !from._isZombie && from.id !== undefined) {
         if (typeof from.survivalKills !== 'number') from.survivalKills = 0;
@@ -355,7 +588,54 @@ function _killZombie(zombie, from) {
             zombie.pos.x, zombie.pos.y + zombie.eyeH, zombie.pos.z, false);
     }
 
-    console.log('[survival] 僵尸阵亡，剩余：', getZombiesAliveCount());
+    console.log('[survival] 僵尸阵亡（' + zombie.type + '），剩余：', getZombiesAliveCount());
+
+    // ============================================================
+    // ★ 金币掉落
+    // ============================================================
+    if (typeof SurvivalState !== 'undefined'
+        && SurvivalState && SurvivalState.active) {
+
+        const isElite = (zombie.type === 'runner' || zombie.type === 'tank');
+        const r = Math.random();
+        let drop = 0;
+
+        if (isElite) {
+            drop = (r < 0.5) ? 1 : 2;
+        } else {
+            if (r < 1 / 3)      drop = 1;
+            else if (r < 2 / 3) drop = 2;
+            // 否则 0
+        }
+
+        if (drop > 0) {
+            SurvivalState.coins = (SurvivalState.coins || 0) + drop;
+
+            if (typeof feed === 'function'
+                && typeof p1 !== 'undefined' && p1
+                && (from === p1 || (from && from.id === 1))) {
+                feed(p1, `💰 <b style="color:#ffd24a">+${drop}</b> 金币` +
+                         ` · 总计 ${SurvivalState.coins}`);
+            }
+        }
+    }
+
+    // ============================================================
+    // ★ 弹药掉落：偶数波清空时，最后一个死亡的僵尸掉落
+    // ============================================================
+    if (getZombiesAliveCount() === 0
+        && typeof SurvivalState !== 'undefined'
+        && SurvivalState
+        && SurvivalState.wave > 0
+        && SurvivalState.wave % 2 === 0) {
+
+        const queueLen = (SurvivalState.waveQueue && SurvivalState.waveQueue.length)
+            ? SurvivalState.waveQueue.length : 0;
+
+        if (queueLen === 0 && typeof spawnAmmoDrop === 'function') {
+            spawnAmmoDrop(zombie.pos.x, zombie.pos.y, zombie.pos.z);
+        }
+    }
 }
 
 // ============================================================
@@ -381,6 +661,19 @@ function clearAllZombies() {
         z.alive = false;
         z.hp = 0;
         z.mesh.visible = false;
+        z.mesh.scale.setScalar(1);
+        z.height = ZOMBIE_BASE_HEIGHT;
+        z.eyeH   = ZOMBIE_BASE_EYE_H;
     }
 }
 window.clearAllZombies = clearAllZombies;
+
+// ============================================================
+// 对外暴露
+// ============================================================
+window.ZOMBIE_TYPES = ZOMBIE_TYPES;
+window.ZOMBIE_ELITE_TYPES = ZOMBIE_ELITE_TYPES;
+window.buildWaveComposition = buildWaveComposition;
+window.spawnZombieByType = function (x, z, wave, type) {
+    return spawnZombie(x, z, wave, type);
+};

@@ -55,6 +55,9 @@ function resetPlayer(p, now) {
         p.reserve = p.weapon.startReserve;
     }
 
+    // ★ 清空每把枪的独立弹药记录
+    p.weaponAmmo = {};
+
     p.reloadEnd = 0; p.nextShot = 0;
     p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
 
@@ -92,9 +95,6 @@ function resetPlayer(p, now) {
     p.throwFuseEnd = 0;
     p.throwFuseInHand = false;
 
-    // ============================================================
-    // ★ 滑索 + 硬直 + 易伤 状态清零
-    // ============================================================
     if (p.zipline) {
         p.zipline.active  = false;
         p.zipline.lineIdx = -1;
@@ -105,7 +105,6 @@ function resetPlayer(p, now) {
     p.stunUntil        = 0;
     p.vulnerableUntil  = 0;
 
-    // ★ 清掉易伤 3D 光晕
     if (p.vulnIndicator) {
         p.vulnIndicator.visible = false;
         const _vs = p.vulnIndicator.userData.sphere;
@@ -155,11 +154,6 @@ function startRound(now) {
 
     resetPlayer(p1, now);
 
-    // ============================================================
-    // ★ 生存模式：不重置 p2，直接启动 SurvivalState
-    //   · 生存模式有自己的波次准备阶段（PREP_MS）
-    //   · gameState 直接设为 'combat'，让玩家能立刻开枪
-    // ============================================================
     if (gameMode === 'survival') {
         if (typeof startSurvivalMode === 'function') startSurvivalMode();
         gameState = 'combat';
@@ -205,9 +199,6 @@ function endPrep(now) {
     }
 }
 
-// ============================================================
-// ★ 修复：endMatch 支持联机模式下的颜色/比分正确映射
-// ============================================================
 function endMatch(winner) {
     running = false; gameState = 'idle';
     if (document.pointerLockElement) document.exitPointerLock();
@@ -242,16 +233,13 @@ function endMatch(winner) {
             redScore  = p1IsBlue ? p2.score : p1.score;
         } else {
             if (NET.mySeat === 'blue') {
-                blueScore = p1.score;
-                redScore  = p2.score;
+                blueScore = p1.score; redScore = p2.score;
             } else {
-                blueScore = p2.score;
-                redScore  = p1.score;
+                blueScore = p2.score; redScore = p1.score;
             }
         }
     } else {
-        blueScore = p1.score;
-        redScore  = p2.score;
+        blueScore = p1.score; redScore = p2.score;
     }
 
     const el = document.getElementById('endOverlay');
@@ -275,7 +263,6 @@ function endMatch(winner) {
     el.style.display = 'flex';
 
     if (typeof setOver === 'function') setOver(true);
-
     sWin();
 
     document.body.classList.remove('in-game');
@@ -287,8 +274,7 @@ function endMatch(winner) {
     if (isOnline && NET.isHost) {
         if (typeof NET_sendRoundEvent === 'function') {
             NET_sendRoundEvent('idle', 0, false, roundNumber, {
-                blueScore: blueScore,
-                redScore:  redScore,
+                blueScore: blueScore, redScore: redScore,
             });
         }
     }

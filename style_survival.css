@@ -37,32 +37,13 @@
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
 }
-#survivalHUD .sv-title {
-    font-size: 12px;
-    color: #ff7a6d;
-    letter-spacing: 3px;
-    margin-bottom: 6px;
-}
-#survivalHUD .sv-wave {
-    font-size: 18px;
-    font-weight: 700;
-    color: #ffd24a;
-    margin-bottom: 4px;
-    text-shadow: 0 1px 6px rgba(255, 210, 74, 0.35);
-}
-#survivalHUD .sv-zombies {
-    font-size: 14px;
-    color: #7ee08a;
-    margin-bottom: 6px;
-}
-#survivalHUD .sv-status {
-    font-size: 12px;
-    color: #9fb2c8;
-}
+#survivalHUD .sv-title { font-size: 12px; color: #ff7a6d; letter-spacing: 3px; margin-bottom: 6px; }
+#survivalHUD .sv-wave { font-size: 18px; font-weight: 700; color: #ffd24a; margin-bottom: 4px; text-shadow: 0 1px 6px rgba(255, 210, 74, 0.35); }
+#survivalHUD .sv-zombies { font-size: 14px; color: #7ee08a; margin-bottom: 6px; }
+#survivalHUD .sv-status { font-size: 12px; color: #9fb2c8; }
 
 /* ============================================================
-   ★ 波次战绩面板（波清空时显示 3 秒）
-   —— 大尺寸版本
+   波次战绩面板
    ============================================================ */
 #survivalWaveSummary {
     position: fixed;
@@ -70,12 +51,9 @@
     left: 50%;
     transform: translate(-50%, -50%) scale(0.9);
     z-index: 90;
-
-    /* ★ 加大尺寸 */
     min-width: 620px;
     max-width: 860px;
     padding: 38px 56px 36px;
-
     background: rgba(13, 19, 30, 0.94);
     border: 1px solid rgba(255, 210, 74, 0.45);
     border-radius: 20px;
@@ -85,7 +63,6 @@
         inset 0 0 60px rgba(255, 210, 74, 0.06);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
-
     color: #fff;
     font-family: "Microsoft YaHei", Arial, sans-serif;
     pointer-events: none;
@@ -97,8 +74,6 @@
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
 }
-
-/* 标题 */
 .sv-summary-title {
     text-align: center;
     font-size: 34px;
@@ -116,15 +91,7 @@
     font-size: 40px;
     padding: 0 6px;
 }
-
-/* 列表 */
-.sv-summary-list {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-}
-
-/* 单行 */
+.sv-summary-list { display: flex; flex-direction: column; gap: 14px; }
 .sv-summary-row {
     display: grid;
     grid-template-columns: 70px 1fr 140px;
@@ -137,19 +104,13 @@
     font-size: 24px;
     transition: background 0.2s;
 }
-
-/* 第 1 名高亮 */
 .sv-summary-row:first-child {
-    background: linear-gradient(90deg,
-        rgba(255, 210, 74, 0.22),
-        rgba(255, 210, 74, 0.06));
+    background: linear-gradient(90deg, rgba(255, 210, 74, 0.22), rgba(255, 210, 74, 0.06));
     border-left-color: #ffd24a;
     border-left-width: 6px;
     font-weight: 700;
     padding: 22px 26px;
 }
-
-/* 排名 */
 .sv-summary-rank {
     font-family: Consolas, monospace;
     font-size: 26px;
@@ -162,8 +123,6 @@
     font-size: 30px;
     text-shadow: 0 0 12px rgba(255, 210, 74, 0.6);
 }
-
-/* 名字 */
 .sv-summary-name {
     color: #cfe0f0;
     text-align: left;
@@ -173,12 +132,7 @@
     font-size: 26px;
     letter-spacing: 2px;
 }
-.sv-summary-row:first-child .sv-summary-name {
-    color: #fff;
-    text-shadow: 0 0 14px rgba(255, 210, 74, 0.4);
-}
-
-/* 击杀数 */
+.sv-summary-row:first-child .sv-summary-name { color: #fff; text-shadow: 0 0 14px rgba(255, 210, 74, 0.4); }
 .sv-summary-kills {
     text-align: right;
     font-family: Consolas, monospace;
@@ -187,40 +141,15 @@
     font-size: 28px;
     letter-spacing: 1px;
 }
-.sv-summary-row:first-child .sv-summary-kills {
-    color: #ffd24a;
-    font-size: 34px;
-    text-shadow: 0 0 14px rgba(255, 210, 74, 0.6);
-}
+.sv-summary-row:first-child .sv-summary-kills { color: #ffd24a; font-size: 34px; text-shadow: 0 0 14px rgba(255, 210, 74, 0.6); }
 
-/* ---------- 移动端 ---------- */
 @media (pointer: coarse) {
-    #survivalWaveSummary {
-        min-width: 320px;
-        max-width: 88vw;
-        padding: 22px 26px 20px;
-        border-radius: 14px;
-    }
-    .sv-summary-title {
-        font-size: 20px;
-        letter-spacing: 3px;
-        margin-bottom: 16px;
-        padding-bottom: 12px;
-    }
+    #survivalWaveSummary { min-width: 320px; max-width: 88vw; padding: 22px 26px 20px; border-radius: 14px; }
+    .sv-summary-title { font-size: 20px; letter-spacing: 3px; margin-bottom: 16px; padding-bottom: 12px; }
     .sv-summary-title #svSummaryWave { font-size: 24px; }
     .sv-summary-list { gap: 8px; }
-    .sv-summary-row {
-        grid-template-columns: 40px 1fr 80px;
-        gap: 10px;
-        padding: 10px 14px;
-        font-size: 15px;
-        border-left-width: 3px;
-        border-radius: 8px;
-    }
-    .sv-summary-row:first-child {
-        padding: 12px 14px;
-        border-left-width: 4px;
-    }
+    .sv-summary-row { grid-template-columns: 40px 1fr 80px; gap: 10px; padding: 10px 14px; font-size: 15px; border-left-width: 3px; border-radius: 8px; }
+    .sv-summary-row:first-child { padding: 12px 14px; border-left-width: 4px; }
     .sv-summary-rank { font-size: 15px; }
     .sv-summary-row:first-child .sv-summary-rank { font-size: 17px; }
     .sv-summary-name { font-size: 15px; letter-spacing: 1px; }
@@ -229,7 +158,7 @@
 }
 
 /* ============================================================
-   ★ 失败 / 通关全屏提示
+   失败 / 通关全屏提示
    ============================================================ */
 #survivalEndOverlay {
     position: fixed;
@@ -238,57 +167,27 @@
     display: none;
     align-items: center;
     justify-content: center;
-    background: radial-gradient(
-        ellipse at center,
-        rgba(60, 5, 5, 0.88) 0%,
-        rgba(10, 0, 0, 0.96) 75%
-    );
+    background: radial-gradient(ellipse at center, rgba(60, 5, 5, 0.88) 0%, rgba(10, 0, 0, 0.96) 75%);
     animation: svDefeatFadeIn 0.4s ease-out;
 }
-
-@keyframes svDefeatFadeIn {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-}
-
-.sv-end-panel {
-    text-align: center;
-    color: #fff;
-    animation: svDefeatZoomIn 0.55s cubic-bezier(0.2, 1.4, 0.5, 1);
-    padding: 0 24px;
-}
-
-@keyframes svDefeatZoomIn {
-    from { transform: scale(0.5); opacity: 0; }
-    to   { transform: scale(1);   opacity: 1; }
-}
-
-.sv-end-icon {
-    font-size: 90px;
-    line-height: 1;
-    margin-bottom: 18px;
-    filter: drop-shadow(0 0 30px rgba(255, 60, 60, 0.85));
-    animation: svDefeatIconPulse 1.6s ease-in-out infinite;
-}
-
+@keyframes svDefeatFadeIn { from { opacity: 0; } to { opacity: 1; } }
+.sv-end-panel { text-align: center; color: #fff; animation: svDefeatZoomIn 0.55s cubic-bezier(0.2, 1.4, 0.5, 1); padding: 0 24px; }
+@keyframes svDefeatZoomIn { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.sv-end-icon { font-size: 90px; line-height: 1; margin-bottom: 18px; filter: drop-shadow(0 0 30px rgba(255, 60, 60, 0.85)); animation: svDefeatIconPulse 1.6s ease-in-out infinite; }
 @keyframes svDefeatIconPulse {
-    0%, 100% { transform: scale(1);    filter: drop-shadow(0 0 30px rgba(255, 60, 60, 0.85)); }
+    0%, 100% { transform: scale(1); filter: drop-shadow(0 0 30px rgba(255, 60, 60, 0.85)); }
     50%      { transform: scale(1.08); filter: drop-shadow(0 0 45px rgba(255, 90, 90, 1.0)); }
 }
-
 .sv-end-title {
     font-size: 56px;
     font-weight: 900;
     letter-spacing: 16px;
     color: #ff4a4a;
-    text-shadow:
-        0 0 30px rgba(255, 60, 60, 0.85),
-        0 4px 20px rgba(0, 0, 0, 0.85);
+    text-shadow: 0 0 30px rgba(255, 60, 60, 0.85), 0 4px 20px rgba(0, 0, 0, 0.85);
     margin-bottom: 26px;
     margin-left: 16px;
     font-family: "Microsoft YaHei", Arial, sans-serif;
 }
-
 .sv-end-hint {
     font-size: 14px;
     color: #9fb2c8;
@@ -296,14 +195,123 @@
     font-family: "Microsoft YaHei", Arial, sans-serif;
     animation: svDefeatPulse 1.5s ease-in-out infinite;
 }
-
-@keyframes svDefeatPulse {
-    0%, 100% { opacity: 0.45; }
-    50%      { opacity: 1;   }
-}
+@keyframes svDefeatPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
 
 @media (pointer: coarse) {
     .sv-end-icon  { font-size: 60px; margin-bottom: 12px; }
     .sv-end-title { font-size: 36px; letter-spacing: 10px; margin-bottom: 18px; margin-left: 10px; }
     .sv-end-hint  { font-size: 12px; letter-spacing: 2px; }
+}
+
+/* ============================================================
+   ★ 武器解锁面板
+   ============================================================ */
+#survivalUnlockPanel {
+    position: fixed;
+    inset: 0;
+    z-index: 110;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at center, rgba(8, 19, 31, 0.85) 0%, rgba(4, 8, 14, 0.96) 75%);
+    animation: svUnlockFadeIn 0.35s ease-out;
+}
+@keyframes svUnlockFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.sv-unlock-inner {
+    background: rgba(13, 19, 30, 0.96);
+    border: 2px solid rgba(255, 210, 74, 0.55);
+    border-radius: 16px;
+    padding: 30px 40px 34px;
+    box-shadow: 0 30px 90px rgba(0, 0, 0, 0.9), 0 0 60px rgba(255, 210, 74, 0.15);
+    text-align: center;
+    min-width: 500px;
+    max-width: 92vw;
+    animation: svUnlockZoom 0.4s cubic-bezier(0.2, 1.4, 0.5, 1);
+}
+@keyframes svUnlockZoom { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+.sv-unlock-icon {
+    font-size: 52px;
+    line-height: 1;
+    margin-bottom: 10px;
+    filter: drop-shadow(0 0 20px rgba(255, 210, 74, 0.7));
+    animation: svUnlockIcon 2s ease-in-out infinite;
+}
+@keyframes svUnlockIcon { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+
+.sv-unlock-title {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: 8px;
+    color: #ffd24a;
+    text-shadow: 0 0 24px rgba(255, 210, 74, 0.5);
+    margin-bottom: 8px;
+    margin-left: 8px;
+}
+.sv-unlock-hint {
+    font-size: 13px;
+    color: #9fb2c8;
+    letter-spacing: 2px;
+    margin-bottom: 24px;
+}
+
+.sv-unlock-list { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+
+.sv-unlock-btn {
+    padding: 18px 26px;
+    min-width: 140px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid rgba(255, 210, 74, 0.4);
+    border-radius: 12px;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.18s;
+    font-family: inherit;
+    text-align: center;
+}
+.sv-unlock-btn:hover {
+    background: rgba(255, 210, 74, 0.15);
+    border-color: #ffd24a;
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(255, 210, 74, 0.35);
+}
+.sv-unlock-btn:active { transform: translateY(0) scale(0.97); }
+
+.sv-unlock-name {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    color: #ffd24a;
+    margin-bottom: 4px;
+}
+.sv-unlock-desc { font-size: 12px; color: #9fb2c8; letter-spacing: 1px; }
+
+/* ★ 锁定的武器按钮 */
+.weapon-btn.locked {
+    opacity: 0.35;
+    filter: grayscale(0.9);
+    cursor: not-allowed !important;
+    position: relative;
+}
+.weapon-btn.locked::after {
+    content: '🔒';
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    font-size: 14px;
+}
+.weapon-btn.locked:hover {
+    background: #2a3a4a !important;
+    border-color: #5a7a9a !important;
+}
+
+@media (pointer: coarse) {
+    .sv-unlock-inner { padding: 20px 20px 22px; min-width: 280px; }
+    .sv-unlock-icon { font-size: 40px; }
+    .sv-unlock-title { font-size: 18px; letter-spacing: 4px; }
+    .sv-unlock-hint { font-size: 11px; }
+    .sv-unlock-btn { padding: 12px 16px; min-width: 110px; }
+    .sv-unlock-name { font-size: 16px; letter-spacing: 2px; }
+    .sv-unlock-desc { font-size: 11px; }
 }

@@ -1,4 +1,4 @@
-// ===== js/player.js – 玩家构造 + 武器切换（服务器权威版 · 切枪保留弹药修复 v2） =====
+// ===== js/player.js – 玩家构造 + 武器切换（每把枪独立弹药） =====
 
 function setWeapon(p, key) {
     if (p.throwFuseActive && p.throwFuseInHand) {
@@ -16,6 +16,16 @@ function setWeapon(p, key) {
                 p.throwFuseInHand = false;
             }
         }
+    }
+
+    // ============================================================
+    // ★ 切换前保存当前枪械的弹药
+    //   （无论切到哪把枪/刀/烟/闪，都先把当前枪的弹药存起来）
+    // ============================================================
+    if (!p.weaponAmmo) p.weaponAmmo = {};
+    if (p.weapon && p.weapon.mag !== undefined
+        && !p.isMelee && !p.isSmoke && !p.isFlash) {
+        p.weaponAmmo[p.weaponKey] = { ammo: p.ammo, reserve: p.reserve };
     }
 
     if (key === 'knife') {
@@ -75,10 +85,6 @@ function setWeapon(p, key) {
     const w = WEAPONS[key];
     if (!w) return;
 
-    const comingBackFromNonGun = (p.isMelee || p.isSmoke || p.isFlash);
-    const isPrimaryGun = (p.primaryWeaponKey === key);
-    const shouldPreserveAmmo = comingBackFromNonGun && isPrimaryGun;
-
     p.weaponKey = key; p.primaryWeaponKey = key; p.weapon = w;
     p.isMelee = false; p.isSmoke = false; p.isFlash = false;
     while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
@@ -86,10 +92,16 @@ function setWeapon(p, key) {
     while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
     p.vm.add(makeViewmodel(key, p.mat));
 
-    if (!shouldPreserveAmmo) {
-        p.ammo = w.mag;
-        p.reserve = w.startReserve;
+    // ============================================================
+    // ★ 从独立弹药记录恢复（首次访问该枪则初始化为标准弹药）
+    //   换枪不会重置弹药 —— 每把枪各自记录
+    // ============================================================
+    if (!p.weaponAmmo[key]) {
+        p.weaponAmmo[key] = { ammo: w.mag, reserve: w.startReserve };
     }
+    p.ammo = p.weaponAmmo[key].ammo;
+    p.reserve = p.weaponAmmo[key].reserve;
+
     p.reloadEnd = 0;
 
     p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
@@ -116,7 +128,7 @@ function setWeapon(p, key) {
 }
 
 // ============================================================
-// ★ 通用武器模型切换函数
+// ★ 通用武器模型切换函数（网络同步用，不改弹药）
 // ============================================================
 function applyWeaponToPlayer(p, key, withViewmodel) {
     if (!p) return;
@@ -134,20 +146,13 @@ function applyWeaponToPlayer(p, key, withViewmodel) {
     let weapon = null, weaponKey = null;
 
     if (key === 'knife') {
-        isMelee = true;
-        weaponKey = 'knife';
-        weapon = MELEE;
+        isMelee = true; weaponKey = 'knife'; weapon = MELEE;
     } else if (key === 'smoke') {
-        isSmoke = true;
-        weaponKey = 'smoke';
-        weapon = SMOKE;
+        isSmoke = true; weaponKey = 'smoke'; weapon = SMOKE;
     } else if (key === 'flash') {
-        isFlash = true;
-        weaponKey = 'flash';
-        weapon = FLASH;
+        isFlash = true; weaponKey = 'flash'; weapon = FLASH;
     } else if (WEAPONS[key]) {
-        weaponKey = key;
-        weapon = WEAPONS[key];
+        weaponKey = key; weapon = WEAPONS[key];
     } else {
         return;
     }
@@ -172,19 +177,14 @@ function applyWeaponToPlayer(p, key, withViewmodel) {
 window.applyWeaponToPlayer = applyWeaponToPlayer;
 
 // ============================================================
-// ★ 暴露某个玩家所有可命中网格
+// 暴露玩家可命中网格
 // ============================================================
 function getPlayerHitMeshes(p) {
     if (!p) return [];
     return [
-        p.head,
-        p.body,
-        p.visor,
-        p.pack,
-        p.legL, p.legR,
-        p.footL, p.footR,
-        p.armLUp, p.armLLow,
-        p.armRUp, p.armRLow,
+        p.head, p.body, p.visor, p.pack,
+        p.legL, p.legR, p.footL, p.footR,
+        p.armLUp, p.armLLow, p.armRUp, p.armRLow,
         p.handL, p.handR
     ];
 }
@@ -192,34 +192,27 @@ window.getPlayerHitMeshes = getPlayerHitMeshes;
 
 // ============================================================
 // makePlayer
-//
-//   ★ 性能优化：删除了 vmMuzzle 和 fiLight 两个 PointLight
 // ============================================================
 function makePlayer(id, color, spawn, weaponKey) {
     const mat = new THREE.MeshLambertMaterial({ color, transparent: true });
     const g = new THREE.Group();
 
-    // ---- 头 ----
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.30, 0.30), mat);
     head.position.y = 1.69;
     head.userData.part = 'head';
 
-    // ---- 面罩 ----
     const visor = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.09, 0.05), DARK_MAT);
     visor.position.set(0, 1.70, -0.17);
     visor.userData.part = 'head';
 
-    // ---- 背包 ----
     const pack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.44, 0.16), DARK_MAT);
     pack.position.set(0, 1.24, 0.24);
     pack.userData.part = 'body';
 
-    // ---- 躯干 ----
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.62, 0.32), mat);
     body.position.y = 1.23;
     body.userData.part = 'body';
 
-    // ---- 腿 × 2 ----
     const legL = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.84, 0.24), mat);
     legL.position.set(-0.12, 0.50, 0);
     legL.userData.part = 'leg';
@@ -227,7 +220,6 @@ function makePlayer(id, color, spawn, weaponKey) {
     legR.position.set( 0.12, 0.50, 0);
     legR.userData.part = 'leg';
 
-    // ---- 脚 × 2 ----
     const footL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.34), DARK_MAT);
     footL.position.set(-0.12, 0.04, -0.06);
     footL.userData.part = 'leg';
@@ -235,7 +227,6 @@ function makePlayer(id, color, spawn, weaponKey) {
     footR.position.set( 0.12, 0.04, -0.06);
     footR.userData.part = 'leg';
 
-    // ---- 上臂 × 2 ----
     const armLUp = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.32, 0.16), mat);
     armLUp.position.set(-0.31, 1.32, 0);
     armLUp.userData.part = 'body';
@@ -243,7 +234,6 @@ function makePlayer(id, color, spawn, weaponKey) {
     armRUp.position.set( 0.31, 1.32, 0);
     armRUp.userData.part = 'body';
 
-    // ---- 前臂 × 2 ----
     const armLLow = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.28, 0.14), mat);
     armLLow.position.set(-0.31, 1.02, 0);
     armLLow.userData.part = 'body';
@@ -251,7 +241,6 @@ function makePlayer(id, color, spawn, weaponKey) {
     armRLow.position.set( 0.31, 1.02, 0);
     armRLow.userData.part = 'body';
 
-    // ---- 手 × 2 ----
     const handL = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.16, 0.14), DARK_MAT);
     handL.position.set(-0.31, 0.80, 0);
     handL.userData.part = 'body';
@@ -259,11 +248,8 @@ function makePlayer(id, color, spawn, weaponKey) {
     handR.position.set( 0.31, 0.80, 0);
     handR.userData.part = 'body';
 
-    // ---- 武器挂点 ----
     const gunHolder = new THREE.Group();
     gunHolder.position.set(0.26, 1.28, -0.42);
-
-    // ★ 保留 muzzle：第三人称枪口光
     const light = new THREE.PointLight(0xffcc66, 0, 9);
     light.position.set(0.26, 1.3, -0.85);
 
@@ -275,19 +261,14 @@ function makePlayer(id, color, spawn, weaponKey) {
         gunHolder, light
     );
 
-    // ============================================================
-    // 闪光指示器（★ 删掉了 fiLight）
-    // ============================================================
+    // 闪光指示器
     const flashIndicator = new THREE.Group();
     flashIndicator.position.set(0, 1.69, -0.28);
     flashIndicator.visible = false;
 
     const fiSphereMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.85,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending
+        color: 0xffffff, transparent: true, opacity: 0.85,
+        depthWrite: false, blending: THREE.AdditiveBlending
     });
     const fiSphere = new THREE.Mesh(new THREE.SphereGeometry(0.20, 16, 12), fiSphereMat);
     fiSphere.renderOrder = 100;
@@ -295,12 +276,8 @@ function makePlayer(id, color, spawn, weaponKey) {
     flashIndicator.add(fiSphere);
 
     const fiHaloMat = new THREE.MeshBasicMaterial({
-        color: 0xfff4c0,
-        transparent: true,
-        opacity: 0.45,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending
+        color: 0xfff4c0, transparent: true, opacity: 0.45,
+        depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending
     });
     const fiHalo = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 12), fiHaloMat);
     fiHalo.renderOrder = 99;
@@ -312,40 +289,25 @@ function makePlayer(id, color, spawn, weaponKey) {
 
     g.add(flashIndicator);
 
-    // ============================================================
-    // ★ 易伤指示器（紫色球壳 + 内核，无 PointLight）
-    // ============================================================
+    // 易伤指示器
     const vulnIndicator = new THREE.Group();
     vulnIndicator.position.set(0, 1.0, 0);
     vulnIndicator.visible = false;
 
     const vulnSphereMat = new THREE.MeshBasicMaterial({
-        color: 0xaa44ff,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        side: THREE.BackSide,
-        blending: THREE.AdditiveBlending,
+        color: 0xaa44ff, transparent: true, opacity: 0,
+        depthWrite: false, side: THREE.BackSide, blending: THREE.AdditiveBlending,
     });
-    const vulnSphere = new THREE.Mesh(
-        new THREE.SphereGeometry(1.05, 20, 14),
-        vulnSphereMat
-    );
+    const vulnSphere = new THREE.Mesh(new THREE.SphereGeometry(1.05, 20, 14), vulnSphereMat);
     vulnSphere.renderOrder = 97;
     vulnSphere.castShadow = false;
     vulnIndicator.add(vulnSphere);
 
     const vulnCoreMat = new THREE.MeshBasicMaterial({
-        color: 0xcc66ff,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
+        color: 0xcc66ff, transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending,
     });
-    const vulnCore = new THREE.Mesh(
-        new THREE.SphereGeometry(0.72, 16, 12),
-        vulnCoreMat
-    );
+    const vulnCore = new THREE.Mesh(new THREE.SphereGeometry(0.72, 16, 12), vulnCoreMat);
     vulnCore.renderOrder = 98;
     vulnCore.castShadow = false;
     vulnIndicator.add(vulnCore);
@@ -373,12 +335,8 @@ function makePlayer(id, color, spawn, weaponKey) {
         flashIndicator,
         vulnIndicator,
 
-        head,
-        body,
-        visor,
-        pack,
-        legL, legR,
-        footL, footR,
+        head, body, visor, pack,
+        legL, legR, footL, footR,
         armLUp, armLLow, armRUp, armRLow,
         handL, handR,
 
@@ -414,9 +372,9 @@ function makePlayer(id, color, spawn, weaponKey) {
         throwFuseInHand: false,
         _shadowDisabled: false,
 
-        // ============================================================
-        // ★ 后坐力状态
-        // ============================================================
+        // ★ 每把枪的独立弹药记录
+        weaponAmmo: {},
+
         recoil: {
             offsetPitch: 0,
             offsetYaw: 0,
@@ -428,21 +386,14 @@ function makePlayer(id, color, spawn, weaponKey) {
         _netTargetPos: new THREE.Vector3(spawn.x, 0, spawn.z),
         _netTargetYaw: spawn.yaw,
 
-        // ============================================================
-        // ★ 滑索 + 硬直 + 易伤
-        // ============================================================
         zipline: { active: false, lineIdx: -1, t: 0, dir: 1 },
         _zipStunPending: false,
         stunUntil: 0,
         vulnerableUntil: 0,
 
         input: {
-            forward: 0,
-            right: 0,
-            jump: false,
-            crouch: false,
-            fire: false,
-            aim: false
+            forward: 0, right: 0, jump: false,
+            crouch: false, fire: false, aim: false
         }
     };
 

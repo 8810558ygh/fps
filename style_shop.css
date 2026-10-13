@@ -1,0 +1,170 @@
+/* ===== style_shop.css – 生存商店 ===== */
+#survivalShop {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 8, 14, 0.72);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    pointer-events: auto;
+}
+
+.shop-panel {
+    width: min(720px, 92vw);
+    padding: 24px 32px 20px;
+    background: rgba(13, 19, 30, 0.96);
+    border: 1px solid rgba(255, 210, 74, 0.45);
+    border-radius: 16px;
+    box-shadow:
+        0 24px 70px rgba(0, 0, 0, 0.9),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    color: #fff;
+    font-family: "Microsoft YaHei", Arial, sans-serif;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.shop-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 16px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.shop-title {
+    margin: 0;
+    font-size: 22px;
+    letter-spacing: 8px;
+    color: #ffd24a;
+    font-weight: 700;
+    text-shadow: 0 2px 14px rgba(255, 210, 74, 0.4);
+}
+
+.shop-coins {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    background: rgba(255, 210, 74, 0.12);
+    border: 1px solid rgba(255, 210, 74, 0.5);
+    border-radius: 20px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #ffd24a;
+    font-family: Consolas, "Courier New", monospace;
+    letter-spacing: 1px;
+}
+.shop-coins .coin-icon { font-size: 20px; }
+
+.shop-section-title {
+    margin: 18px 0 10px;
+    font-size: 13px;
+    color: #9fb2c8;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+}
+
+.shop-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+}
+
+/* ---------- 卡片 ---------- */
+.shop-card {
+    padding: 14px 12px 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 2px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 108px;
+}
+.shop-card:hover {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 210, 74, 0.55);
+    transform: translateY(-2px);
+}
+.shop-card:active { transform: translateY(0) scale(0.97); }
+
+.shop-card.locked {
+    border-color: rgba(255, 255, 255, 0.08);
+    background: rgba(20, 24, 32, 0.6);
+}
+.shop-card.locked:hover {
+    border-color: rgba(255, 210, 74, 0.55);
+    background: rgba(30, 28, 12, 0.7);
+}
+
+.shop-card.equipped {
+    background: linear-gradient(180deg,
+        rgba(255, 210, 74, 0.24),
+        rgba(240, 169, 46, 0.08));
+    border-color: #ffd24a;
+    box-shadow:
+        0 0 0 1px rgba(255, 210, 74, 0.4),
+        0 6px 20px rgba(255, 210, 74, 0.3);
+}
+
+.shop-card-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: #cfe0f0;
+    letter-spacing: 2px;
+    margin-bottom: 6px;
+}
+.shop-card.locked .shop-card-name { color: #7c8ea0; }
+.shop-card.equipped .shop-card-name { color: #ffd24a; }
+
+.shop-card-sub {
+    font-size: 13px;
+    color: #9fb2c8;
+    letter-spacing: 0.5px;
+    line-height: 1.5;
+}
+.shop-card.equipped .shop-card-sub { color: #ffe9a8; }
+.shop-card.locked .shop-card-sub  { color: #ffd24a; font-weight: 700; }
+
+.shop-card-info {
+    margin-top: 8px;
+    font-size: 12px;
+    font-family: Consolas, "Courier New", monospace;
+    color: #7ee08a;
+    letter-spacing: 1px;
+}
+.shop-card.locked .shop-card-info { color: transparent; }
+
+/* ---------- 底部提示 ---------- */
+.shop-hint {
+    margin-top: 18px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    text-align: center;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.4);
+    letter-spacing: 2px;
+}
+
+/* ---------- 移动端 ---------- */
+@media (pointer: coarse) {
+    .shop-panel { padding: 18px 16px 16px; }
+    .shop-title { font-size: 16px; letter-spacing: 4px; }
+    .shop-coins { padding: 4px 12px; font-size: 15px; }
+    .shop-coins .coin-icon { font-size: 17px; }
+    .shop-section-title { margin: 12px 0 8px; font-size: 11px; letter-spacing: 2px; }
+    .shop-row { gap: 8px; }
+    .shop-card { padding: 10px 8px 8px; min-height: 92px; border-radius: 10px; }
+    .shop-card-name { font-size: 13px; letter-spacing: 1px; margin-bottom: 4px; }
+    .shop-card-sub  { font-size: 11px; }
+    .shop-card-info { font-size: 10px; margin-top: 6px; }
+    .shop-hint { font-size: 10px; letter-spacing: 1px; margin-top: 12px; padding-top: 8px; }
+}

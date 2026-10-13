@@ -214,9 +214,14 @@ function explodeBarrel(barrel, from) {
         sExplosion();
     }
 
-    // 爆炸伤害
+    // ============================================================
+    // 爆炸伤害：玩家 + 僵尸
+    // ============================================================
     _applyExplosionDamageToPlayer(p1, ex, ey, ez, from);
     _applyExplosionDamageToPlayer(p2, ex, ey, ez, from);
+
+    // ★ 新增：对周围僵尸造成伤害
+    _applyExplosionDamageToZombies(ex, ey, ez, from);
 
     // 联机：广播给客户端
     if (typeof gameMode !== 'undefined' && gameMode === 'online'
@@ -253,7 +258,7 @@ function _applyExplosionDamageToPlayer(p, ex, ey, ez, from) {
 
     if (dmg <= 1) return;
 
-    // ★ 应用易伤（如果适用）
+    // 应用易伤（如果适用）
     if (typeof window._applyVulnerabilityBonus === 'function') {
         dmg = window._applyVulnerabilityBonus(p, dmg, now);
     }
@@ -261,6 +266,41 @@ function _applyExplosionDamageToPlayer(p, ex, ey, ez, from) {
     if (typeof damage === 'function') {
         const attacker = from || p;
         damage(p, dmg, attacker);
+    }
+}
+
+// ============================================================
+// ★ 爆炸对僵尸造成伤害（生存模式）
+//
+//   · 距离衰减同玩家（1 - dist/R）^1.5
+//   · 僵尸没有护甲/易伤，直接扣血
+//   · 击杀了 → damageZombie 内部处理计数
+// ============================================================
+function _applyExplosionDamageToZombies(ex, ey, ez, from) {
+    if (typeof getAllZombies !== 'function') return;
+    if (typeof damageZombie !== 'function') return;
+    if (typeof running !== 'undefined' && !running) return;
+    if (typeof gameState !== 'undefined' && gameState !== 'combat') return;
+
+    const zombies = getAllZombies();
+    for (let i = 0; i < zombies.length; i++) {
+        const z = zombies[i];
+        if (!z.alive) continue;
+
+        const dx = z.pos.x - ex;
+        const dz = z.pos.z - ez;
+        const dy = (z.pos.y + (z.height || 1.8) * 0.5) - ey;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        if (dist > BARREL_EXPLODE_RADIUS) continue;
+
+        const t = 1 - dist / BARREL_EXPLODE_RADIUS;
+        let dmg = BARREL_EXPLODE_MAX_DMG * Math.pow(t, 1.5);
+
+        if (dmg <= 1) continue;
+
+        // 直接扣血（僵尸无护甲、无易伤）
+        damageZombie(z, dmg, from);
     }
 }
 

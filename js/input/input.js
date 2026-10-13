@@ -1,10 +1,7 @@
-// ===== js/input.js – 键盘/鼠标输入（服务器权威版） =====
+// ===== js/input.js – 键盘/鼠标输入 =====
 const keys = {};
 const mouse = { aim: false, leftDown: false };
 
-// ============================================================
-// ★ 安全访问 NET
-// ============================================================
 function _isSpectatorSafe() {
     return typeof NET !== 'undefined'
         && typeof NET.isSpectator === 'function'
@@ -14,6 +11,11 @@ function _isSpectatorSafe() {
 function _isOnlineClient() {
     return typeof gameMode !== 'undefined' && gameMode === 'online'
         && typeof NET !== 'undefined' && NET.role === 'player' && !NET.isHost;
+}
+
+// ★ 生存模式判断（用于拦截烟/闪相关操作）
+function _isSurvivalMode() {
+    return typeof gameMode !== 'undefined' && gameMode === 'survival';
 }
 
 function _requestFuseStart(type) {
@@ -43,9 +45,9 @@ function _requestFuseRelease() {
             const remainMs = Math.max(0, p1.throwFuseEnd - performance.now());
 
             NET.pendingFuseRelease = {
-                type:   type,
-                px:     camPos.x, py: camPos.y, pz: camPos.z,
-                vx:     vel.x,    vy: vel.y,    vz: vel.z,
+                type: type,
+                px: camPos.x, py: camPos.y, pz: camPos.z,
+                vx: vel.x, vy: vel.y, vz: vel.z,
                 fuseMs: remainMs,
             };
         } else {
@@ -60,8 +62,30 @@ function _requestFuseRelease() {
     }
 }
 
+// ============================================================
+// ★ 判断当前是否"允许打开武器选择面板"（非生存模式）
+// ============================================================
+function _canOpenWeaponPanel() {
+    if (!running || isOver()) return false;
+    if (gameState === 'prep') return true;
+    return false;
+}
+
 window.addEventListener('keydown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
+
+    // ============================================================
+    // ★ 商店打开时：屏蔽所有游戏输入，只允许 B / Esc 关闭
+    // ============================================================
+    if (typeof window.Shop !== 'undefined'
+        && typeof window.Shop.isOpen === 'function'
+        && window.Shop.isOpen()) {
+        if (e.code === 'Escape' || e.code === 'KeyB') {
+            e.preventDefault();
+            window.Shop.close();
+        }
+        return;
+    }
 
     if (_isSpectatorSafe()) {
         if (e.code === 'Enter' || e.code === 'NumpadEnter') {
@@ -89,6 +113,7 @@ window.addEventListener('keydown', e => {
 
     if (!e.repeat) {
         const isOC = _isOnlineClient();
+        const isSV = _isSurvivalMode();
 
         if (e.code === 'Digit1' || e.code === 'Numpad1') {
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
@@ -109,7 +134,10 @@ window.addEventListener('keydown', e => {
             }
             return;
         }
+
+        // ★ 生存模式没有烟/闪，直接拦截
         if (e.code === 'Digit3' || e.code === 'Numpad3') {
+            if (isSV) return;
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
                 const key = p1.isSmoke ? (p1.primaryWeaponKey || 'rifle') : 'smoke';
                 setWeapon(p1, key);
@@ -118,6 +146,7 @@ window.addEventListener('keydown', e => {
             return;
         }
         if (e.code === 'Digit4' || e.code === 'Numpad4') {
+            if (isSV) return;
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
                 const key = p1.isFlash ? (p1.primaryWeaponKey || 'rifle') : 'flash';
                 setWeapon(p1, key);
@@ -131,17 +160,34 @@ window.addEventListener('keydown', e => {
             if (_isOnlineClient()) NET.pendingReload = true;
         }
 
+        // ============================================================
+        // ★ B 键
+        //   · 生存模式 → 商店（随时）
+        //   · 其他模式 → prep 阶段的武器面板
+        // ============================================================
         if (e.code === 'KeyB') {
-            if (running && !isOver() && gameState === 'prep') {
+            if (isSV
+                && typeof window.Shop !== 'undefined'
+                && typeof window.Shop.canOpen === 'function'
+                && window.Shop.canOpen()) {
+                window.Shop.toggle();
+                return;
+            }
+            if (_canOpenWeaponPanel()) {
                 const panel = document.getElementById('weaponPanel');
                 if (panel) {
                     const isOpen = panel.style.display === 'flex';
                     if (isOpen) {
                         panel.style.display = 'none';
                         if (typeof isTouchDevice !== 'undefined' && !isTouchDevice) {
-                            if (document.pointerLockElement !== renderer.domElement) renderer.domElement.requestPointerLock();
+                            if (document.pointerLockElement !== renderer.domElement) {
+                                renderer.domElement.requestPointerLock();
+                            }
                         }
                     } else {
+                        if (typeof window.updateWeaponPanelLocks === 'function') {
+                            window.updateWeaponPanelLocks();
+                        }
                         panel.style.display = 'flex';
                         if (document.pointerLockElement) document.exitPointerLock();
                     }
@@ -159,20 +205,11 @@ window.addEventListener('keydown', e => {
             return;
         }
 
-        // ============================================================
-        // ★ F 键：先试传送门，失败就试滑索
-        //   两个系统空间上不重叠：
-        //     · tryEnterPortal() 内部会检测（生存模式 + portal 阶段 + 玩家靠近）
-        //       只要有一个不满足，立刻返回 false
-        //     · 剩下交给 tryMountZipline()
-        // ============================================================
         if (e.code === 'KeyF') {
-            // 1. 试传送门（不满足条件直接 false，不消耗 F 键）
             if (typeof tryEnterPortal === 'function' && tryEnterPortal()) {
                 return;
             }
 
-            // 2. 试滑索
             if (running && !isOver() && gameState === 'combat') {
                 if (typeof p1 !== 'undefined' && p1
                     && typeof window.tryMountZipline === 'function') {
@@ -180,8 +217,8 @@ window.addEventListener('keydown', e => {
                     if (mounted && isOC && p1.zipline) {
                         NET.pendingZiplineMount = {
                             lineIdx: p1.zipline.lineIdx,
-                            t:       p1.zipline.t,
-                            dir:     p1.zipline.dir,
+                            t: p1.zipline.t,
+                            dir: p1.zipline.dir,
                         };
                     }
                 }
@@ -194,9 +231,7 @@ window.addEventListener('keydown', e => {
                 && p1.zipline && p1.zipline.active) {
                 if (typeof window.dismountZipline === 'function') {
                     window.dismountZipline(p1);
-                    if (isOC) {
-                        NET.pendingZiplineDismount = true;
-                    }
+                    if (isOC) NET.pendingZiplineDismount = true;
                 }
                 e.preventDefault();
                 return;
@@ -215,6 +250,11 @@ window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; }
 document.addEventListener('mousedown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
+    // ★ 商店打开时屏蔽鼠标
+    if (typeof window.Shop !== 'undefined'
+        && typeof window.Shop.isOpen === 'function'
+        && window.Shop.isOpen()) return;
+
     if (_isSpectatorSafe()) {
         if (e.button === 0) {
             e.preventDefault(); e.stopPropagation();
@@ -225,15 +265,11 @@ document.addEventListener('mousedown', e => {
 
     if (e.button === 0) {
         if (typeof p1 !== 'undefined' && p1 && p1.isSmoke) {
-            if (running && !isOver() && gameState === 'combat') {
-                _requestFuseStart('smoke');
-            }
+            if (running && !isOver() && gameState === 'combat') _requestFuseStart('smoke');
             e.preventDefault(); return;
         }
         if (typeof p1 !== 'undefined' && p1 && p1.isFlash) {
-            if (running && !isOver() && gameState === 'combat') {
-                _requestFuseStart('flash');
-            }
+            if (running && !isOver() && gameState === 'combat') _requestFuseStart('flash');
             e.preventDefault(); return;
         }
         mouse.leftDown = true;
@@ -246,7 +282,7 @@ document.addEventListener('mousedown', e => {
                     NET.pendingMelee = true;
                     NET.pendingMeleeHeavy = true;
                 }
-            } else if (typeof p1 !== 'undefined' && p1 && (p1.isSmoke || p1.isFlash)) { /* 无右键 */ }
+            } else if (typeof p1 !== 'undefined' && p1 && (p1.isSmoke || p1.isFlash)) { /* 无 */ }
             else toggleAim();
         }
     } else { e.preventDefault(); e.stopPropagation(); }
@@ -258,17 +294,34 @@ document.addEventListener('mouseup', e => {
     if (e.button === 0) {
         mouse.leftDown = false;
         _requestFuseRelease();
-    }
-    else if (e.button === 2) { e.preventDefault(); e.stopPropagation(); }
+    } else if (e.button === 2) { e.preventDefault(); e.stopPropagation(); }
 });
 
 document.addEventListener('wheel', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     if (_isSpectatorSafe()) return;
+
+    // ★ 商店打开时屏蔽滚轮
+    if (typeof window.Shop !== 'undefined'
+        && typeof window.Shop.isOpen === 'function'
+        && window.Shop.isOpen()) return;
+
     e.preventDefault(); e.stopPropagation();
     if (!running || isOver()) return;
     if (typeof p1 === 'undefined' || !p1) return;
     if (gameState === 'prep') return;
+
+    // ============================================================
+    // ★ 生存模式：只在【主武器 ⇄ 刀】之间切换
+    //   不经过烟/闪
+    // ============================================================
+    if (_isSurvivalMode()) {
+        let newKey;
+        if (p1.isMelee) newKey = p1.primaryWeaponKey || 'rifle';
+        else            newKey = 'knife';
+        setWeapon(p1, newKey);
+        return;
+    }
 
     let newKey;
     if (p1.isMelee)       newKey = 'smoke';
