@@ -9,12 +9,14 @@
         return;
     }
 
-    const ALL_WEAPON_TYPES = ['rifle', 'sniper', 'shotgun', 'odin', 'knife', 'smoke', 'flash'];
+    // ★ 加入 medkit 预加载
+    const ALL_WEAPON_TYPES = ['rifle', 'sniper', 'shotgun', 'odin', 'knife', 'smoke', 'flash', 'medkit'];
 
     const WEAPON_NAMES = {
         rifle: '狂徒', sniper: '冥驹', shotgun: '判官',
         odin: '奥丁', knife: '军刀',
         smoke: '烟雾弹', flash: '闪光弹',
+        medkit: '医疗包',
     };
 
     // ============================================================
@@ -250,11 +252,6 @@
         });
     }
 
-    // ============================================================
-    // ★ 轻量：只编译当前场景（切地图用）
-    //   · 不挂武器模板
-    //   · 只对 scene 里已有的 mesh 编译 shader
-    // ============================================================
     function warmupMapOnly() {
         if (typeof renderer === 'undefined' || !renderer) return;
         if (typeof scene === 'undefined' || !scene) return;
@@ -325,7 +322,7 @@
                     vm.rotation.copy(br);
                 }
             }
-            if (type === 'smoke' || type === 'flash') {
+            if (type === 'smoke' || type === 'flash' || type === 'medkit') {
                 const bp = vm.userData.basePos;
                 const br = vm.userData.baseRot;
                 if (bp && br) {
@@ -547,6 +544,7 @@
                 'throwCountdownLabel', 'throwCountdownTime',
                 'adsReticle', 'scorePanel', 'aiToggle', 'exitBtn',
                 'survivalWaveSummary', 'survivalEndOverlay',
+                'medkitProgress', 'mkBarFill',
             ];
             for (const id of ids) {
                 const el = document.getElementById(id);
@@ -616,7 +614,7 @@
         warmupAudioDeep,
         forceUploadAllTextures,
         compileSceneShaders,
-        warmupMapOnly,           // ★ 新增：切地图专用（轻量）
+        warmupMapOnly,
         warmupSingleViewmodel,
         warmupSingleWorldModel,
         warmupEffectMaterials,

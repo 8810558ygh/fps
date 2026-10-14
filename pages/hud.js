@@ -50,6 +50,15 @@ document.write(`
         <div class="wtag"></div>
     </div>
 
+    <!-- ★ 医疗包进度条（屏幕中间偏下） -->
+    <div id="medkitProgress">
+        <div class="mk-title">✚ 使用医疗包</div>
+        <div class="mk-bar-wrap">
+            <div class="mk-bar-fill" id="mkBarFill"></div>
+        </div>
+        <div class="mk-hint">按住左键 · 松开取消</div>
+    </div>
+
     <div id="adsReticle"></div>
     <div id="fpsCounter">-- FPS</div>
     <div id="exitBtn" class="exit-btn">退 出</div>

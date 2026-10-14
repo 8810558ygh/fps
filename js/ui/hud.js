@@ -1,7 +1,4 @@
 // ===== js/hud.js – HUD DOM 缓存 + 工具函数 + 主 HUD 更新 =====
-// 回合结算 → hud_report.js
-// TAB 战绩 / AI 开关 / TAB 键 → hud_score.js
-// 硬直 / 易伤视觉反馈 → hud_effects.js
 
 function q(s) { return document.querySelector(s); }
 
@@ -29,6 +26,8 @@ const _cdLabelEl = document.getElementById('throwCountdownLabel');
 const _cdTimeEl  = document.getElementById('throwCountdownTime');
 const _crossEl   = q('#hud1 .cross');
 const _adsRetEl  = document.getElementById('adsReticle');
+const _mkEl      = document.getElementById('medkitProgress');
+const _mkFill    = document.getElementById('mkBarFill');
 
 const _hudState = {
     score: -1, hp: -1, armor: -1, armorColor: '',
@@ -37,11 +36,9 @@ const _hudState = {
     crossOpacity: '', adsRetDisplay: '',
     cdDisplay: '', hintDisplay: '',
     cdIcon: '', cdLabel: '', cdTime: '', cdTimeColor: '',
+    mkDisplay: '', mkWidth: '',
 };
 
-// ============================================================
-// 反馈工具（feed / centerMsg / dmgFlash / hitmark）
-// ============================================================
 function feed(p, html) {
     if (p.id !== 1) return;
     const d = document.createElement('div');
@@ -76,9 +73,6 @@ function hitmark(p) {
     el.classList.add('pop');
 }
 
-// ============================================================
-// 缓存式 DOM 更新工具
-// ============================================================
 function _setText(el, val, cacheKey) {
     if (!el) return;
     if (_hudState[cacheKey] === val) return;
@@ -100,15 +94,11 @@ function _setStyle(el, prop, val, cacheKey) {
     _hudState[cacheKey] = val;
 }
 
-// ============================================================
-// 主 HUD 更新
-// ============================================================
 function updateHUD(now) {
     const p = p1;
     const h = H[1];
     if (!h) return;
 
-    // HP 显示用 Math.ceil（hp = 0.4 时显示 1，显示 0 就一定是真死）
     const hpVal = Math.max(0, Math.ceil(p.hp));
     if (hpVal !== _hudState.hp) {
         h.hpText.textContent = hpVal;
@@ -128,9 +118,20 @@ function updateHUD(now) {
 
     let ammoHtml = '';
     let wtagText = '';
+
     if (p.isMelee) {
         ammoHtml = `<span style="color:#ffd24a;font-size:20px;letter-spacing:2px;">⚔ 近战</span>`;
         wtagText = p.weapon.name + (p.meleeIsHeavy ? ' · 重击' : '');
+    } else if (p.isMedkit) {
+        // ★ 医疗包：右下角只显示数量，进度条单独在屏幕中间
+        const cnt = p.medkits || 0;
+        const color = cnt > 0 ? '#ff6b8a' : '#5a6a7a';
+        if (p.healing) {
+            ammoHtml = `<span style="color:#ff6b8a;font-size:18px;letter-spacing:2px;">✚ 使用中…</span>`;
+        } else {
+            ammoHtml = `<span style="color:${color};font-size:18px;letter-spacing:2px;">✚ 医疗包 ×${cnt}</span>`;
+        }
+        wtagText = '医疗包' + (cnt > 0 ? ' · 按住左键' : '（已用完）');
     } else if (p.isSmoke) {
         const charge = p.smokeCharges || 0;
         const color = charge > 0 ? '#7ee08a' : '#5a6a7a';
@@ -178,7 +179,30 @@ function updateHUD(now) {
         }
     }
 
-    const scoped = running && gameState === 'combat' && !p.isMelee && !p.isSmoke && !p.isFlash
+    // ============================================================
+    // ★ 医疗包进度条（屏幕中间偏下）
+    // ============================================================
+    if (_mkEl) {
+        if (p.isMedkit && p.healing) {
+            if (_hudState.mkDisplay !== 'flex') {
+                _mkEl.style.display = 'flex';
+                _hudState.mkDisplay = 'flex';
+            }
+            const progress = Math.max(0, Math.min(1, (now - p.healStart) / MEDKIT.useTimeMs));
+            const pctStr = Math.round(progress * 100) + '%';
+            if (_hudState.mkWidth !== pctStr && _mkFill) {
+                _mkFill.style.width = pctStr;
+                _hudState.mkWidth = pctStr;
+            }
+        } else if (_hudState.mkDisplay !== 'none') {
+            _mkEl.style.display = 'none';
+            _hudState.mkDisplay = 'none';
+            _hudState.mkWidth = '';
+            if (_mkFill) _mkFill.style.width = '0%';
+        }
+    }
+
+    const scoped = running && gameState === 'combat' && !p.isMelee && !p.isSmoke && !p.isFlash && !p.isMedkit
         && p.aiming && p.weapon.scope && now >= p.deadUntil;
     const scopeDisplay = scoped ? 'block' : 'none';
     if (_hudState.scopeDisplay !== scopeDisplay) {
@@ -186,11 +210,6 @@ function updateHUD(now) {
         _hudState.scopeDisplay = scopeDisplay;
     }
 
-    // ============================================================
-    // ★ 顶部 timer
-    //   · 生存模式：波次 + 本波剩余总数（场上 + 队列）
-    //   · 其他模式：准备倒计时 / 比赛剩余时间
-    // ============================================================
     const isSurvival = (running
         && typeof gameMode !== 'undefined' && gameMode === 'survival'
         && typeof SurvivalState !== 'undefined' && SurvivalState.active);
@@ -261,7 +280,7 @@ function updateHUD(now) {
     const isRedDotADS = running && gameState === 'combat'
         && p1.aiming
         && p1.weapon && (p1.weapon.key === 'rifle' || p1.weapon.key === 'odin')
-        && !p1.isMelee && !p1.isSmoke && !p1.isFlash
+        && !p1.isMelee && !p1.isSmoke && !p1.isFlash && !p1.isMedkit
         && now >= p1.deadUntil;
 
     const crossOpacity = isRedDotADS ? '0' : '1';
@@ -279,31 +298,25 @@ function updateHUD(now) {
         _hudState.adsRetDisplay = adsRetDisplay;
     }
 
-    // ★ 拆分后：这两项现在来自 hud_score.js，加 typeof 保护
     if (typeof _tickScorePanel === 'function') _tickScorePanel();
     if (typeof _updateAiToggleUI === 'function') _updateAiToggleUI();
 
-    // ★ 滑索 UI 提示
     if (typeof updateZiplinePrompt === 'function') {
         updateZiplinePrompt(p);
     }
 
-    // ★ 传送门提示（生存模式 portal 阶段）
     if (typeof updateSurvivalPortalPrompt === 'function') {
         updateSurvivalPortalPrompt();
     }
 
-    // ★ 硬直视觉反馈（来自 hud_effects.js）
     if (typeof updateStunUI === 'function') {
         updateStunUI(p, now);
     }
 
-    // ★ 易伤视觉反馈（来自 hud_effects.js）
     if (typeof updateVulnUI === 'function') {
         updateVulnUI(p, now);
     }
 
-    // ★ 易伤 3D 紫光（对所有玩家，包括对手；来自 hud_effects.js）
     if (typeof updateVulnIndicators === 'function') {
         updateVulnIndicators(now);
     }

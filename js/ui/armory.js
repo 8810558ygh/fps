@@ -12,37 +12,6 @@
 
     // ============================================================
     // ★★★ 皮肤注册表 ★★★
-    //
-    //   每个武器一个数组，数组每项 = 一个皮肤：
-    //     {
-    //         id:    '唯一标识符',
-    //         name:  '显示名（会显示在左侧皮肤栏）',
-    //         build: () => THREE.Object3D | null,
-    //     }
-    //
-    //   ────────────────────────────────────────────────────
-    //   以后加皮肤怎么做？
-    //   1. 新建一个 HD 建模文件，导出到 window.__HD_XXX_XXX：
-    //
-    //         window.__HD_RIFLE_GOLD = {
-    //             buildWorld: buildRifleGoldHD,
-    //             ...
-    //         };
-    //
-    //   2. 在下面的数组里加一项：
-    //
-    //         {
-    //             id: 'gold',
-    //             name: '黄金',
-    //             build: () => {
-    //                 return (window.__HD_RIFLE_GOLD && window.__HD_RIFLE_GOLD.buildWorld)
-    //                     ? window.__HD_RIFLE_GOLD.buildWorld()
-    //                     : null;
-    //             },
-    //         },
-    //
-    //   3. 完事。不用改任何其他代码。
-    //   ────────────────────────────────────────────────────
     // ============================================================
     const SKIN_REGISTRY = {
 
@@ -129,6 +98,18 @@
                 },
             },
         ],
+
+        medkit: [
+            {
+                id: 'default',
+                name: '原版',
+                build: () => {
+                    return (window.__HD_MEDKIT && window.__HD_MEDKIT.buildWorld)
+                        ? window.__HD_MEDKIT.buildWorld()
+                        : null;
+                },
+            },
+        ],
     };
 
     // ============================================================
@@ -138,11 +119,10 @@
     let _scene = null;
     let _cam = null;
 
-    // 当前打开的武器类型
     let _currentType = 'rifle';
     let _currentModel = null;
 
-    // ★ 每个武器当前选中的皮肤 id（切武器后切回来会保留）
+    // 每个武器当前选中的皮肤 id
     const _currentSkinByType = {
         rifle:   'default',
         sniper:  'default',
@@ -151,21 +131,18 @@
         knife:   'default',
         smoke:   'default',
         flash:   'default',
+        medkit:  'default',
     };
 
-    // 拖拽状态
     let _dragging = false;
     let _lastX = 0;
     let _lastY = 0;
 
-    // 复用的世界轴向量
     const _AXIS_X = new THREE.Vector3(1, 0, 0);
     const _AXIS_Y = new THREE.Vector3(0, 1, 0);
 
-    // 旋转灵敏度
     const ROTATE_SENS = 0.005;
 
-    // 相机距离
     let _camDist = 2.5;
     let _camDistTarget = 2.5;
     const CAM_DIST_MIN = 1.5;
@@ -201,7 +178,7 @@
     }
 
     // ============================================================
-    // ★ 渲染左侧皮肤列表
+    // 渲染左侧皮肤列表
     // ============================================================
     function _renderSkinList() {
         const list = document.getElementById('armorySkinsList');
@@ -232,16 +209,13 @@
     }
 
     // ============================================================
-    // ★ 选择皮肤
+    // 选择皮肤
     // ============================================================
     function _selectSkin(skinId) {
         if (_currentSkinByType[_currentType] === skinId) return;
         _currentSkinByType[_currentType] = skinId;
 
-        // 重新加载模型（新模型自带初始朝向，视觉上相当于重置旋转）
         _loadModel(_currentType);
-
-        // 刷新列表高亮
         _renderSkinList();
 
         if (typeof audio === 'function') audio();
@@ -250,18 +224,16 @@
     }
 
     // ============================================================
-    // 加载武器模型（按当前皮肤）
+    // 加载武器模型
     // ============================================================
     function _loadModel(type) {
         if (!_scene) return;
 
-        // 清掉旧模型
         if (_currentModel) {
             _scene.remove(_currentModel);
             _currentModel = null;
         }
 
-        // 找皮肤
         const skins = SKIN_REGISTRY[type];
         if (!skins || skins.length === 0) {
             console.warn('[armory] 未注册皮肤的武器:', type);
@@ -270,7 +242,7 @@
 
         const skinId = _currentSkinByType[type] || 'default';
         let skin = skins.find(s => s.id === skinId);
-        if (!skin) skin = skins[0];   // 兜底：找不到就回到第一个
+        if (!skin) skin = skins[0];
 
         let model = null;
         try {
@@ -284,24 +256,14 @@
             return;
         }
 
-        // ============================================================
-        // ★ 归零旋转
-        //
-        // HD 模型的初始 rotation 是为【游戏内挂点】设计的：
-        //   · knife / rifle / sniper / odin / shotgun 都有 rotation.y = π/2
-        //   · smoke / flash 是 0
-        //
-        // 归零后，让模型以【本地坐标系】原始朝向展示
-        // ============================================================
+        // 归零旋转
         model.rotation.set(0, 0, 0);
         model.quaternion.set(0, 0, 0, 1);
 
         // ============================================================
-        // ★ 归一化尺寸
-        //
-        //   · 所有武器先按"最大边 = 1.5"归一化，保证在屏幕上占位一致
-        //   · 再用 SIZE_MUL_BY_TYPE 二次缩放，让投掷物看起来更小
-        //     （烟雾弹 / 闪光弹本体只有 ~20cm，按枪的大小展示会太大）
+        // ★ 尺寸归一化
+        //   所有武器按最大边 = 1.5 归一化，然后用 SIZE_MUL_BY_TYPE 微调
+        //   投掷物 / 医疗包 因为本体小，会被二次缩小
         // ============================================================
         const SIZE_MUL_BY_TYPE = {
             rifle:   1.0,
@@ -309,8 +271,9 @@
             shotgun: 1.0,
             odin:    1.0,
             knife:   1.0,
-            smoke:   0.65,   // ← 想再小一点就调这里
-            flash:   0.65,   // ← 想再小一点就调这里
+            smoke:   0.65,
+            flash:   0.65,
+            medkit:  0.75,   // ← 比投掷物略大一点，比枪小
         };
 
         const TARGET_SIZE = 1.5;
@@ -322,7 +285,7 @@
         const maxDim = Math.max(size.x, size.y, size.z) || 1;
         model.scale.multiplyScalar((TARGET_SIZE / maxDim) * sizeMul);
 
-        // ---- 居中 ----
+        // 居中
         model.updateMatrixWorld(true);
         bbox = new THREE.Box3().setFromObject(model);
         const center = bbox.getCenter(new THREE.Vector3());
@@ -360,7 +323,6 @@
             _lastX = e.clientX;
             _lastY = e.clientY;
 
-            // 四元数累积（世界轴旋转）：左右 → 世界 Y 轴；上下 → 世界 X 轴
             if (dx !== 0) _currentModel.rotateOnWorldAxis(_AXIS_Y, dx * ROTATE_SENS);
             if (dy !== 0) _currentModel.rotateOnWorldAxis(_AXIS_X, dy * ROTATE_SENS);
         });
@@ -435,7 +397,7 @@
         _currentType = type;
         _loadModel(type);
         _syncTabUI();
-        _renderSkinList();          // ★ 切武器 → 刷新皮肤列表
+        _renderSkinList();
     }
 
     // ============================================================
@@ -458,7 +420,7 @@
 
         _loadModel(_currentType);
         _syncTabUI();
-        _renderSkinList();          // ★ 首次打开 → 渲染皮肤列表
+        _renderSkinList();
 
         console.log('[armory] 已打开，当前武器:', _currentType);
     }
@@ -523,7 +485,6 @@
         render,
         switchType,
         isOpen: () => _open,
-        // ★ 方便外部调试：动态注册新皮肤
         registerSkin: (weaponType, skin) => {
             if (!SKIN_REGISTRY[weaponType]) SKIN_REGISTRY[weaponType] = [];
             SKIN_REGISTRY[weaponType].push(skin);

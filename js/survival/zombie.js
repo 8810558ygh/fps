@@ -1,36 +1,26 @@
 // ===== js/survival/zombie.js – 僵尸系统（多类型注册表版 · 动态波次） =====
 // 工厂 / 池 / AI / 伤害 / 击杀 / 物理碰撞 / 跳跃 / 类型系统 / 弹药掉落 / 金币掉落
 //
-// 架构：
-//   · ZOMBIE_TYPES 注册表定义每种僵尸的属性
-//   · 僵尸实例带 type 字段，属性从注册表读
-//   · 池是"混合池"，同一个实例可以装任何类型
-//   · 类型可以覆盖 AI（type.ai）
-//
 // 波次生成（动态公式）：
 //   总数   N = 3 + 2n
 //   精英数 E = max(0, n - 2)
 //   普通数   = N - E
 //   精英从 ZOMBIE_ELITE_TYPES 里随机挑
 //
-// 易伤：
-//   僵尸攻击玩家前会应用 _applyVulnerabilityBonus()
+// 阴影：
+//   · 只给 body + head 开 castShadow
+//   · 手臂 / 腿 不投
 //
-// 弹药掉落：
-//   偶数波清空时，最后一个死亡的僵尸掉落弹药箱
-//
-// ★ 金币掉落：
-//   普通僵尸：1/3 掉 1，1/3 掉 2，1/3 不掉
-//   精英僵尸：1/2 掉 1，1/2 掉 2
+// ★ 僵尸间分离：
+//   · 每帧对所有存活僵尸做一次 O(n²) 分离
+//   · 同屏 10 只 → 45 对，开销可以忽略
+//   · 体型大的僵尸（tank）分离半径也按 sizeMul 缩放
 
 // ============================================================
 // ★★★ 僵尸类型注册表 ★★★
 // ============================================================
 const ZOMBIE_TYPES = {
 
-    // ---------------------------------------------
-    // 普通僵尸（标准体型）
-    // ---------------------------------------------
     normal: {
         name: '普通僵尸',
         hp: 100,
@@ -47,9 +37,6 @@ const ZOMBIE_TYPES = {
         ai: null,
     },
 
-    // ---------------------------------------------
-    // 跑者：血少、快、伤害低、体型小
-    // ---------------------------------------------
     runner: {
         name: '跑者',
         hp: 60,
@@ -66,9 +53,6 @@ const ZOMBIE_TYPES = {
         ai: null,
     },
 
-    // ---------------------------------------------
-    // 坦克：血厚、慢、伤害高、体型大
-    // ---------------------------------------------
     tank: {
         name: '坦克',
         hp: 400,
@@ -86,14 +70,8 @@ const ZOMBIE_TYPES = {
     },
 };
 
-// ============================================================
-// ★ 精英僵尸池
-// ============================================================
 const ZOMBIE_ELITE_TYPES = ['runner', 'tank'];
 
-// ============================================================
-// 全局常量（跨类型通用）
-// ============================================================
 const ZOMBIE_JUMP_COOLDOWN    = 900;
 const ZOMBIE_STUCK_THRESHOLD  = 0.3;
 const ZOMBIE_STUCK_MOVE_RATIO = 0.3;
@@ -102,11 +80,17 @@ const ZOMBIE_POOL_SIZE        = 32;
 const ZOMBIE_BASE_HEIGHT = 1.8;
 const ZOMBIE_BASE_EYE_H  = 1.6;
 
+// ============================================================
+// ★ 僵尸间分离参数
+// ============================================================
+const ZOMBIE_SEPARATION_RADIUS   = 0.50;   // 基础半径
+const ZOMBIE_SEPARATION_STRENGTH = 0.55;   // 每帧推开比例（0~1）
+
 const _zombiePool = [];
 let _zombiePoolInited = false;
 
 // ============================================================
-// ★ 波次生成公式
+// 波次生成公式
 // ============================================================
 function buildWaveComposition(wave) {
     const total   = 3 + wave * 2;
@@ -163,7 +147,15 @@ function _makeZombieMesh() {
     legR.userData.part = 'zombie_leg';
 
     g.add(body, head, armL, armR, legL, legR);
-    g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+
+    body.castShadow = true;
+    head.castShadow = true;
+    armL.castShadow = false;
+    armR.castShadow = false;
+    legL.castShadow = false;
+    legR.castShadow = false;
+
+    g.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
 
     return { group: g, body, head, armL, armR, legL, legR };
 }
@@ -245,7 +237,7 @@ function _acquireZombie() {
 }
 
 // ============================================================
-// 应用颜色
+// 应用颜色 / 体型
 // ============================================================
 function _applyZombieColors(zombie, cfg) {
     const bodyColor = (cfg.color !== undefined) ? cfg.color : 0x4a6a3a;
@@ -263,9 +255,6 @@ function _applyZombieColors(zombie, cfg) {
     }
 }
 
-// ============================================================
-// 应用体型
-// ============================================================
 function _applyZombieSize(zombie, cfg) {
     const sizeMul = (cfg.sizeMul !== undefined) ? cfg.sizeMul : 1.0;
 
@@ -466,18 +455,108 @@ function _applyZombiePhysics(zombie, dt, now, intendedMoveDist, beforeX, beforeZ
     }
 }
 
+// ============================================================
+// ★ 僵尸间碰撞分离
+//
+//   · 遍历所有存活僵尸对，若水平距离 < 半径之和，互相推开
+//   · 半径按 sizeMul 缩放：tank 大、runner 小
+//   · 每帧推 overlap × STRENGTH / 2（双方各推一半）
+//   · 完全重合时随机方向推开
+//   · 分离后同步 mesh 位置，并钳制到地图边界内
+// ============================================================
+function _resolveZombieCollisions() {
+    // 收集存活僵尸（局部数组，避免每帧新建）
+    const alive = _resolveZombieCollisions._buf || (_resolveZombieCollisions._buf = []);
+    alive.length = 0;
+    for (let i = 0; i < _zombiePool.length; i++) {
+        if (_zombiePool[i].alive) alive.push(_zombiePool[i]);
+    }
+
+    const n = alive.length;
+    if (n < 2) {
+        // 单只或零只，也要同步 mesh（可能被分离函数影响）
+        return;
+    }
+
+    const BASE_R = ZOMBIE_SEPARATION_RADIUS;
+    const S      = ZOMBIE_SEPARATION_STRENGTH;
+
+    for (let i = 0; i < n; i++) {
+        const a = alive[i];
+        const cfgA = ZOMBIE_TYPES[a.type] || ZOMBIE_TYPES.normal;
+        const ra = BASE_R * (cfgA.sizeMul || 1);
+
+        for (let j = i + 1; j < n; j++) {
+            const b = alive[j];
+            const cfgB = ZOMBIE_TYPES[b.type] || ZOMBIE_TYPES.normal;
+            const rb = BASE_R * (cfgB.sizeMul || 1);
+
+            const minDist = ra + rb;
+
+            let dx = b.pos.x - a.pos.x;
+            let dz = b.pos.z - a.pos.z;
+            const d2 = dx * dx + dz * dz;
+
+            if (d2 >= minDist * minDist) continue;
+
+            if (d2 > 1e-6) {
+                const d = Math.sqrt(d2);
+                const overlap = minDist - d;
+                const nx = dx / d;
+                const nz = dz / d;
+                const push = overlap * S * 0.5;
+
+                a.pos.x -= nx * push;
+                a.pos.z -= nz * push;
+                b.pos.x += nx * push;
+                b.pos.z += nz * push;
+            } else {
+                // 完全重合 → 随机推开
+                const ang = Math.random() * Math.PI * 2;
+                const nx = Math.cos(ang);
+                const nz = Math.sin(ang);
+                const push = minDist * S * 0.5;
+
+                a.pos.x -= nx * push;
+                a.pos.z -= nz * push;
+                b.pos.x += nx * push;
+                b.pos.z += nz * push;
+            }
+        }
+    }
+
+    // ---- 分离后：钳制到地图边界 + 同步 mesh ----
+    const half = (typeof window.currentArenaHalf === 'number')
+        ? window.currentArenaHalf : ARENA;
+    const lim = half - 0.6;
+
+    for (let i = 0; i < n; i++) {
+        const z = alive[i];
+        if (z.pos.x < -lim) z.pos.x = -lim;
+        if (z.pos.x >  lim) z.pos.x =  lim;
+        if (z.pos.z < -lim) z.pos.z = -lim;
+        if (z.pos.z >  lim) z.pos.z =  lim;
+
+        z.mesh.position.copy(z.pos);
+    }
+}
+
+// ============================================================
+// 更新全部僵尸
+// ============================================================
 function updateAllZombies(dt, now) {
     for (let i = 0; i < _zombiePool.length; i++) {
         const z = _zombiePool[i];
         if (z.alive) updateZombie(z, dt, now);
     }
+
+    // ★ 所有僵尸更新完后，做一次分离
+    _resolveZombieCollisions();
 }
 window.updateAllZombies = updateAllZombies;
 
 // ============================================================
-// ★ 僵尸攻击玩家
-//
-//   ★ 应用易伤：玩家 vulnerableUntil > now 时，伤害 ×2
+// 僵尸攻击玩家
 // ============================================================
 function _zombieAttack(zombie, target, cfg) {
     if (!target) return;
@@ -488,15 +567,12 @@ function _zombieAttack(zombie, target, cfg) {
 
     const now = performance.now();
 
-    // ---- 1. 原始伤害 ----
     let rawDmg = cfg.attackDamage;
 
-    // ---- 2. 应用易伤（统一入口） ----
     if (typeof window._applyVulnerabilityBonus === 'function') {
         rawDmg = window._applyVulnerabilityBonus(target, rawDmg, now);
     }
 
-    // ---- 3. 护甲吸收 ----
     let hpDamage = rawDmg;
     if (target.armor > 0) {
         const absorb = Math.min(target.armor, rawDmg * ARMOR_ABSORB);
@@ -558,16 +634,7 @@ function damageZombie(zombie, dmg, from) {
 window.damageZombie = damageZombie;
 
 // ============================================================
-// ★ 僵尸阵亡 + 弹药掉落 + 金币掉落
-//
-//   弹药掉落条件（同时满足）：
-//     · 场上僵尸数 = 0（最后一个死的）
-//     · 补刷队列也为空
-//     · 当前是偶数波（wave % 2 === 0）
-//
-//   金币掉落：
-//     · 普通僵尸：1/3 掉 1，1/3 掉 2，1/3 不掉
-//     · 精英僵尸（runner / tank）：1/2 掉 1，1/2 掉 2
+// 僵尸阵亡 + 金币掉落 + 弹药掉落
 // ============================================================
 function _killZombie(zombie, from) {
     zombie.alive = false;
@@ -590,9 +657,7 @@ function _killZombie(zombie, from) {
 
     console.log('[survival] 僵尸阵亡（' + zombie.type + '），剩余：', getZombiesAliveCount());
 
-    // ============================================================
-    // ★ 金币掉落
-    // ============================================================
+    // 金币掉落
     if (typeof SurvivalState !== 'undefined'
         && SurvivalState && SurvivalState.active) {
 
@@ -605,7 +670,6 @@ function _killZombie(zombie, from) {
         } else {
             if (r < 1 / 3)      drop = 1;
             else if (r < 2 / 3) drop = 2;
-            // 否则 0
         }
 
         if (drop > 0) {
@@ -620,9 +684,7 @@ function _killZombie(zombie, from) {
         }
     }
 
-    // ============================================================
-    // ★ 弹药掉落：偶数波清空时，最后一个死亡的僵尸掉落
-    // ============================================================
+    // 弹药掉落：偶数波清空时，最后一个死亡的僵尸掉落
     if (getZombiesAliveCount() === 0
         && typeof SurvivalState !== 'undefined'
         && SurvivalState
@@ -665,6 +727,7 @@ function clearAllZombies() {
         z.height = ZOMBIE_BASE_HEIGHT;
         z.eyeH   = ZOMBIE_BASE_EYE_H;
     }
+    if (_resolveZombieCollisions._buf) _resolveZombieCollisions._buf.length = 0;
 }
 window.clearAllZombies = clearAllZombies;
 

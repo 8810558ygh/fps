@@ -17,7 +17,8 @@ document.write(`
             <div class="shop-section-title">子 弹</div>
             <div class="shop-row" id="shopAmmoRow"></div>
 
-            <div class="shop-hint">点击已解锁的枪即可装备 · 按 B 或 Esc 关闭</div>
+            <div class="shop-section-title">道 具</div>
+            <div class="shop-row shop-row-1" id="shopMedkitRow"></div>
 
         </div>
     </div>

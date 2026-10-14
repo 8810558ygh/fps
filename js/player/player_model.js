@@ -9,7 +9,7 @@ const FLASH_BAND_MAT = new THREE.MeshLambertMaterial({ color: 0xffe066, emissive
 const FLASH_CAP_MAT = new THREE.MeshLambertMaterial({ color: 0x2a2e34 });
 
 // ============================================================
-// ★ 高细节武器模板缓存（解决准备阶段/战斗中换枪卡顿）
+// ★ 高细节武器模板缓存
 // ============================================================
 const _hdWorldTemplates = new Map();
 const _hdViewTemplates  = new Map();
@@ -29,10 +29,6 @@ function _cloneHdTemplate(tpl) {
 
     const src = tpl.userData || {};
 
-    // ★ 风险 5 修复：世界模型的 build 函数以前不写 userData.basePos，
-    //   clone 后会跟着模板的当前 position 走。一旦模板被任何代码污染
-    //   （比如 loading 预热），就会静默错位（联机时对手看到枪挂在头顶）。
-    //   这里给出明确警告，方便定位。
     if (!src.basePos || !src.baseRot) {
         console.warn(
             '[player_model] 模板缺少 userData.basePos / baseRot：' +
@@ -41,20 +37,6 @@ function _cloneHdTemplate(tpl) {
         );
     }
 
-    // ============================================================
-    // ★ 关键修复：clone 前临时清空 userData
-    //
-    // Three.js r128 的 Object3D.copy() 内部会执行：
-    //     this.userData = JSON.parse(JSON.stringify(source.userData));
-    //
-    // 而我们在 weapon_*_hd.js 里往 userData 塞了 THREE.Object3D /
-    // THREE.Mesh 等 3D 对象（muzzlePoint / boltGroup / lensMeshF …），
-    // JSON.stringify 会递归进 3D 子树，最终撞到 Texture 打警告：
-    //     "THREE.Texture: Unable to serialize Texture."
-    //
-    // 这里把模板 userData 临时换成空对象，让 stringify 秒过，
-    // clone 完立刻还原，模板本身毫无变化，外部完全感知不到。
-    // ============================================================
     const _savedUserData = tpl.userData;
     tpl.userData = {};
     const clone = tpl.clone(true);
@@ -62,17 +44,14 @@ function _cloneHdTemplate(tpl) {
 
     const dst = clone.userData = {};
 
-    // 优先用模板 userData；缺失时回退到模板"当前"变换（至少不比 undefined 差）
     dst.basePos = src.basePos ? src.basePos.clone() : tpl.position.clone();
     dst.baseRot = src.baseRot ? src.baseRot.clone() : tpl.rotation.clone();
     dst.adsPos  = src.adsPos  ? src.adsPos.clone()  : dst.basePos.clone();
     dst.adsRot  = src.adsRot  ? src.adsRot.clone()  : dst.baseRot.clone();
 
-    // 强制重置变换（防止模板被外部代码污染）
     clone.position.copy(dst.basePos);
     clone.rotation.copy(dst.baseRot);
 
-    // 按 name 重新绑定关键锚点
     dst.muzzlePoint  = _findByName(clone, 'muzzlePoint');
     dst.boltGroup    = _findByName(clone, 'boltGroup');
     dst.scopeCenter  = _findByName(clone, 'scopeCenter');
@@ -80,8 +59,6 @@ function _cloneHdTemplate(tpl) {
     dst.lensMeshB    = _findByName(clone, 'scopeLensBack');
     dst.bladeTip     = _findByName(clone, 'bladeTip');
     dst.attackPoint  = _findByName(clone, 'attackPoint');
-
-    // ★ 弹匣组（供换弹动画使用）
     dst.magazineGroup = _findByName(clone, 'magazineGroup');
 
     return clone;
@@ -106,6 +83,8 @@ function _getWorldTemplate(type) {
             tpl = window.__HD_SMOKE.buildWorld();
         } else if (type === 'flash' && window.__HD_FLASH && window.__HD_FLASH.buildWorld) {
             tpl = window.__HD_FLASH.buildWorld();
+        } else if (type === 'medkit' && window.__HD_MEDKIT && window.__HD_MEDKIT.buildWorld) {
+            tpl = window.__HD_MEDKIT.buildWorld();
         }
     } catch (e) {
         console.warn('[player_model] HD 世界模型模板构建失败:', type, e);
@@ -133,6 +112,8 @@ function _getViewTemplate(type) {
             tpl = window.__HD_SMOKE.buildViewmodel();
         } else if (type === 'flash' && window.__HD_FLASH && window.__HD_FLASH.buildViewmodel) {
             tpl = window.__HD_FLASH.buildViewmodel();
+        } else if (type === 'medkit' && window.__HD_MEDKIT && window.__HD_MEDKIT.buildViewmodel) {
+            tpl = window.__HD_MEDKIT.buildViewmodel();
         }
     } catch (e) {
         console.warn('[player_model] HD 视图模型模板构建失败:', type, e);
@@ -142,7 +123,7 @@ function _getViewTemplate(type) {
 }
 
 function preloadHdWeaponTemplates() {
-    ['rifle', 'sniper', 'shotgun', 'odin', 'knife', 'smoke', 'flash'].forEach(t => {
+    ['rifle', 'sniper', 'shotgun', 'odin', 'knife', 'smoke', 'flash', 'medkit'].forEach(t => {
         _getWorldTemplate(t);
         _getViewTemplate(t);
     });
@@ -155,7 +136,7 @@ window.preloadHdWeaponTemplates = preloadHdWeaponTemplates;
 function makeWeaponModel(type, mat) {
     if (type === 'rifle' || type === 'sniper' || type === 'shotgun'
         || type === 'odin' || type === 'knife' || type === 'smoke'
-        || type === 'flash') {
+        || type === 'flash' || type === 'medkit') {
         const tpl = _getWorldTemplate(type);
         if (tpl) return _cloneHdTemplate(tpl);
     }
@@ -232,6 +213,17 @@ function makeWeaponModel(type, mat) {
         const pin = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.007, 6, 10), DARK_MAT);
         pin.position.set(0.1, 0.12, 0); pin.rotation.x = Math.PI / 2;
         g.add(body, capTop, capBot, band, pin);
+    } else if (type === 'medkit') {
+        // 简化兜底（HD 未加载时才走这里）
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.105, 0.15),
+            new THREE.MeshLambertMaterial({ color: 0xe4e6e8 }));
+        const cross1 = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.020, 0.004),
+            new THREE.MeshLambertMaterial({ color: 0xc81e1e }));
+        cross1.position.set(0, 0, 0.078);
+        const cross2 = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.062, 0.004),
+            new THREE.MeshLambertMaterial({ color: 0xc81e1e }));
+        cross2.position.set(0, 0, 0.078);
+        g.add(body, cross1, cross2);
     } else {
         const body = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.17, 0.8), DARK_MAT);
         const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.45), DARK_MAT);
@@ -254,7 +246,7 @@ function makeWeaponModel(type, mat) {
 function makeViewmodel(type, mat) {
     if (type === 'rifle' || type === 'sniper' || type === 'shotgun'
         || type === 'odin' || type === 'knife' || type === 'smoke'
-        || type === 'flash') {
+        || type === 'flash' || type === 'medkit') {
         const tpl = _getViewTemplate(type);
         if (tpl) return _cloneHdTemplate(tpl);
     }
@@ -336,6 +328,18 @@ function makeViewmodel(type, mat) {
         g.add(body, capTop, capBot, band, pin);
         g.position.set(0.32, -0.30, -0.44);
         g.rotation.set(0.15, -0.30, 0.10);
+    } else if (type === 'medkit') {
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.105, 0.15),
+            new THREE.MeshLambertMaterial({ color: 0xe4e6e8 }));
+        const cross1 = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.020, 0.004),
+            new THREE.MeshLambertMaterial({ color: 0xc81e1e }));
+        cross1.position.set(0, 0, 0.078);
+        const cross2 = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.062, 0.004),
+            new THREE.MeshLambertMaterial({ color: 0xc81e1e }));
+        cross2.position.set(0, 0, 0.078);
+        g.add(body, cross1, cross2);
+        g.position.set(0.30, -0.30, -0.44);
+        g.rotation.set(0.15, -0.40, 0.10);
     } else {
         const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.15, 0.65), DARK_MAT);
         const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.4), DARK_MAT);

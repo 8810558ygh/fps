@@ -19,6 +19,7 @@ document.write(`
             <button class="armory-tab" data-type="knife">🗡 军刀</button>
             <button class="armory-tab" data-type="smoke">💨 烟雾弹</button>
             <button class="armory-tab" data-type="flash">⚡ 闪光弹</button>
+            <button class="armory-tab" data-type="medkit">✚ 医疗包</button>
         </div>
 
         <div class="armory-body">

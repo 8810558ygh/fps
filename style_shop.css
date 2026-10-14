@@ -154,6 +154,22 @@
     letter-spacing: 2px;
 }
 
+/* ---------- 单列行（道具） ---------- */
+.shop-row-1 {
+    grid-template-columns: repeat(4, 1fr);
+}
+.shop-row-1 .shop-card {
+    max-width: 180px;
+}
+
+/* ---------- 医疗包卡片主题色 ---------- */
+.shop-medkit-card .shop-card-name {
+    color: #ff8aa0;
+}
+.shop-medkit-card.equipped .shop-card-name {
+    color: #ffd24a;
+}
+
 /* ---------- 移动端 ---------- */
 @media (pointer: coarse) {
     .shop-panel { padding: 18px 16px 16px; }

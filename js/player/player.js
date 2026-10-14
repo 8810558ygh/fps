@@ -1,6 +1,13 @@
 // ===== js/player.js – 玩家构造 + 武器切换（每把枪独立弹药） =====
 
 function setWeapon(p, key) {
+    // ★ 切枪时若在治疗中，立即取消
+    if (p.healing) {
+        p.healing = false;
+        p.healStart = 0;
+        p.healEnd = 0;
+    }
+
     if (p.throwFuseActive && p.throwFuseInHand) {
         const isClient = (typeof gameMode !== 'undefined'
             && gameMode === 'online'
@@ -18,19 +25,16 @@ function setWeapon(p, key) {
         }
     }
 
-    // ============================================================
-    // ★ 切换前保存当前枪械的弹药
-    //   （无论切到哪把枪/刀/烟/闪，都先把当前枪的弹药存起来）
-    // ============================================================
+    // 保存当前枪的弹药
     if (!p.weaponAmmo) p.weaponAmmo = {};
     if (p.weapon && p.weapon.mag !== undefined
-        && !p.isMelee && !p.isSmoke && !p.isFlash) {
+        && !p.isMelee && !p.isSmoke && !p.isFlash && !p.isMedkit) {
         p.weaponAmmo[p.weaponKey] = { ammo: p.ammo, reserve: p.reserve };
     }
 
     if (key === 'knife') {
         p.weaponKey = 'knife'; p.weapon = MELEE;
-        p.isMelee = true; p.isSmoke = false; p.isFlash = false;
+        p.isMelee = true; p.isSmoke = false; p.isFlash = false; p.isMedkit = false;
         while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
         p.gunHolder.add(makeWeaponModel('knife', p.mat));
         while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
@@ -49,7 +53,7 @@ function setWeapon(p, key) {
 
     if (key === 'smoke') {
         p.weaponKey = 'smoke'; p.weapon = SMOKE;
-        p.isMelee = false; p.isSmoke = true; p.isFlash = false;
+        p.isMelee = false; p.isSmoke = true; p.isFlash = false; p.isMedkit = false;
         while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
         p.gunHolder.add(makeWeaponModel('smoke', p.mat));
         while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
@@ -66,11 +70,29 @@ function setWeapon(p, key) {
 
     if (key === 'flash') {
         p.weaponKey = 'flash'; p.weapon = FLASH;
-        p.isMelee = false; p.isSmoke = false; p.isFlash = true;
+        p.isMelee = false; p.isSmoke = false; p.isFlash = true; p.isMedkit = false;
         while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
         p.gunHolder.add(makeWeaponModel('flash', p.mat));
         while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
         p.vm.add(makeViewmodel('flash', p.mat));
+        p.reloadEnd = 0;
+        p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
+        if (p.input) p.input.aim = false;
+        p.equipEnd = performance.now() + 400;
+        if (p._shadowDisabled) {
+            p.gunHolder.traverse(o => { if (o.isMesh) o.castShadow = false; });
+        }
+        return;
+    }
+
+    // ★ 医疗包分支
+    if (key === 'medkit') {
+        p.weaponKey = 'medkit'; p.weapon = MEDKIT;
+        p.isMelee = false; p.isSmoke = false; p.isFlash = false; p.isMedkit = true;
+        while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
+        p.gunHolder.add(makeWeaponModel('medkit', p.mat));
+        while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
+        p.vm.add(makeViewmodel('medkit', p.mat));
         p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
@@ -86,16 +108,12 @@ function setWeapon(p, key) {
     if (!w) return;
 
     p.weaponKey = key; p.primaryWeaponKey = key; p.weapon = w;
-    p.isMelee = false; p.isSmoke = false; p.isFlash = false;
+    p.isMelee = false; p.isSmoke = false; p.isFlash = false; p.isMedkit = false;
     while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
     p.gunHolder.add(makeWeaponModel(key, p.mat));
     while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
     p.vm.add(makeViewmodel(key, p.mat));
 
-    // ============================================================
-    // ★ 从独立弹药记录恢复（首次访问该枪则初始化为标准弹药）
-    //   换枪不会重置弹药 —— 每把枪各自记录
-    // ============================================================
     if (!p.weaponAmmo[key]) {
         p.weaponAmmo[key] = { ammo: w.mag, reserve: w.startReserve };
     }
@@ -142,7 +160,7 @@ function applyWeaponToPlayer(p, key, withViewmodel) {
         }
     }
 
-    let isMelee = false, isSmoke = false, isFlash = false;
+    let isMelee = false, isSmoke = false, isFlash = false, isMedkit = false;
     let weapon = null, weaponKey = null;
 
     if (key === 'knife') {
@@ -151,6 +169,8 @@ function applyWeaponToPlayer(p, key, withViewmodel) {
         isSmoke = true; weaponKey = 'smoke'; weapon = SMOKE;
     } else if (key === 'flash') {
         isFlash = true; weaponKey = 'flash'; weapon = FLASH;
+    } else if (key === 'medkit') {
+        isMedkit = true; weaponKey = 'medkit'; weapon = MEDKIT;
     } else if (WEAPONS[key]) {
         weaponKey = key; weapon = WEAPONS[key];
     } else {
@@ -171,6 +191,7 @@ function applyWeaponToPlayer(p, key, withViewmodel) {
     p.isMelee   = isMelee;
     p.isSmoke   = isSmoke;
     p.isFlash   = isFlash;
+    p.isMedkit  = isMedkit;
     p.weaponKey = weaponKey;
     p.weapon    = weapon;
 }
@@ -343,7 +364,7 @@ function makePlayer(id, color, spawn, weaponKey) {
         weaponKey: weaponKey || 'rifle',
         primaryWeaponKey: weaponKey || 'rifle',
         weapon: WEAPONS[weaponKey || 'rifle'],
-        isMelee: false, isSmoke: false, isFlash: false,
+        isMelee: false, isSmoke: false, isFlash: false, isMedkit: false,
         aiming: false, aimStage: 0, boltEnd: 0,
         pos: new THREE.Vector3(spawn.x, 0, spawn.z),
         spawn, yaw: spawn.yaw, pitch: 0,
@@ -371,6 +392,12 @@ function makePlayer(id, color, spawn, weaponKey) {
         throwFuseEnd: 0,
         throwFuseInHand: false,
         _shadowDisabled: false,
+
+        // ★ 医疗包
+        medkits: 0,
+        healing: false,
+        healStart: 0,
+        healEnd: 0,
 
         // ★ 每把枪的独立弹药记录
         weaponAmmo: {},

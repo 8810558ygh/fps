@@ -1,14 +1,15 @@
 // ===== js/survival/survival_shop.js – 生存模式商店 =====
 //
 // 规则：
-//   · B 键随时打开（仅生存模式）
-//   · 枪：50 金币解锁；已解锁的点击即换枪
+//   · B 键随时打开/关闭（仅生存模式）
+//   · ★ Esc 不关闭（避免与 pointer lock 冲突）
+//   · ★ 点击面板外的遮罩区域 → 关闭
+//   · 枪：点击解锁或换枪
+//       狂徒 50💰 / 冥驹 50💰 / 判官 40💰 / 奥丁 60💰
 //   · 子弹：狂徒/奥丁 1💰/发，冥驹/判官 2💰/发
 //   · 未解锁的枪不能买对应子弹
-//   · 解锁枪自动解锁对应子弹
-//   · ★ 子弹起卖门槛 = 一个弹匣的全额金币
-//        金币 < 门槛 → 拒绝，一颗都不卖
-//        金币 ≥ 门槛 → 能加几发加几发，按实际发数扣钱
+//   · 子弹起卖门槛 = 一个弹匣的全额金币
+//   · ★ 医疗包：30 💰 / 个，上限 1 个
 //
 // 依赖：SurvivalState（survival_state.js）
 //       WEAPONS / setWeapon / p1（player.js）
@@ -20,7 +21,12 @@
     // ============================================================
     // 配置
     // ============================================================
-    const GUN_PRICE = 50;
+    const GUN_PRICE = {
+        rifle:   50,
+        sniper:  50,
+        shotgun: 40,
+        odin:    60,
+    };
 
     const AMMO_PRICE = {
         rifle:   1,
@@ -38,6 +44,9 @@
 
     const GUN_ORDER = ['rifle', 'sniper', 'shotgun', 'odin'];
 
+    const MEDKIT_SHOP_PRICE = 30;
+    const MEDKIT_MAX        = 1;
+
     let _open = false;
 
     // ============================================================
@@ -52,12 +61,33 @@
     }
 
     // ============================================================
+    // 绑定背景点击关闭（只绑一次）
+    // ============================================================
+    function _bindBackgroundClick() {
+        const el = document.getElementById('survivalShop');
+        if (!el || el._bgClickBound) return;
+        el._bgClickBound = true;
+
+        el.addEventListener('mousedown', (e) => {
+            // 只有点击到【遮罩本身】才关闭
+            // 点 .shop-panel 内的卡片 / 文字 / 空白，target 都不是 el
+            if (e.target === el) {
+                e.preventDefault();
+                e.stopPropagation();
+                closeShop();
+            }
+        });
+    }
+
+    // ============================================================
     // 打开 / 关闭
     // ============================================================
     function openShop() {
         if (_open) return;
         if (!canOpenShop()) return;
         _open = true;
+
+        _bindBackgroundClick();
 
         if (document.pointerLockElement) document.exitPointerLock();
 
@@ -108,6 +138,7 @@
         renderCoins();
         renderGuns();
         renderAmmo();
+        renderMedkit();
     }
 
     function renderCoins() {
@@ -125,6 +156,7 @@
         if (p1.isMelee) return 'knife';
         if (p1.isSmoke) return 'smoke';
         if (p1.isFlash) return 'flash';
+        if (p1.isMedkit) return 'medkit';
         return p1.weaponKey;
     }
 
@@ -136,8 +168,9 @@
         const current = getCurrentWeaponKey();
 
         for (const key of GUN_ORDER) {
-            const unlocked  = isUnlocked(key);
-            const equipped  = (key === current);
+            const unlocked = isUnlocked(key);
+            const equipped = (key === current);
+            const price    = GUN_PRICE[key] || 50;
 
             const card = document.createElement('div');
             card.className = 'shop-card shop-gun-card';
@@ -145,7 +178,7 @@
             if (equipped)  card.classList.add('equipped');
 
             let sub;
-            if (!unlocked)         sub = `🔒 ${GUN_PRICE} 💰`;
+            if (!unlocked)         sub = `🔒 ${price} 💰`;
             else if (equipped)     sub = '⭐ 已装备';
             else                   sub = '点击装备';
 
@@ -196,6 +229,58 @@
         }
     }
 
+    function renderMedkit() {
+        const row = document.getElementById('shopMedkitRow');
+        if (!row) return;
+        row.innerHTML = '';
+
+        if (typeof p1 === 'undefined' || !p1) return;
+
+        const cnt  = p1.medkits || 0;
+        const full = cnt >= MEDKIT_MAX;
+
+        const card = document.createElement('div');
+        card.className = 'shop-card shop-medkit-card';
+        if (full) card.classList.add('equipped');
+
+        const sub = full
+            ? '⭐ 已满'
+            : `${MEDKIT_SHOP_PRICE} 💰/个`;
+
+        card.innerHTML =
+            `<div class="shop-card-name">✚ 医疗包</div>` +
+            `<div class="shop-card-sub">${sub}</div>` +
+            `<div class="shop-card-info">${cnt} / ${MEDKIT_MAX}</div>`;
+
+        card.addEventListener('click', onMedkitClick);
+        row.appendChild(card);
+    }
+
+    function onMedkitClick() {
+        if (typeof p1 === 'undefined' || !p1) return;
+
+        const cnt = p1.medkits || 0;
+        if (cnt >= MEDKIT_MAX) {
+            toast(`医疗包已满（${MEDKIT_MAX} 个）`);
+            if (typeof sEmpty === 'function') sEmpty(1);
+            return;
+        }
+
+        if ((SurvivalState.coins || 0) < MEDKIT_SHOP_PRICE) {
+            toast(`金币不足，需要 ${MEDKIT_SHOP_PRICE} 💰`);
+            if (typeof sEmpty === 'function') sEmpty(1);
+            return;
+        }
+
+        SurvivalState.coins -= MEDKIT_SHOP_PRICE;
+        p1.medkits = cnt + 1;
+
+        if (typeof sPickup === 'function') sPickup(1);
+        toast(`✚ 医疗包 +1`);
+
+        renderShop();
+    }
+
     // ============================================================
     // 弹药工具（读取时做双向同步）
     // ============================================================
@@ -208,7 +293,7 @@
     function _isHolding(key) {
         if (typeof p1 === 'undefined' || !p1) return false;
         return (p1.weaponKey === key
-            && !p1.isMelee && !p1.isSmoke && !p1.isFlash);
+            && !p1.isMelee && !p1.isSmoke && !p1.isFlash && !p1.isMedkit);
     }
 
     function getAmmoReserve(key) {
@@ -219,7 +304,6 @@
 
         if (!p1.weaponAmmo) p1.weaponAmmo = {};
 
-        // 保证 weaponAmmo 条目存在
         if (!p1.weaponAmmo[key]) {
             p1.weaponAmmo[key] = {
                 ammo: w.mag,
@@ -228,17 +312,14 @@
         }
 
         if (_isHolding(key)) {
-            // ★ 手里拿着 → p.reserve 是权威值，同步到 weaponAmmo
             p1.weaponAmmo[key].reserve = p1.reserve;
             p1.weaponAmmo[key].ammo    = p1.ammo;
             return p1.reserve;
         }
 
-        // 手里没拿 → weaponAmmo 是权威值
         return p1.weaponAmmo[key].reserve;
     }
 
-    // 写入备弹：同时更新 weaponAmmo + （若在手里）p.reserve
     function _setAmmoReserve(key, value) {
         if (typeof p1 === 'undefined' || !p1) return;
         if (!p1.weaponAmmo) p1.weaponAmmo = {};
@@ -258,26 +339,23 @@
     function onGunClick(key) {
         const unlocked = isUnlocked(key);
 
-        // ---- 未解锁 → 尝试购买 ----
         if (!unlocked) {
-            if ((SurvivalState.coins || 0) < GUN_PRICE) {
-                toast(`金币不足，需要 ${GUN_PRICE} 💰`);
+            const price = GUN_PRICE[key] || 50;
+            if ((SurvivalState.coins || 0) < price) {
+                toast(`金币不足，需要 ${price} 💰`);
                 if (typeof sEmpty === 'function') sEmpty(1);
                 return;
             }
-            SurvivalState.coins -= GUN_PRICE;
+            SurvivalState.coins -= price;
             unlockWeapon(key);
             if (typeof sPickup === 'function') sPickup(1);
             renderShop();
             return;
         }
 
-        // ---- 已解锁 → 换枪 ----
         const current = getCurrentWeaponKey();
         if (current === key) return;
 
-        // setWeapon 内部会先把【当前枪】的 p.ammo / p.reserve 存进 weaponAmmo，
-        // 再从 weaponAmmo[key] 恢复目标枪弹药 → 天然防刷弹
         setWeapon(p1, key);
         if (typeof sPickup === 'function') sPickup(1);
 
@@ -285,12 +363,7 @@
     }
 
     // ============================================================
-    // ★ 点击：子弹
-    //
-    //   门槛：一个弹匣的全额金币（mag × price）
-    //        —— 金币不够门槛，直接拒绝，一颗都不卖
-    //   扣费：只按【实际增加的发数】扣钱
-    //        —— 例如差 10 发、门槛 25、金币 30 → 加 10 发扣 10💰
+    // 点击：子弹
     // ============================================================
     function onAmmoClick(key) {
         if (!isUnlocked(key)) {
@@ -313,7 +386,6 @@
             return;
         }
 
-        // ★ 门槛：一个弹匣的全额金币
         const magPrice = w.mag * price;
 
         if ((SurvivalState.coins || 0) < magPrice) {
@@ -322,7 +394,6 @@
             return;
         }
 
-        // ★ 能加几发加几发（不超过上限），按实际发数扣钱
         const wantBuy = Math.min(w.mag, space);
         const cost    = wantBuy * price;
 
@@ -345,7 +416,6 @@
 
         SurvivalState.unlockedWeapons.push(key);
 
-        // ★ 解锁即初始化弹药（如果还没有）
         if (typeof p1 !== 'undefined' && p1) {
             if (!p1.weaponAmmo) p1.weaponAmmo = {};
             if (!p1.weaponAmmo[key]) {

@@ -12,7 +12,7 @@ const SurvivalState = {
     SUMMARY_MS: 3000,
     PORTAL_TRIGGER_RADIUS: 2.5,
 
-    MAX_ALIVE_ZOMBIES: 8,
+    MAX_ALIVE_ZOMBIES: 10,
     REFILL_DELAY_MS: 1500,
     waveQueue: [],
     nextSpawnAt: 0,
@@ -254,19 +254,13 @@ function startSurvivalMode() {
 
     _teleportPlayerToMapCenter();
 
-    // ============================================================
-    // ★ 修复：重置武器到狂徒
-    // ============================================================
     if (typeof p1 !== 'undefined' && p1) {
         p1.primaryWeaponKey = 'rifle';
         if (typeof setWeapon === 'function') {
             setWeapon(p1, 'rifle');
         }
 
-        // ============================================================
         // ★ 生存模式不提供烟/闪
-        //   —— 充能置 0，且取消可能残留的引信状态
-        // ============================================================
         p1.smokeCharges = 0;
         p1.flashCharges = 0;
         p1.throwFuseActive = false;
@@ -274,7 +268,11 @@ function startSurvivalMode() {
         p1.throwFuseInHand = false;
         p1.throwFuseStart = 0;
         p1.throwFuseEnd = 0;
-        p1.throwFuseEnd = 0;
+
+        // ★ 生存模式开局不带血包
+        p1.medkits = 0;
+        p1.healing = false;
+        p1.healEnd = 0;
     }
 
     console.log('[survival] 模式已启动，地图:', SurvivalState.maps[SurvivalState.mapIndex],

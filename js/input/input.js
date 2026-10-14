@@ -13,7 +13,6 @@ function _isOnlineClient() {
         && typeof NET !== 'undefined' && NET.role === 'player' && !NET.isHost;
 }
 
-// ★ 生存模式判断（用于拦截烟/闪相关操作）
 function _isSurvivalMode() {
     return typeof gameMode !== 'undefined' && gameMode === 'survival';
 }
@@ -62,9 +61,6 @@ function _requestFuseRelease() {
     }
 }
 
-// ============================================================
-// ★ 判断当前是否"允许打开武器选择面板"（非生存模式）
-// ============================================================
 function _canOpenWeaponPanel() {
     if (!running || isOver()) return false;
     if (gameState === 'prep') return true;
@@ -75,12 +71,15 @@ window.addEventListener('keydown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
     // ============================================================
-    // ★ 商店打开时：屏蔽所有游戏输入，只允许 B / Esc 关闭
+    // ★ 商店打开时拦截
+    //   · B 键 → 关闭
+    //   · Esc  → 不处理（不 preventDefault，让浏览器自己处理全屏）
+    //   · 其他键 → 全部吞掉
     // ============================================================
     if (typeof window.Shop !== 'undefined'
         && typeof window.Shop.isOpen === 'function'
         && window.Shop.isOpen()) {
-        if (e.code === 'Escape' || e.code === 'KeyB') {
+        if (e.code === 'KeyB') {
             e.preventDefault();
             window.Shop.close();
         }
@@ -117,7 +116,7 @@ window.addEventListener('keydown', e => {
 
         if (e.code === 'Digit1' || e.code === 'Numpad1') {
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
-                if (p1.isMelee || p1.isSmoke || p1.isFlash) {
+                if (p1.isMelee || p1.isSmoke || p1.isFlash || p1.isMedkit) {
                     const key = p1.primaryWeaponKey || 'rifle';
                     setWeapon(p1, key);
                     if (isOC) NET.pendingWeaponSwitch = key;
@@ -135,9 +134,18 @@ window.addEventListener('keydown', e => {
             return;
         }
 
-        // ★ 生存模式没有烟/闪，直接拦截
         if (e.code === 'Digit3' || e.code === 'Numpad3') {
-            if (isSV) return;
+            if (isSV) {
+                // ★ 生存模式：数字 3 = 医疗包
+                if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
+                    if (!p1.isMedkit) {
+                        setWeapon(p1, 'medkit');
+                    } else {
+                        setWeapon(p1, p1.primaryWeaponKey || 'rifle');
+                    }
+                }
+                return;
+            }
             if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
                 const key = p1.isSmoke ? (p1.primaryWeaponKey || 'rifle') : 'smoke';
                 setWeapon(p1, key);
@@ -156,15 +164,12 @@ window.addEventListener('keydown', e => {
         }
 
         if (e.code === 'KeyR') {
+            // ★ 医疗包使用中不换弹
+            if (typeof p1 !== 'undefined' && p1 && p1.isMedkit) return;
             startReload(p1, performance.now());
             if (_isOnlineClient()) NET.pendingReload = true;
         }
 
-        // ============================================================
-        // ★ B 键
-        //   · 生存模式 → 商店（随时）
-        //   · 其他模式 → prep 阶段的武器面板
-        // ============================================================
         if (e.code === 'KeyB') {
             if (isSV
                 && typeof window.Shop !== 'undefined'
@@ -246,11 +251,9 @@ window.addEventListener('keyup', e => {
 });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-// ---------- 鼠标 ----------
 document.addEventListener('mousedown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
-    // ★ 商店打开时屏蔽鼠标
     if (typeof window.Shop !== 'undefined'
         && typeof window.Shop.isOpen === 'function'
         && window.Shop.isOpen()) return;
@@ -264,6 +267,16 @@ document.addEventListener('mousedown', e => {
     }
 
     if (e.button === 0) {
+        // ★ 医疗包：左键使用
+        if (typeof p1 !== 'undefined' && p1 && p1.isMedkit) {
+            if (running && !isOver() && gameState === 'combat') {
+                p1.input.fire = true;
+                mouse.leftDown = true;
+            }
+            e.preventDefault();
+            return;
+        }
+
         if (typeof p1 !== 'undefined' && p1 && p1.isSmoke) {
             if (running && !isOver() && gameState === 'combat') _requestFuseStart('smoke');
             e.preventDefault(); return;
@@ -282,7 +295,7 @@ document.addEventListener('mousedown', e => {
                     NET.pendingMelee = true;
                     NET.pendingMeleeHeavy = true;
                 }
-            } else if (typeof p1 !== 'undefined' && p1 && (p1.isSmoke || p1.isFlash)) { /* 无 */ }
+            } else if (typeof p1 !== 'undefined' && p1 && (p1.isSmoke || p1.isFlash || p1.isMedkit)) { /* 无 */ }
             else toggleAim();
         }
     } else { e.preventDefault(); e.stopPropagation(); }
@@ -293,6 +306,11 @@ document.addEventListener('mouseup', e => {
     if (_isSpectatorSafe()) { e.preventDefault(); e.stopPropagation(); return; }
     if (e.button === 0) {
         mouse.leftDown = false;
+        // 血包不释放引信
+        if (typeof p1 !== 'undefined' && p1 && p1.isMedkit) {
+            p1.input.fire = false;
+            return;
+        }
         _requestFuseRelease();
     } else if (e.button === 2) { e.preventDefault(); e.stopPropagation(); }
 });
@@ -301,7 +319,6 @@ document.addEventListener('wheel', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     if (_isSpectatorSafe()) return;
 
-    // ★ 商店打开时屏蔽滚轮
     if (typeof window.Shop !== 'undefined'
         && typeof window.Shop.isOpen === 'function'
         && window.Shop.isOpen()) return;
@@ -311,14 +328,12 @@ document.addEventListener('wheel', e => {
     if (typeof p1 === 'undefined' || !p1) return;
     if (gameState === 'prep') return;
 
-    // ============================================================
-    // ★ 生存模式：只在【主武器 ⇄ 刀】之间切换
-    //   不经过烟/闪
-    // ============================================================
+    // ★ 生存模式：主武器 → 刀 → 医疗包 → 主武器
     if (_isSurvivalMode()) {
         let newKey;
-        if (p1.isMelee) newKey = p1.primaryWeaponKey || 'rifle';
-        else            newKey = 'knife';
+        if (p1.isMelee)       newKey = 'medkit';
+        else if (p1.isMedkit) newKey = p1.primaryWeaponKey || 'rifle';
+        else                  newKey = 'knife';
         setWeapon(p1, newKey);
         return;
     }

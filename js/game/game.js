@@ -55,7 +55,6 @@ function resetPlayer(p, now) {
         p.reserve = p.weapon.startReserve;
     }
 
-    // ★ 清空每把枪的独立弹药记录
     p.weaponAmmo = {};
 
     p.reloadEnd = 0; p.nextShot = 0;
@@ -94,6 +93,12 @@ function resetPlayer(p, now) {
     p.throwFuseStart = 0;
     p.throwFuseEnd = 0;
     p.throwFuseInHand = false;
+
+    // ★ 医疗包：使用状态重置（medkits 数量不在这里重置）
+    p.isMedkit = false;
+    p.healing = false;
+    p.healStart = 0;
+    p.healEnd = 0;
 
     if (p.zipline) {
         p.zipline.active  = false;
