@@ -118,6 +118,8 @@ function spawnShellCasing(p, now) {
 
     slot.group.position.copy(spawnPos);
     slot.group.visible = true;
+
+    // ★ P0-2：新弹壳必须从满尺寸开始（上一次可能被缩到很小）
     slot.group.scale.setScalar(1);
 
     slot.group.rotation.set(
@@ -126,12 +128,15 @@ function spawnShellCasing(p, now) {
         Math.random() * Math.PI * 2
     );
 
-    slot.group.traverse(o => {
-        if (o.isMesh && o.material) {
-            o.material.transparent = false;
-            o.material.opacity = 1;
-        }
-    });
+    // ★ P0-2：删除了原有的材质遍历：
+    //   slot.group.traverse(o => {
+    //       if (o.isMesh && o.material) {
+    //           o.material.transparent = false;
+    //           o.material.opacity = 1;
+    //       }
+    //   });
+    //   原因：brassMat / capMat 是 32 个弹壳共享的同一份材质，
+    //        改 opacity 会把所有弹壳一起改。
 
     slot.body = body;
     slot.until = now + SHELL_LIFE_MS;
@@ -178,14 +183,14 @@ function updateShellCasings(dt, now) {
             continue;
         }
 
+        // ★ P0-2：用 scale 缩小消失代替 opacity 淡出
+        //   · scale 是 Object3D 自身属性，不会影响其他弹壳
+        //   · 少一次 group.traverse（省两个 mesh 的遍历）
+        //   · 少两次材质写（省一次 transparent 切换 + 一次 opacity 写）
         if (remain < SHELL_FADE_MS) {
-            const fade = remain / SHELL_FADE_MS;
-            slot.group.traverse(o => {
-                if (o.isMesh && o.material) {
-                    o.material.transparent = true;
-                    o.material.opacity = fade;
-                }
-            });
+            slot.group.scale.setScalar(remain / SHELL_FADE_MS);
+        } else if (slot.group.scale.x !== 1) {
+            slot.group.scale.setScalar(1);
         }
     }
 }
@@ -202,15 +207,14 @@ function clearAllShellCasings() {
             window.PHYSICS.removeShellBody(slot.body);
             slot.body = null;
         }
+
+        // ★ P0-2：删除了原有材质遍历（改共享材质会波及全部弹壳）
+        //   只保留 visible=false + scale 归位
         if (slot.group) {
             slot.group.visible = false;
-            slot.group.traverse(o => {
-                if (o.isMesh && o.material) {
-                    o.material.transparent = false;
-                    o.material.opacity = 1;
-                }
-            });
+            slot.group.scale.setScalar(1);
         }
+
         slot.active = false;
         slot.until = 0;
     }
