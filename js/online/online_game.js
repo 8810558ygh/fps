@@ -1,4 +1,4 @@
-// ===== js/online_game.js – 对局生命周期：座位 / 开始 / 进入 / 投掷物 spawn =====
+// ===== js/online/online_game.js – 对局生命周期：座位 / 开始 / 进入 / 投掷物 spawn =====
 //
 // 已拆分出去的模块：
 //   · online_serialize.js  —— 字段表 / 对象池 / serializePlayer / 增量
@@ -97,6 +97,8 @@ window.chooseOnlineSeat = function (seatKey) {
 
 // ============================================================
 // 客户端收到房主广播的投掷物 spawn
+//   ★ 传入 data.id 作为 serverId，保证两端 id 一致
+//   （后续 projectilesUpdate / smokePop / flashDetonate 广播靠这个 id 匹配）
 // ============================================================
 function handleSmokeSpawn(data) {
     if (NET.isHost) return;
@@ -106,7 +108,8 @@ function handleSmokeSpawn(data) {
         new THREE.Vector3(data.px, data.py, data.pz),
         new THREE.Vector3(data.vx, data.vy, data.vz),
         data.fuseMs !== undefined ? data.fuseMs : SMOKE.fuseMs,
-        now
+        now,
+        data.id                                // ★ 新增：serverId
     );
     if (typeof sSmokeThrow === 'function') sSmokeThrow();
 }
@@ -119,7 +122,8 @@ function handleFlashSpawn(data) {
         new THREE.Vector3(data.px, data.py, data.pz),
         new THREE.Vector3(data.vx, data.vy, data.vz),
         data.fuseMs !== undefined ? data.fuseMs : FLASH.fuseMs,
-        now
+        now,
+        data.id                                // ★ 新增：serverId
     );
     if (typeof sFlashThrow === 'function') sFlashThrow();
 }

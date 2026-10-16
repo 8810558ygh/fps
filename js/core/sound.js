@@ -46,6 +46,11 @@ const SOUND_DEFS = {
     flashDetonate:{ maxDist: 70,  rolloff: 1.6, refDist: 2,   baseVol: 1.00, life: 500 },
     explosion:    { maxDist: 200, rolloff: 1.1, refDist: 5,   baseVol: 1.00, life: 900 },
 
+    // ★ 新增：僵尸叫声（三种类型）
+    zombie_normal:{ maxDist: 35,  rolloff: 1.8, refDist: 2,   baseVol: 2.60, life: 1000 },
+    zombie_small: { maxDist: 30,  rolloff: 1.8, refDist: 2,   baseVol: 2.20, life: 700  },
+    zombie_big:   { maxDist: 55,  rolloff: 1.5, refDist: 2,   baseVol: 3.40, life: 1300 },
+
     win:          { maxDist: 200, rolloff: 1.0, refDist: 5,   baseVol: 1.00, life: 800 },
 };
 
@@ -325,6 +330,12 @@ function _dispatchSound(name, out, extra) {
         case 'flashThrow':    sFlashThrow(out);                          break;
         case 'flashDetonate': sFlashDetonate(out);                       break;
         case 'explosion':     sExplosion(out);                           break;
+
+        // ★ 新增：僵尸叫声（三种类型共用合成函数，预设不同）
+        case 'zombie_normal': sZombieGrowl(out, ZOMBIE_GROWL_PRESETS.normal); break;
+        case 'zombie_small':  sZombieGrowl(out, ZOMBIE_GROWL_PRESETS.small);  break;
+        case 'zombie_big':    sZombieGrowl(out, ZOMBIE_GROWL_PRESETS.big);    break;
+
         case 'win':           sWin(out);                                 break;
     }
 }

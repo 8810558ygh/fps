@@ -153,6 +153,7 @@ function tryFire(p, now) {
                 // ★ 命中僵尸
                 //   · 部位映射：zombie_head → head，zombie_leg → leg，其他 → body
                 //   · 走 damageZombie()，不走玩家的 damage()/护甲/复活
+                //   · 生存模式 + p1 → 应用个人属性倍率 + 暴击
                 // ============================================================
                 if (part && part.startsWith('zombie_')) {
                     const zombie = h.object.userData.zombieRef;
@@ -160,15 +161,29 @@ function tryFire(p, now) {
                         const dmgPart = (part === 'zombie_head') ? 'head'
                                       : (part === 'zombie_leg')  ? 'leg'
                                       : 'body';
-                        const dmg = _resolveDamage(w, dmgPart, h.distance);
+                        let dmg = _resolveDamage(w, dmgPart, h.distance);
+                        let isCrit = false;
+
+                        // ★ 个人属性加成：伤害倍率 + 暴击（仅生存模式 + 玩家 p1）
+                        if (gameMode === 'survival'
+                            && p.id === 1
+                            && typeof SurvivalStats !== 'undefined') {
+                            const roll = SurvivalStats.rollDamage(dmg);
+                            dmg = roll.dmg;
+                            isCrit = roll.isCrit;
+                        }
 
                         if (typeof damageZombie === 'function') {
                             damageZombie(zombie, dmg, p);
                         }
 
-                        spawnSparks(h.point, 0xff5040);
+                        spawnSparks(h.point, isCrit ? 0xffd24a : 0xff5040);
+
                         if (p.id === 1) {
                             hitmark(p);
+                            if (isCrit && typeof _flashCritHitmark === 'function') {
+                                _flashCritHitmark();
+                            }
                         }
                         emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                     }

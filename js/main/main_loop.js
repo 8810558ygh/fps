@@ -1,4 +1,4 @@
-// ===== js/main_loop.js – 主循环 / FPS / render / 远端插值 / 小地图 =====
+// ===== js/main/main_loop.js – 主循环 / FPS / render / 远端插值 / 小地图 =====
 // 从 main.js 拆出，不改变任何对外接口
 // 依赖：
 //   · main.js       的 renderer / isTouchDevice / getShadowUpdateInterval / _shadowFrameCounter / LAMP_CULL_DIST_SQ
@@ -98,6 +98,22 @@ function interpolateRemotePlayer(p, dt) {
     while (dyaw >  Math.PI) dyaw -= Math.PI * 2;
     while (dyaw < -Math.PI) dyaw += Math.PI * 2;
     p.yaw += dyaw * kYaw;
+
+    // ============================================================
+    // ★ 蹲起平滑
+    //   房主端 updatePlayer 用 `p.height += (target - p.height) * dt * 12`
+    //   客户端之前是 handleHostState 里直接赋值 → 瞬间跳变
+    //   现在改为：handleHostState 只写 _netTargetHeight，
+    //   由这里每帧平滑逼近
+    //
+    //   eyeH 用 stanceEye(目标高度) 而不是 stanceEye(p.height)，
+    //   因为 stanceEye 只返回两个离散值，传当前高度会跳。
+    // ============================================================
+    if (p._netTargetHeight !== undefined) {
+        const kH = 1 - Math.exp(-12 * dt);
+        p.height += (p._netTargetHeight - p.height) * kH;
+        p.eyeH += (stanceEye(p._netTargetHeight) - p.eyeH) * kH;
+    }
 
     p.mesh.position.copy(p.pos);
     p.mesh.rotation.y = p.yaw;

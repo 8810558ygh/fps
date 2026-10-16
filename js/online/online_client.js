@@ -1,4 +1,4 @@
-// ===== js/online_client.js – 客户端接收房主状态 + 输入上报 =====
+// ===== js/online/online_client.js – 客户端接收房主状态 + 输入上报 =====
 // 从 online_game.js 拆出，不改变任何对外接口
 // 依赖：online_serialize.js 提供 _mergeDelta / _clientPlayerState
 
@@ -63,8 +63,26 @@ function handleHostState(data) {
             p1.reserve = myData.reserve;
             p1.smokeCharges = myData.smokeCharges;
             p1.flashCharges = myData.flashCharges;
-            p1.height = myData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
-            p1.eyeH = stanceEye(p1.height);
+
+            // ============================================================
+            // ★ 客户端自己（p1）的蹲起平滑：
+            //
+            //   背景：
+            //     · p1 是本地玩家，本地每帧跑 updatePlayer，自己会平滑插值
+            //     · 但 handleHostState 每收到一次房主广播，就把 height 直接赋值
+            //     · 60Hz 覆盖下，本地插值没机会跑完 → 蹲下/起立都跳变
+            //
+            //   做法：
+            //     · 不直接覆盖 height / eyeH，让本地 updatePlayer 处理
+            //     · 只在"本地和房主状态严重不一致"（> 0.3m）时硬同步兜底
+            //       （比如本地撞箱子蹲不下去，但房主算出来能蹲）
+            // ============================================================
+            const expectedH = myData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
+            if (Math.abs(p1.height - expectedH) > 0.3) {
+                p1.height = expectedH;
+                p1.eyeH = stanceEye(expectedH);
+            }
+
             p1.meleeIsHeavy = !!myData.meleeIsHeavy;
 
             p1.reloadEnd     = myData.reloadRemain > 0     ? now + myData.reloadRemain     : 0;
@@ -165,7 +183,16 @@ function handleHostState(data) {
             p2.armor = oppData.armor;
             p2.score = oppData.score;
             p2.baseVisible = oppData.visible;
-            p2.height = oppData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
+
+            // ============================================================
+            // ★ 蹲起平滑：
+            //   不直接赋值 p2.height（会瞬间跳变），改为写 _netTargetHeight，
+            //   由 main_loop.js 的 interpolateRemotePlayer 每帧平滑逼近。
+            //   时间常数 12 与房主端 updatePlayer 里 `dt * 12` 一致。
+            // ============================================================
+            if (p2._netTargetHeight === undefined) p2._netTargetHeight = p2.height;
+            p2._netTargetHeight = oppData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
+
             p2.aiming = !!oppData.aiming;
             p2.aimStage = oppData.aimStage || 0;
             p2.meleeIsHeavy = !!oppData.meleeIsHeavy;
@@ -176,7 +203,7 @@ function handleHostState(data) {
                 p2.flashUntil = 0;
             }
 
-            // ★ 新增：同步对手的易伤状态（用于显示 p2 身上的紫光）
+            // ★ 同步对手的易伤状态（用于显示 p2 身上的紫光）
             if (oppData.vulnerableRemain > 0) {
                 p2.vulnerableUntil = now + oppData.vulnerableRemain;
             } else {
@@ -225,12 +252,29 @@ window.NET_sendClientInput = function () {
         || NET.pendingVulnerableStart;
 
     const last = NET._lastSentInput;
+
+    // ============================================================
+    // ★ P2-2：把 yaw / pitch 的"变化阈值"从 0.0008 提到 0.005
+    //
+    //   原值 0.0008 rad ≈ 0.046°，小于屏幕上 1 像素，
+    //   只要鼠标轻微抖动就触发发包 → 实际约 60Hz 上传。
+    //
+    //   新值 0.005 rad ≈ 0.29°，屏幕上约 2 像素，
+    //   视觉上完全看不出偏差，但发包频率从 60Hz 降到约 20Hz。
+    //   站桩时鼠标不动，则完全不发包。
+    //
+    //   注意：其他字段（forward / right / jump / crouch / fire / aim /
+    //        aimStage / hasPending）的判定逻辑一个字都没动，因为那些
+    //        是离散值或关键事件，必须立即上报。
+    // ============================================================
+    const AIM_EPS = 0.005;
+
     const changed = !last
         || last.f !== inp.forward || last.r !== inp.right
         || last.j !== inp.jump || last.c !== inp.crouch
         || last.fire !== inp.fire || last.aim !== inp.aim
-        || Math.abs(last.yaw   - p1.yaw)   > 0.0008
-        || Math.abs(last.pitch - p1.pitch) > 0.0008
+        || Math.abs(last.yaw   - p1.yaw)   > AIM_EPS
+        || Math.abs(last.pitch - p1.pitch) > AIM_EPS
         || last.aimStage !== p1.aimStage
         || hasPending;
 

@@ -143,13 +143,15 @@ function updatePlayer(p, dt, now) {
 
     // ============================================================
     // ★ 医疗包：按住左键蓄力，松开取消
+    //   ★ 使用 p.maxHp 而不是 HP_MAX（支持个人属性加成后的上限）
     // ============================================================
     if (p.isMedkit) {
         const holding = !!p.input.fire;
+        const _maxHp = p.maxHp || HP_MAX;
 
         if (!p.healing) {
             if (holding && gameState === 'combat' && !_stunned && now >= p.deadUntil) {
-                if ((p.medkits || 0) > 0 && p.hp < HP_MAX) {
+                if ((p.medkits || 0) > 0 && p.hp < _maxHp) {
                     // ★ 开始使用
                     p.healing = true;
                     p.healStart = now;
@@ -182,7 +184,7 @@ function updatePlayer(p, dt, now) {
                 p.healing = false;
                 p.medkits = Math.max(0, (p.medkits || 0) - 1);
                 const before = p.hp;
-                p.hp = Math.min(HP_MAX, p.hp + MEDKIT.healAmount);
+                p.hp = Math.min(_maxHp, p.hp + MEDKIT.healAmount);
                 const healed = Math.round(p.hp - before);
 
                 if (p.id === 1) {

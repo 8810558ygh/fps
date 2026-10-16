@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="style_settings.css">
     <link rel="stylesheet" href="style_armory.css">
     <link rel="stylesheet" href="style_survival.css">
+    <link rel="stylesheet" href="style_survival_stats.css">
     <link rel="stylesheet" href="style_shop.css">
     <base target="_blank">
     <style>
@@ -73,6 +74,7 @@
     <script src="pages/overlays.js"></script>
     <script src="pages/survival_hud.js"></script>
     <script src="pages/survival_shop.js"></script>
+    <script src="pages/survival_stats.js"></script>
 
     <!-- ============================================================
          ★ 依赖加载：本地优先，CDN 回退
@@ -236,12 +238,18 @@
     <script src="js/game/game.js"></script>
     <script src="js/game/ai.js"></script>
 
+    <!-- 僵尸模型 -->
+    <script src="js/survival/zombies/zombie_normal_model.js"></script>
+
+
     <!-- ★ survival（放在 game 之后，UI 之前） -->
+    <script src="js/survival/zombie_sounds.js"></script>
     <script src="js/survival/zombie.js"></script>
     <script src="js/survival/survival_portal.js"></script>
     <script src="js/survival/survival_ammo_drop.js"></script>
     <script src="js/survival/survival_state.js"></script>
     <script src="js/survival/survival_shop.js"></script>
+    <script src="js/survival/survival_stats.js"></script>
 
     <!-- ui -->
     <script src="js/ui/hud.js"></script>

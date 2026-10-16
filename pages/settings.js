@@ -15,6 +15,7 @@ document.write(`
             <div class="settings-tabs" id="settingsTabs">
                 <button class="stab active" data-tab="crosshair">准星</button>
                 <button class="stab" data-tab="sensitivity">灵敏度</button>
+                <button class="stab" data-tab="graphics">画面</button>
             </div>
 
             <div class="settings-content">
@@ -133,6 +134,39 @@ document.write(`
                                 <input type="range" id="sensTouch" min="1" max="100" step="1" value="60">
                                 <span class="set-val" id="sensTouchVal">60</span>
                             </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- ============ 画面页 ============ -->
+                <div class="settings-page" data-page="graphics" style="display:none;">
+                    <div class="settings-page-inner">
+
+                        <div class="settings-section">
+                            <div class="section-title">画质</div>
+
+                            <div class="set-row">
+                                <label>阴影</label>
+                                <input type="checkbox" id="gfxShadows" class="switch" checked>
+                                <span class="set-val" id="gfxShadowsVal">开</span>
+                            </div>
+
+                            <div style="
+                                margin-top: 10px;
+                                padding: 10px 14px;
+                                background: rgba(255, 210, 74, 0.06);
+                                border-left: 3px solid rgba(255, 210, 74, 0.6);
+                                border-radius: 6px;
+                                font-size: 12px;
+                                color: #9fb2c8;
+                                line-height: 1.7;
+                                letter-spacing: 0.5px;
+                            ">
+                                💡 关闭阴影可显著提升低端设备的帧率。<br>
+                                关闭后场景中所有物体将不再投射或接收阴影。
+                            </div>
+
                         </div>
 
                     </div>

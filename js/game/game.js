@@ -42,7 +42,13 @@ function resetPlayer(p, now) {
     p.vy = 0; p.prevY = gh; p.onGround = true;
     p.height = HEIGHT_STAND; p.eyeH = EYE_STAND;
     p.mesh.scale.y = 1;
-    p.hp = HP_MAX; p.armor = ARMOR_MAX;
+
+    // ★ 生存模式下 maxHp 由个人属性决定，其他模式用 HP_MAX
+    p.maxHp = (gameMode === 'survival' && typeof SurvivalStats !== 'undefined')
+        ? SurvivalStats.getMaxHp()
+        : HP_MAX;
+    p.hp = p.maxHp;
+    p.armor = ARMOR_MAX;
 
     const primaryW = (typeof WEAPONS !== 'undefined')
         ? WEAPONS[p.primaryWeaponKey || 'rifle']

@@ -22,6 +22,10 @@ const SurvivalState = {
 
     // ★ 金币（每局重置为 0）
     coins: 0,
+
+    // ★ 无限模式
+    endlessMode: false,
+    endlessLoop: 0,
 };
 window.SurvivalState = SurvivalState;
 
@@ -29,6 +33,7 @@ let _defeatHandled  = false;
 let _victoryHandled = false;
 let _summaryTimer = null;
 let _portalPromptEl = null;
+let _endlessChoiceEl = null;
 
 // ============================================================
 // 武器中文名 / 描述
@@ -78,9 +83,7 @@ function checkSurvivalDefeat() {
 window.checkSurvivalDefeat = checkSurvivalDefeat;
 
 // ============================================================
-// ★ 切地图补弹（对所有已解锁武器）
-//
-//   ★ 生存模式不提供烟/闪，这里强制清零
+// ★ 切地图补弹
 // ============================================================
 function _refillPlayerOnNextMap(p) {
     if (!p) return;
@@ -113,7 +116,6 @@ function _refillPlayerOnNextMap(p) {
 
     if (typeof ARMOR_MAX !== 'undefined') p.armor = ARMOR_MAX;
 
-    // ★ 生存模式不提供烟/闪
     p.smokeCharges = 0;
     p.flashCharges = 0;
 
@@ -189,7 +191,7 @@ function _spawnZombieAroundPlayer(type) {
 }
 
 // ============================================================
-// ★ 刷新武器面板的锁定状态（按 B 打开前调用，非生存模式）
+// ★ 刷新武器面板的锁定状态
 // ============================================================
 function updateWeaponPanelLocks() {
     const panel = document.getElementById('weaponPanel');
@@ -229,6 +231,14 @@ function startSurvivalMode() {
     SurvivalState.unlockedWeapons = ['rifle'];
     SurvivalState.coins = 0;
 
+    SurvivalState.endlessMode = false;
+    SurvivalState.endlessLoop = 0;
+
+    // ★ 重置个人属性
+    if (typeof SurvivalStats !== 'undefined') {
+        SurvivalStats.reset();
+    }
+
     _defeatHandled  = false;
     _victoryHandled = false;
 
@@ -236,6 +246,7 @@ function startSurvivalMode() {
     if (endOv) endOv.style.display = 'none';
     _hideWaveSummary(true);
     _hidePortalPrompt();
+    _hideEndlessChoice();
     if (window.Shop && window.Shop.isOpen && window.Shop.isOpen()) {
         window.Shop.close();
     }
@@ -255,12 +266,17 @@ function startSurvivalMode() {
     _teleportPlayerToMapCenter();
 
     if (typeof p1 !== 'undefined' && p1) {
+        // ★ 应用个人属性到玩家 maxHp
+        p1.maxHp = (typeof SurvivalStats !== 'undefined')
+            ? SurvivalStats.getMaxHp()
+            : HP_MAX;
+        p1.hp = p1.maxHp;
+
         p1.primaryWeaponKey = 'rifle';
         if (typeof setWeapon === 'function') {
             setWeapon(p1, 'rifle');
         }
 
-        // ★ 生存模式不提供烟/闪
         p1.smokeCharges = 0;
         p1.flashCharges = 0;
         p1.throwFuseActive = false;
@@ -269,7 +285,6 @@ function startSurvivalMode() {
         p1.throwFuseStart = 0;
         p1.throwFuseEnd = 0;
 
-        // ★ 生存模式开局不带血包
         p1.medkits = 0;
         p1.healing = false;
         p1.healEnd = 0;
@@ -283,6 +298,8 @@ window.startSurvivalMode = startSurvivalMode;
 function stopSurvivalMode() {
     SurvivalState.active = false;
     SurvivalState.phase = 'idle';
+    SurvivalState.endlessMode = false;
+    SurvivalState.endlessLoop = 0;
     _defeatHandled  = false;
     _victoryHandled = false;
 
@@ -295,6 +312,7 @@ function stopSurvivalMode() {
     if (endOv) endOv.style.display = 'none';
     _hideWaveSummary(true);
     _hidePortalPrompt();
+    _hideEndlessChoice();
 
     if (window.Shop && window.Shop.isOpen && window.Shop.isOpen()) {
         window.Shop.close();
@@ -382,22 +400,20 @@ window.tryEnterPortal = tryEnterPortal;
 function _enterNextMap() {
     const nextIndex = SurvivalState.mapIndex + 1;
 
-    if (nextIndex >= SurvivalState.maps.length) {
-        SurvivalState.phase = 'victory';
-
-        if (typeof despawnSurvivalPortal === 'function') despawnSurvivalPortal();
-        if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
-        _hidePortalPrompt();
-
-        running = false;
-        if (document.pointerLockElement) document.exitPointerLock();
-
-        console.log('[survival] 全部地图完成，通关！');
-        _handleVictory();
+    // 最后一张图的传送门 + 未进入无限模式 → 弹选择框
+    if (nextIndex >= SurvivalState.maps.length && !SurvivalState.endlessMode) {
+        _showEndlessChoice();
         return;
     }
 
-    const nextMapId = SurvivalState.maps[nextIndex];
+    let actualNextIndex = nextIndex;
+    let newLoopCount = SurvivalState.endlessLoop;
+    if (nextIndex >= SurvivalState.maps.length) {
+        actualNextIndex = 0;
+        newLoopCount++;
+    }
+
+    const nextMapId = SurvivalState.maps[actualNextIndex];
 
     if (typeof despawnSurvivalPortal === 'function') despawnSurvivalPortal();
     if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
@@ -409,13 +425,13 @@ function _enterNextMap() {
 
     SurvivalState.phase = 'loading';
 
-    const wasRunning = running;
     running = false;
     if (document.pointerLockElement) document.exitPointerLock();
 
     if (typeof window.beginMapSwitchLoading === 'function') {
         window.beginMapSwitchLoading(nextMapId, () => {
-            SurvivalState.mapIndex = nextIndex;
+            SurvivalState.mapIndex = actualNextIndex;
+            SurvivalState.endlessLoop = newLoopCount;
             SurvivalState.wave = 0;
             SurvivalState.phase = 'prep';
             SurvivalState.prepEndTime = performance.now() + SurvivalState.PREP_MS;
@@ -433,12 +449,17 @@ function _enterNextMap() {
                 enterFullscreenAndLock();
             }
 
-            console.log('[survival] 进入下一张地图:', nextMapId);
+            if (SurvivalState.endlessMode) {
+                console.log('[survival] 无限模式 · 第', newLoopCount, '轮 · 进入地图:', nextMapId);
+            } else {
+                console.log('[survival] 进入下一张地图:', nextMapId);
+            }
         });
     } else {
         console.warn('[survival] beginMapSwitchLoading 未定义，直接切图');
         if (typeof window.loadMap === 'function') window.loadMap(nextMapId);
-        SurvivalState.mapIndex = nextIndex;
+        SurvivalState.mapIndex = actualNextIndex;
+        SurvivalState.endlessLoop = newLoopCount;
         SurvivalState.wave = 0;
         SurvivalState.phase = 'prep';
         SurvivalState.prepEndTime = performance.now() + SurvivalState.PREP_MS;
@@ -447,7 +468,7 @@ function _enterNextMap() {
         _teleportPlayerToMapCenter();
         _clearInputState();
 
-        running = wasRunning;
+        running = true;
 
         if (typeof enterFullscreenAndLock === 'function') {
             enterFullscreenAndLock();
@@ -455,6 +476,146 @@ function _enterNextMap() {
     }
 }
 window._enterNextMap = _enterNextMap;
+
+// ============================================================
+// ★ 无限模式选择框
+// ============================================================
+function _ensureEndlessChoiceUI() {
+    if (_endlessChoiceEl) return _endlessChoiceEl;
+    if (typeof document === 'undefined') return null;
+
+    const el = document.createElement('div');
+    el.id = 'endlessChoiceOverlay';
+    el.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:120',
+        'display:none',
+        'align-items:center', 'justify-content:center',
+        'background:radial-gradient(ellipse at center, rgba(8,19,31,0.92) 0%, rgba(4,8,14,0.98) 75%)',
+        'font-family:"Microsoft YaHei",Arial,sans-serif',
+    ].join(';');
+
+    el.innerHTML = `
+        <div class="endless-choice-inner" style="
+            background: rgba(13, 19, 30, 0.96);
+            border: 2px solid rgba(255, 210, 74, 0.55);
+            border-radius: 16px;
+            padding: 36px 52px 34px;
+            box-shadow: 0 30px 90px rgba(0,0,0,0.9), 0 0 60px rgba(255,210,74,0.15);
+            text-align: center;
+            min-width: 480px;
+            max-width: 92vw;
+            animation: svUnlockZoom 0.4s cubic-bezier(0.2, 1.4, 0.5, 1);
+        ">
+            <div style="font-size:56px;line-height:1;margin-bottom:14px;">🏆</div>
+            <div style="
+                font-size:34px;font-weight:700;letter-spacing:8px;
+                color:#ffd24a;text-shadow:0 0 24px rgba(255,210,74,0.5);
+                margin-bottom:10px;margin-left:8px;
+            ">通 关</div>
+            <div style="font-size:14px;color:#9fb2c8;letter-spacing:2px;margin-bottom:30px;">
+                你已击败全部 10 波僵尸
+            </div>
+            <div style="display:flex;gap:20px;justify-content:center;flex-wrap:wrap;">
+                <button id="endlessLobbyBtn" style="
+                    padding:16px 36px;min-width:160px;
+                    font-size:16px;font-weight:700;letter-spacing:3px;
+                    background:rgba(255,255,255,0.08);
+                    border:2px solid rgba(255,255,255,0.25);
+                    border-radius:12px;color:#cfe0f0;cursor:pointer;
+                    font-family:inherit;transition:all 0.18s;
+                ">返 回 大 厅</button>
+                <button id="endlessModeBtn" style="
+                    padding:16px 36px;min-width:160px;
+                    font-size:16px;font-weight:700;letter-spacing:3px;
+                    background:linear-gradient(180deg, #ff6b6b, #d94a4a);
+                    border:2px solid #ff9a9a;
+                    border-radius:12px;color:#fff;cursor:pointer;
+                    font-family:inherit;transition:all 0.18s;
+                    box-shadow:0 8px 24px rgba(255,80,80,0.4);
+                ">🔥 无 限 模 式</button>
+            </div>
+            <div style="margin-top:20px;font-size:12px;color:rgba(255,255,255,0.35);letter-spacing:1px;">
+                无限模式将循环所有地图，难度持续增加
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(el);
+
+    const lobbyBtn = el.querySelector('#endlessLobbyBtn');
+    const endlessBtn = el.querySelector('#endlessModeBtn');
+
+    lobbyBtn.addEventListener('click', _onChooseLobby);
+    lobbyBtn.addEventListener('mouseenter', () => {
+        lobbyBtn.style.background = 'rgba(255,255,255,0.16)';
+        lobbyBtn.style.borderColor = 'rgba(255,255,255,0.4)';
+    });
+    lobbyBtn.addEventListener('mouseleave', () => {
+        lobbyBtn.style.background = 'rgba(255,255,255,0.08)';
+        lobbyBtn.style.borderColor = 'rgba(255,255,255,0.25)';
+    });
+
+    endlessBtn.addEventListener('click', _onChooseEndless);
+    endlessBtn.addEventListener('mouseenter', () => {
+        endlessBtn.style.transform = 'translateY(-2px)';
+        endlessBtn.style.boxShadow = '0 12px 32px rgba(255,80,80,0.6)';
+    });
+    endlessBtn.addEventListener('mouseleave', () => {
+        endlessBtn.style.transform = 'translateY(0)';
+        endlessBtn.style.boxShadow = '0 8px 24px rgba(255,80,80,0.4)';
+    });
+
+    _endlessChoiceEl = el;
+    return el;
+}
+
+function _showEndlessChoice() {
+    const el = _ensureEndlessChoiceUI();
+    if (!el) return;
+
+    if (document.pointerLockElement) document.exitPointerLock();
+
+    if (typeof p1 !== 'undefined' && p1 && p1.input) {
+        p1.input.forward = 0;
+        p1.input.right   = 0;
+        p1.input.fire    = false;
+        p1.input.jump    = false;
+        p1.input.aim     = false;
+    }
+    if (typeof mouse !== 'undefined') mouse.leftDown = false;
+
+    el.style.display = 'flex';
+    SurvivalState.phase = 'endlessChoice';
+
+    console.log('[survival] 显示通关选择框');
+}
+
+function _hideEndlessChoice() {
+    if (_endlessChoiceEl && _endlessChoiceEl.style.display !== 'none') {
+        _endlessChoiceEl.style.display = 'none';
+    }
+}
+
+function _onChooseLobby() {
+    _hideEndlessChoice();
+
+    SurvivalState.phase = 'victory';
+    if (typeof _handleVictory === 'function') _handleVictory();
+    console.log('[survival] 玩家选择：返回大厅');
+}
+
+function _onChooseEndless() {
+    _hideEndlessChoice();
+
+    SurvivalState.endlessMode = true;
+
+    console.log('[survival] 玩家选择：无限模式，开始第 1 轮循环');
+
+    _enterNextMap();
+}
+
+window.SurvivalState_ChooseLobby = _onChooseLobby;
+window.SurvivalState_ChooseEndless = _onChooseEndless;
 
 // ============================================================
 // 本波清空
@@ -603,6 +764,7 @@ function _handleVictory() {
     if (_victoryHandled) return;
     _victoryHandled = true;
     _hidePortalPrompt();
+    _hideEndlessChoice();
     if (window.Shop && window.Shop.isOpen && window.Shop.isOpen()) {
         window.Shop.close();
     }
@@ -632,6 +794,7 @@ function _handleDefeat() {
     if (_defeatHandled) return;
     _defeatHandled = true;
     _hidePortalPrompt();
+    _hideEndlessChoice();
     if (window.Shop && window.Shop.isOpen && window.Shop.isOpen()) {
         window.Shop.close();
     }
@@ -672,13 +835,29 @@ function startSurvivalWave(wave) {
         if (p) p.survivalKills = 0;
     }
 
-    const globalWave = SurvivalState.mapIndex * SurvivalState.maxWaves + wave;
+    // ============================================================
+    // ★ globalWave：整局游戏累加波次（用于日志）
+    // ★ baseGlobalWave：本轮内的等效全局波次（用于数量计算）
+    //   battlefield → 1~5，desert → 6~10，每轮都一样
+    //   无限模式加成通过 extraNormals 追加，不污染基础曲线
+    // ============================================================
+    const globalWave = SurvivalState.endlessLoop * SurvivalState.maps.length * SurvivalState.maxWaves
+        + SurvivalState.mapIndex * SurvivalState.maxWaves
+        + wave;
+
+    const baseGlobalWave = SurvivalState.mapIndex * SurvivalState.maxWaves
+        + wave;
+
+    // ★ 每多一轮，加 2 只普通僵尸
+    const endlessBonus = SurvivalState.endlessMode
+        ? SurvivalState.endlessLoop * 2
+        : 0;
 
     let typeList;
     if (typeof buildWaveComposition === 'function') {
-        typeList = buildWaveComposition(globalWave);
+        typeList = buildWaveComposition(baseGlobalWave, endlessBonus);
     } else {
-        const total = 3 + globalWave * 2;
+        const total = 3 + baseGlobalWave * 2 + endlessBonus;
         typeList = [];
         for (let i = 0; i < total; i++) typeList.push('normal');
     }
@@ -711,6 +890,7 @@ function startSurvivalWave(wave) {
                 '波（全局', globalWave, '波）已启动',
                 '总数', total, '，首刷', initialCount,
                 '，队列剩余', remaining.length,
+                '，无限加成 +' + endlessBonus,
                 '，构成:', stat);
 }
 window.startSurvivalWave = startSurvivalWave;

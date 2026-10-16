@@ -73,6 +73,29 @@ function hitmark(p) {
     el.classList.add('pop');
 }
 
+// ============================================================
+// ★ 暴击命中反馈（准星短暂加金色）
+//   由 combat_fire.js / combat_melee.js 在暴击时调用
+// ============================================================
+let _critFlashRaf = 0;
+let _critTimeoutId = 0;
+function _flashCritHitmark() {
+    if (_critFlashRaf) return;
+    const el = H[1].hit;
+    if (!el) return;
+
+    el.classList.add('crit');
+    _critFlashRaf = requestAnimationFrame(() => {
+        _critFlashRaf = 0;
+        if (_critTimeoutId) clearTimeout(_critTimeoutId);
+        _critTimeoutId = setTimeout(() => {
+            _critTimeoutId = 0;
+            el.classList.remove('crit');
+        }, 180);
+    });
+}
+window._flashCritHitmark = _flashCritHitmark;
+
 function _setText(el, val, cacheKey) {
     if (!el) return;
     if (_hudState[cacheKey] === val) return;
@@ -231,8 +254,17 @@ function updateHUD(now) {
             const queue = (SurvivalState.waveQueue && SurvivalState.waveQueue.length)
                 ? SurvivalState.waveQueue.length : 0;
             const remain = alive + queue;
-            svText = `${mapName} · 第 ${SurvivalState.wave} / ${SurvivalState.maxWaves} 波 · 🧟 ${remain}`;
+
+            // ★ 无限模式下显示循环轮数
+            const loopTag = SurvivalState.endlessMode
+                ? ` · 🔥${SurvivalState.endlessLoop + 1}轮`
+                : '';
+
+            svText = `${mapName}${loopTag} · 第 ${SurvivalState.wave} / ${SurvivalState.maxWaves} 波 · 🧟 ${remain}`;
             svColor = '#7ee08a';
+        } else if (SurvivalState.phase === 'endlessChoice') {
+            svText = `✨ 选择去向`;
+            svColor = '#ffd24a';
         } else if (SurvivalState.phase === 'portal') {
             svText = `✨ 传送门已开启`;
             svColor = '#66ffee';

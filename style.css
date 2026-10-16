@@ -161,6 +161,16 @@ canvas {
     100% { opacity: 0; transform: rotate(45deg) scale(0.9); }
 }
 
+/* ★ 新增：暴击命中反馈（金色 + 光晕） */
+.hitmark.crit {
+    box-shadow: 0 0 12px rgba(255, 210, 74, 0.9);
+}
+.hitmark.crit::before,
+.hitmark.crit::after {
+    background: #ffd24a;
+    box-shadow: 0 0 8px rgba(255, 210, 74, 0.9);
+}
+
 .dmgflash {
     position: absolute;
     inset: 0;

@@ -1,5 +1,9 @@
-// ===== js/projectiles_fuse.js – 引信系统 + 手里爆炸 + 掉落引信 =====
+// ===== js/projectiles/projectiles_fuse.js – 引信系统 + 手里爆炸 + 掉落引信 =====
 // 从 game_projectiles.js 拆出，不改变任何对外接口
+//
+// ★ 投掷物同步改造：
+//   · spawnSmokeProjectile / spawnFlashProjectile 现在返回创建对象
+//   · 广播 smokeSpawn / flashSpawn 时带上 id
 
 // ============================================================
 // 引信系统
@@ -122,6 +126,7 @@ window.updateThrowFuse = updateThrowFuse;
 
 // ============================================================
 // 掉落引信（切枪时原地扔出）
+//   ★ 广播 smokeSpawn / flashSpawn 时带 id
 // ============================================================
 function dropFuseInPlace(p) {
     if (!p || !p.throwFuseActive || !p.throwFuseInHand) return;
@@ -136,7 +141,7 @@ function dropFuseInPlace(p) {
     const vel = new THREE.Vector3(0, 0, 0);
 
     if (type === 'smoke') {
-        spawnSmokeProjectile(origin, vel, remainMs, now);
+        const proj = spawnSmokeProjectile(origin, vel, remainMs, now);
         if (typeof sSmokeThrow === 'function') sSmokeThrow();
         if (gameMode === 'online'
             && typeof NET !== 'undefined'
@@ -144,13 +149,14 @@ function dropFuseInPlace(p) {
             && typeof NET_broadcast === 'function') {
             NET_broadcast({
                 type: 'smokeSpawn',
+                id: proj ? proj.id : null,   // ★ 新增
                 px: origin.x, py: origin.y, pz: origin.z,
                 vx: 0, vy: 0, vz: 0,
                 fuseMs: remainMs
             });
         }
     } else if (type === 'flash') {
-        spawnFlashProjectile(origin, vel, remainMs, now);
+        const proj = spawnFlashProjectile(origin, vel, remainMs, now);
         if (typeof sFlashThrow === 'function') sFlashThrow();
         if (gameMode === 'online'
             && typeof NET !== 'undefined'
@@ -158,6 +164,7 @@ function dropFuseInPlace(p) {
             && typeof NET_broadcast === 'function') {
             NET_broadcast({
                 type: 'flashSpawn',
+                id: proj ? proj.id : null,   // ★ 新增
                 px: origin.x, py: origin.y, pz: origin.z,
                 vx: 0, vy: 0, vz: 0,
                 fuseMs: remainMs
@@ -169,6 +176,7 @@ window.dropFuseInPlace = dropFuseInPlace;
 
 // ============================================================
 // 手里爆炸（近距离自爆）
+//   ★ 广播 smokeSpawn / flashSpawn 时带 id
 // ============================================================
 function detonateInHand(p, type, now) {
     const eyePos  = p.cam.getWorldPosition(new THREE.Vector3());
@@ -183,7 +191,7 @@ function detonateInHand(p, type, now) {
     const vel = new THREE.Vector3(0, 0, 0);
 
     if (type === 'smoke') {
-        spawnSmokeProjectile(origin, vel, 0, now);
+        const proj = spawnSmokeProjectile(origin, vel, 0, now);
         if (typeof sSmokeThrow === 'function') sSmokeThrow();
         if (gameMode === 'online'
             && typeof NET !== 'undefined'
@@ -191,13 +199,14 @@ function detonateInHand(p, type, now) {
             && typeof NET_broadcast === 'function') {
             NET_broadcast({
                 type: 'smokeSpawn',
+                id: proj ? proj.id : null,   // ★ 新增
                 px: origin.x, py: origin.y, pz: origin.z,
                 vx: 0, vy: 0, vz: 0,
                 fuseMs: 0
             });
         }
     } else if (type === 'flash') {
-        spawnFlashProjectile(origin, vel, 0, now);
+        const proj = spawnFlashProjectile(origin, vel, 0, now);
         if (typeof sFlashThrow === 'function') sFlashThrow();
         if (gameMode === 'online'
             && typeof NET !== 'undefined'
@@ -205,6 +214,7 @@ function detonateInHand(p, type, now) {
             && typeof NET_broadcast === 'function') {
             NET_broadcast({
                 type: 'flashSpawn',
+                id: proj ? proj.id : null,   // ★ 新增
                 px: origin.x, py: origin.y, pz: origin.z,
                 vx: 0, vy: 0, vz: 0,
                 fuseMs: 0

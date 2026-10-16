@@ -1,4 +1,4 @@
-// ===== js/online_message.js – 广播 / 发送 / 消息路由 =====
+// ===== js/online/online_message.js – 广播 / 发送 / 消息路由 =====
 // 从 online_core.js 拆出，不改变任何对外接口
 
 // ============================================================
@@ -121,6 +121,33 @@ function handleRoomMessage(fromId, data) {
         case 'flashEvent':
             if (!NET.isHost && typeof p1 !== 'undefined' && p1) {
                 p1.flashUntil = performance.now() + (data.durationMs || FLASH.flashDurationMs);
+            }
+            break;
+
+        // ★ 新增：房主广播飞行中投掷物位置（30Hz）
+        //   客户端用这个位置做指数插值，不做物理模拟
+        case 'projectilesUpdate':
+            if (!NET.isHost) {
+                if (typeof handleProjectilesUpdateSmokes === 'function') {
+                    handleProjectilesUpdateSmokes(data.smokes);
+                }
+                if (typeof handleProjectilesUpdateFlashes === 'function') {
+                    handleProjectilesUpdateFlashes(data.flashes);
+                }
+            }
+            break;
+
+        // ★ 新增：房主广播烟雾弹起烟（真实落点）
+        case 'smokePop':
+            if (!NET.isHost && typeof handleRemoteSmokePop === 'function') {
+                handleRemoteSmokePop(data);
+            }
+            break;
+
+        // ★ 新增：房主广播闪光弹起爆（真实爆点）
+        case 'flashDetonate':
+            if (!NET.isHost && typeof handleRemoteFlashDetonate === 'function') {
+                handleRemoteFlashDetonate(data);
             }
             break;
 

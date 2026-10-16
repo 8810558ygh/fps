@@ -14,14 +14,29 @@ const FLASH_CAP_MAT = new THREE.MeshLambertMaterial({ color: 0x2a2e34 });
 const _hdWorldTemplates = new Map();
 const _hdViewTemplates  = new Map();
 
-function _findByName(root, name) {
-    if (!root || !name) return null;
-    let found = null;
+// ============================================================
+// ★ P1-2：一次性给克隆体建 name → node 索引
+//
+//   背景：
+//     · 原来 _cloneHdTemplate 里连续调 8 次 _findByName
+//     · 每次 _findByName 都跑一遍完整 root.traverse
+//     · 奥丁有 70+ 子节点 → 一次切枪 = 8 × 70 ≈ 560 次节点访问
+//
+//   优化：
+//     · 一次 traverse 把所有带 name 的节点塞进 Map
+//     · 后续 8 次查询都是 O(1) 查表
+//
+//   注：name 冲突时保留「先遇到的」节点，与旧行为一致
+//       （旧 _findByName 里的 found 标记也是保第一个）
+// ============================================================
+function _buildNameIndex(root) {
+    const idx = new Map();
     root.traverse(o => {
-        if (found) return;
-        if (o.name === name) found = o;
+        if (o.name && !idx.has(o.name)) {
+            idx.set(o.name, o);
+        }
     });
-    return found;
+    return idx;
 }
 
 function _cloneHdTemplate(tpl) {
@@ -52,14 +67,17 @@ function _cloneHdTemplate(tpl) {
     clone.position.copy(dst.basePos);
     clone.rotation.copy(dst.baseRot);
 
-    dst.muzzlePoint  = _findByName(clone, 'muzzlePoint');
-    dst.boltGroup    = _findByName(clone, 'boltGroup');
-    dst.scopeCenter  = _findByName(clone, 'scopeCenter');
-    dst.lensMeshF    = _findByName(clone, 'scopeLensFront');
-    dst.lensMeshB    = _findByName(clone, 'scopeLensBack');
-    dst.bladeTip     = _findByName(clone, 'bladeTip');
-    dst.attackPoint  = _findByName(clone, 'attackPoint');
-    dst.magazineGroup = _findByName(clone, 'magazineGroup');
+    // ★ P1-2：一次 traverse 建索引，之后全是查表
+    const nameIdx = _buildNameIndex(clone);
+
+    dst.muzzlePoint   = nameIdx.get('muzzlePoint')    || null;
+    dst.boltGroup     = nameIdx.get('boltGroup')      || null;
+    dst.scopeCenter   = nameIdx.get('scopeCenter')    || null;
+    dst.lensMeshF     = nameIdx.get('scopeLensFront') || null;
+    dst.lensMeshB     = nameIdx.get('scopeLensBack')  || null;
+    dst.bladeTip      = nameIdx.get('bladeTip')       || null;
+    dst.attackPoint   = nameIdx.get('attackPoint')    || null;
+    dst.magazineGroup = nameIdx.get('magazineGroup')  || null;
 
     return clone;
 }
@@ -214,7 +232,6 @@ function makeWeaponModel(type, mat) {
         pin.position.set(0.1, 0.12, 0); pin.rotation.x = Math.PI / 2;
         g.add(body, capTop, capBot, band, pin);
     } else if (type === 'medkit') {
-        // 简化兜底（HD 未加载时才走这里）
         const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.105, 0.15),
             new THREE.MeshLambertMaterial({ color: 0xe4e6e8 }));
         const cross1 = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.020, 0.004),
@@ -358,3 +375,37 @@ function makeViewmodel(type, mat) {
     g.userData.baseRot = g.rotation.clone();
     return g;
 }
+
+// ============================================================
+// ★ 供阴影开关使用：标脏所有武器模板的材质
+//
+//   背景：
+//     · 切换阴影时 renderer.shadowMap.enabled 变化
+//     · 已编译的材质 shader 需要重新编译（不同的 defines）
+//     · 场景里的材质可以直接 traverse 标脏
+//     · 但武器模板在 _hdWorldTemplates / _hdViewTemplates 里，
+//       不在 scene 中，scene.traverse 遍历不到
+//     · 结果：换枪时从模板 clone 出来的材质要现场编译 → 卡
+//
+//   修复：
+//     提供一个全局函数，让 settings.js 在切换阴影时调用
+// ============================================================
+window.markAllWeaponTemplatesDirty = function () {
+    const markTpl = (tpl) => {
+        if (!tpl) return;
+        tpl.traverse(o => {
+            if (!o.isMesh && !o.isPoints && !o.isLine) return;
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            for (const m of mats) {
+                if (m && m.needsUpdate !== undefined) {
+                    m.needsUpdate = true;
+                }
+            }
+        });
+    };
+
+    _hdWorldTemplates.forEach(markTpl);
+    _hdViewTemplates.forEach(markTpl);
+
+    console.log('[player_model] 武器模板材质已全部标脏，下次换枪时会用新状态编译');
+};

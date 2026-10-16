@@ -17,9 +17,41 @@ function _isSurvivalMode() {
     return typeof gameMode !== 'undefined' && gameMode === 'survival';
 }
 
+// ============================================================
+// ★ 修复：联机客户端投掷物不同步
+// ============================================================
 function _requestFuseStart(type) {
     if (_isOnlineClient()) {
         if (typeof NET !== 'undefined') NET.pendingFuseStart = type;
+
+        // ---- 客户端本地立即进入引信状态 ----
+        if (typeof p1 !== 'undefined' && p1) {
+            const now = performance.now();
+            if (now < p1.deadUntil || now < p1.equipEnd) return;
+
+            if (type === 'smoke') {
+                if (!p1.isSmoke) return;
+                if (p1.smokeCharges <= 0) return;
+                if (now < p1.smokeCooldownEnd) return;
+
+                p1.throwFuseActive = true;
+                p1.throwFuseType = 'smoke';
+                p1.throwFuseStart = now;
+                p1.throwFuseEnd = now + SMOKE.fuseMs;
+                p1.throwFuseInHand = true;
+
+            } else if (type === 'flash') {
+                if (!p1.isFlash) return;
+                if (p1.flashCharges <= 0) return;
+                if (now < p1.flashCooldownEnd) return;
+
+                p1.throwFuseActive = true;
+                p1.throwFuseType = 'flash';
+                p1.throwFuseStart = now;
+                p1.throwFuseEnd = now + FLASH.fuseMs;
+                p1.throwFuseInHand = true;
+            }
+        }
     } else {
         if (typeof startThrowFuse === 'function' && typeof p1 !== 'undefined' && p1) {
             startThrowFuse(p1, type);
@@ -49,6 +81,14 @@ function _requestFuseRelease() {
                 vx: vel.x, vy: vel.y, vz: vel.z,
                 fuseMs: remainMs,
             };
+
+            p1.throwFuseActive = false;
+            p1.throwFuseType = null;
+            p1.throwFuseInHand = false;
+
+            const backKey = p1.primaryWeaponKey || 'rifle';
+            if (typeof setWeapon === 'function') setWeapon(p1, backKey);
+
         } else {
             if (typeof NET !== 'undefined') NET.pendingFuseRelease = true;
         }
@@ -72,9 +112,6 @@ window.addEventListener('keydown', e => {
 
     // ============================================================
     // ★ 商店打开时拦截
-    //   · B 键 → 关闭
-    //   · Esc  → 不处理（不 preventDefault，让浏览器自己处理全屏）
-    //   · 其他键 → 全部吞掉
     // ============================================================
     if (typeof window.Shop !== 'undefined'
         && typeof window.Shop.isOpen === 'function'
@@ -82,6 +119,22 @@ window.addEventListener('keydown', e => {
         if (e.code === 'KeyB') {
             e.preventDefault();
             window.Shop.close();
+        }
+        return;
+    }
+
+    // ============================================================
+    // ★ 新增：个人属性面板打开时拦截
+    //   · V 键 → 关闭
+    //   · Esc  → 不处理（让浏览器自己处理全屏退出）
+    //   · 其他键 → 全部吞掉
+    // ============================================================
+    if (typeof window.StatsPanel !== 'undefined'
+        && typeof window.StatsPanel.isOpen === 'function'
+        && window.StatsPanel.isOpen()) {
+        if (e.code === 'KeyV') {
+            e.preventDefault();
+            window.StatsPanel.close();
         }
         return;
     }
@@ -136,7 +189,6 @@ window.addEventListener('keydown', e => {
 
         if (e.code === 'Digit3' || e.code === 'Numpad3') {
             if (isSV) {
-                // ★ 生存模式：数字 3 = 医疗包
                 if (running && !isOver() && typeof p1 !== 'undefined' && p1) {
                     if (!p1.isMedkit) {
                         setWeapon(p1, 'medkit');
@@ -164,7 +216,6 @@ window.addEventListener('keydown', e => {
         }
 
         if (e.code === 'KeyR') {
-            // ★ 医疗包使用中不换弹
             if (typeof p1 !== 'undefined' && p1 && p1.isMedkit) return;
             startReload(p1, performance.now());
             if (_isOnlineClient()) NET.pendingReload = true;
@@ -198,6 +249,17 @@ window.addEventListener('keydown', e => {
                     }
                 }
             }
+        }
+
+        // ★ 新增：V 键打开个人属性面板
+        if (e.code === 'KeyV') {
+            if (isSV
+                && typeof window.StatsPanel !== 'undefined'
+                && typeof window.StatsPanel.canOpen === 'function'
+                && window.StatsPanel.canOpen()) {
+                window.StatsPanel.toggle();
+            }
+            return;
         }
 
         if (e.code === 'KeyT') {
@@ -267,7 +329,6 @@ document.addEventListener('mousedown', e => {
     }
 
     if (e.button === 0) {
-        // ★ 医疗包：左键使用
         if (typeof p1 !== 'undefined' && p1 && p1.isMedkit) {
             if (running && !isOver() && gameState === 'combat') {
                 p1.input.fire = true;
@@ -306,7 +367,6 @@ document.addEventListener('mouseup', e => {
     if (_isSpectatorSafe()) { e.preventDefault(); e.stopPropagation(); return; }
     if (e.button === 0) {
         mouse.leftDown = false;
-        // 血包不释放引信
         if (typeof p1 !== 'undefined' && p1 && p1.isMedkit) {
             p1.input.fire = false;
             return;
@@ -328,7 +388,6 @@ document.addEventListener('wheel', e => {
     if (typeof p1 === 'undefined' || !p1) return;
     if (gameState === 'prep') return;
 
-    // ★ 生存模式：主武器 → 刀 → 医疗包 → 主武器
     if (_isSurvivalMode()) {
         let newKey;
         if (p1.isMelee)       newKey = 'medkit';

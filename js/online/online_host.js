@@ -1,6 +1,11 @@
-// ===== js/online_host.js – 房主广播 + 客户端输入处理 =====
+// ===== js/online/online_host.js – 房主广播 + 客户端输入处理 =====
 // 从 online_game.js 拆出，不改变任何对外接口
 // 依赖：online_serialize.js 提供 serializePlayer / _buildPlayerPayload / _payloadBlue / _payloadRed
+//
+// ★ 投掷物同步改造：
+//   · 房主每 2 次 hostBroadcastTick（约 32ms ≈ 30Hz）广播一次飞行中投掷物的实时位置 + 旋转
+//   · 客户端用这个位置做指数插值（不做任何物理模拟），旋转直接赋值
+//   · 保证客户端看到的投掷物位置 / 旋转 = 房主位置 / 旋转（滞后 30~60ms）
 
 const HOST_BROADCAST_INTERVAL = 16;
 
@@ -39,6 +44,8 @@ function stopHostBroadcast() {
 // ============================================================
 // ★ 房主广播
 // ============================================================
+let _projectileBroadcastCounter = 0;
+
 function hostBroadcastTick() {
     if (!NET.isHost || !NET.roomId) return;
     if (typeof p1 === 'undefined' || typeof p2 === 'undefined') return;
@@ -84,6 +91,75 @@ function hostBroadcastTick() {
     packet.redPlayer = _payloadRed;
 
     broadcast(packet);
+
+    // ★ 投掷物位置 + 旋转广播（30Hz，每 2 次 tick 一次）
+    _projectileBroadcastCounter++;
+    if (_projectileBroadcastCounter >= 2) {
+        _projectileBroadcastCounter = 0;
+        _broadcastProjectiles();
+    }
+}
+
+// ============================================================
+// ★ 房主广播：飞行中投掷物的实时位置 + 旋转
+//
+//   目的：
+//     · 客户端不做投掷物物理模拟
+//     · 完全相信房主的位置 + 旋转广播
+//     · 位置用指数插值平滑显示，旋转直接赋值
+// ============================================================
+function _broadcastProjectiles() {
+    const hasSmokes  = (typeof activeSmokes  !== 'undefined') && activeSmokes.length  > 0;
+    const hasFlashes = (typeof activeFlashes !== 'undefined') && activeFlashes.length > 0;
+    if (!hasSmokes && !hasFlashes) return;
+
+    let smokes = null;
+    if (hasSmokes) {
+        for (let i = 0; i < activeSmokes.length; i++) {
+            const s = activeSmokes[i];
+            if (s.state !== 'flying') continue;
+            if (s.id == null) continue;
+            if (!s.mesh) continue;
+            if (!smokes) smokes = [];
+            // ★ 新增旋转同步：附上 mesh 的四元数
+            smokes.push({
+                id: s.id,
+                x: s.pos.x, y: s.pos.y, z: s.pos.z,
+                qx: s.mesh.quaternion.x,
+                qy: s.mesh.quaternion.y,
+                qz: s.mesh.quaternion.z,
+                qw: s.mesh.quaternion.w,
+            });
+        }
+    }
+
+    let flashes = null;
+    if (hasFlashes) {
+        for (let i = 0; i < activeFlashes.length; i++) {
+            const s = activeFlashes[i];
+            if (s.state !== 'flying') continue;
+            if (s.id == null) continue;
+            if (!s.mesh) continue;
+            if (!flashes) flashes = [];
+            // ★ 新增旋转同步：附上 mesh 的四元数
+            flashes.push({
+                id: s.id,
+                x: s.pos.x, y: s.pos.y, z: s.pos.z,
+                qx: s.mesh.quaternion.x,
+                qy: s.mesh.quaternion.y,
+                qz: s.mesh.quaternion.z,
+                qw: s.mesh.quaternion.w,
+            });
+        }
+    }
+
+    if (!smokes && !flashes) return;
+
+    broadcast({
+        type: 'projectilesUpdate',
+        smokes: smokes || [],
+        flashes: flashes || [],
+    });
 }
 
 // ============================================================
@@ -197,6 +273,7 @@ function handleClientInput(fromId, data) {
 
     // ============================================================
     // ★ 客户端上报完整投掷参数（对象），房主直接用它 spawn
+    //   并用 spawn 返回的 id 广播给所有客户端
     // ============================================================
     if (data.fuseRelease) {
         const fr = data.fuseRelease;
@@ -205,7 +282,7 @@ function handleClientInput(fromId, data) {
             const now = performance.now();
 
             if (fr.type === 'smoke') {
-                spawnSmokeProjectile(
+                const proj = spawnSmokeProjectile(
                     new THREE.Vector3(fr.px, fr.py, fr.pz),
                     new THREE.Vector3(fr.vx, fr.vy, fr.vz),
                     fr.fuseMs, now
@@ -214,13 +291,14 @@ function handleClientInput(fromId, data) {
                 if (typeof NET_broadcast === 'function') {
                     NET_broadcast({
                         type: 'smokeSpawn',
+                        id: proj ? proj.id : null,
                         px: fr.px, py: fr.py, pz: fr.pz,
                         vx: fr.vx, vy: fr.vy, vz: fr.vz,
                         fuseMs: fr.fuseMs,
                     });
                 }
             } else if (fr.type === 'flash') {
-                spawnFlashProjectile(
+                const proj = spawnFlashProjectile(
                     new THREE.Vector3(fr.px, fr.py, fr.pz),
                     new THREE.Vector3(fr.vx, fr.vy, fr.vz),
                     fr.fuseMs, now
@@ -229,6 +307,7 @@ function handleClientInput(fromId, data) {
                 if (typeof NET_broadcast === 'function') {
                     NET_broadcast({
                         type: 'flashSpawn',
+                        id: proj ? proj.id : null,
                         px: fr.px, py: fr.py, pz: fr.pz,
                         vx: fr.vx, vy: fr.vy, vz: fr.vz,
                         fuseMs: fr.fuseMs,

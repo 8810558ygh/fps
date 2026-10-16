@@ -10,6 +10,7 @@
 //   ★ 硬直期间禁止近战
 //   ★ 易伤在 _addDamage 之前应用
 //   ★ 生存模式命中僵尸 → 走 damageZombie()，不走玩家伤害链
+//   ★ 生存模式 + p1 → 应用个人属性倍率 + 暴击
 // ============================================================
 function tryMelee(p, now, isHeavy) {
     if (gameState !== 'combat') return;
@@ -95,21 +96,36 @@ function tryMelee(p, now, isHeavy) {
             //   · 部位映射：zombie_head → head，zombie_leg → leg，其他 → body
             //   · 直接走 damageZombie()，不做玩家易伤/护甲/背刺
             //   · 刀对僵尸造成与打玩家相同的伤害（dmgLight / dmgHeavy）
+            //   · 生存模式 + p1 → 应用个人属性倍率 + 暴击
             // ============================================================
             if (part && part.startsWith('zombie_')) {
                 const zombie = h.object.userData.zombieRef;
                 if (zombie && zombie.alive) {
                     // 僵尸没有明确弱点（头/腿伤害一样），用普通伤害
                     // 背刺也不做（僵尸没背）
-                    const dmg = isHeavy ? m.dmgHeavy : m.dmgLight;
+                    let dmg = isHeavy ? m.dmgHeavy : m.dmgLight;
+                    let isCrit = false;
+
+                    // ★ 个人属性加成：伤害倍率 + 暴击（仅生存模式 + 玩家 p1）
+                    if (gameMode === 'survival'
+                        && p.id === 1
+                        && typeof SurvivalStats !== 'undefined') {
+                        const roll = SurvivalStats.rollDamage(dmg);
+                        dmg = roll.dmg;
+                        isCrit = roll.isCrit;
+                    }
 
                     if (typeof damageZombie === 'function') {
                         damageZombie(zombie, dmg, p);
                     }
 
-                    spawnSparks(h.point, 0xff5040);
+                    spawnSparks(h.point, isCrit ? 0xffd24a : 0xff5040);
+
                     if (p.id === 1) {
                         hitmark(p);
+                        if (isCrit && typeof _flashCritHitmark === 'function') {
+                            _flashCritHitmark();
+                        }
                     }
                     emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                 }

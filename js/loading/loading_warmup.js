@@ -9,7 +9,6 @@
         return;
     }
 
-    // ★ 加入 medkit 预加载
     const ALL_WEAPON_TYPES = ['rifle', 'sniper', 'shotgun', 'odin', 'knife', 'smoke', 'flash', 'medkit'];
 
     const WEAPON_NAMES = {
@@ -205,7 +204,7 @@
     }
 
     // ============================================================
-    // 场景 shader 编译（完整版：连武器一起）
+    // 场景 shader 编译
     // ============================================================
     function compileSceneShaders() {
         if (typeof renderer === 'undefined' || !renderer) return;
@@ -503,28 +502,70 @@
         }
     }
 
+    // ============================================================
+    // ★ 僵尸预热（含新僵尸模型 preload）
+    // ============================================================
     function warmupZombies() {
+        // ---- 1. 新僵尸模型：纹理 / 材质 / shader ----
+        if (window.ZOMBIE_MODEL_NORMAL
+            && typeof window.ZOMBIE_MODEL_NORMAL.preload === 'function') {
+            try {
+                window.ZOMBIE_MODEL_NORMAL.preload();
+            } catch (e) {
+                console.warn('[loading_warmup] 新僵尸模型 preload 失败:', e);
+            }
+        }
+
+        // ---- 2. 僵尸池：让两套模型都渲染一次，编译 shader ----
         if (typeof window.initZombiePool !== 'function') return;
         try {
             window.initZombiePool();
+
             withWarmupCamera(() => {
                 const zombies = (typeof window.getAllZombies === 'function')
                     ? window.getAllZombies() : [];
-                const displaced = [];
-                const N = Math.min(zombies.length, 6);
+
+                // 记录原状态，预热完后恢复
+                const restoreList = [];
+
+                const N = Math.min(zombies.length, 4);
                 for (let i = 0; i < N; i++) {
                     const z = zombies[i];
-                    displaced.push({ z, pos: z.mesh.position.clone(), visible: z.mesh.visible });
-                    z.mesh.position.set((i - (N-1)/2) * 1.5, 54.5, 0);
-                    z.mesh.visible = true;
+
+                    if (z._partsLegacy) {
+                        const g = z._partsLegacy.group;
+                        restoreList.push({
+                            g,
+                            pos: g.position.clone(),
+                            visible: g.visible,
+                        });
+                        g.position.set((i - (N - 1) / 2) * 2.5, 54.5, 0);
+                        g.visible = true;
+                    }
+                    if (z._partsNormal) {
+                        const g = z._partsNormal.group;
+                        restoreList.push({
+                            g,
+                            pos: g.position.clone(),
+                            visible: g.visible,
+                        });
+                        g.position.set((i - (N - 1) / 2) * 2.5, 54.5, 2.5);
+                        g.visible = true;
+                    }
                 }
+
+                scene.updateMatrixWorld(true);
+
                 try { renderer.compile(scene, p1.cam); } catch (e) {}
                 try { renderer.render(scene, p1.cam); } catch (e) {}
-                for (const d of displaced) {
-                    d.z.mesh.position.copy(d.pos);
-                    d.z.mesh.visible = d.visible;
+
+                // 恢复原状态
+                for (const r of restoreList) {
+                    r.g.position.copy(r.pos);
+                    r.g.visible = r.visible;
                 }
             });
+
             console.log('[loading_warmup] 僵尸池预热完成');
         } catch (e) {
             console.warn('[loading_warmup] 僵尸预热失败:', e);

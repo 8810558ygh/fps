@@ -1,5 +1,7 @@
-// ===== js/projectiles_flash.js – 闪光爆炸池 + 闪光投掷物 + 判定 + 覆盖层 =====
+// ===== js/projectiles/projectiles_flash.js – 闪光爆炸池 + 闪光投掷物 + 判定 + 覆盖层 =====
 // 从 game_projectiles.js 拆出，不改变任何对外接口
+//
+// ★ 投掷物同步改造：与 smoke 相同
 
 // ============================================================
 // 闪光弹爆炸特效池
@@ -8,6 +10,8 @@ const FLASH_BURST_POOL_SIZE = 3;
 const FLASH_BURST_LIFE_MS = 380;
 const _flashBurstPool = [];
 let _flashBurstPoolInited = false;
+
+let _flashIdCounter = 0;
 
 function initFlashBurstPool() {
     if (_flashBurstPoolInited) return;
@@ -82,23 +86,55 @@ function updateFlashBursts(dt, now) {
 }
 
 // ============================================================
+// 工具：是否是联机客户端（含观战）
+// ============================================================
+function _isOnlineNonHostFlash() {
+    return typeof gameMode !== 'undefined'
+        && gameMode === 'online'
+        && typeof NET !== 'undefined'
+        && !NET.isHost;
+}
+
+function _findFlashById(id) {
+    if (id == null) return null;
+    for (let i = 0; i < activeFlashes.length; i++) {
+        if (activeFlashes[i].id === id) return activeFlashes[i];
+    }
+    return null;
+}
+
+// ============================================================
 // 闪光投掷物生成
 // ============================================================
-function spawnFlashProjectile(pos, vel, fuseMs, now) {
+function spawnFlashProjectile(pos, vel, fuseMs, now, serverId) {
+    const id = (serverId != null) ? serverId : (++_flashIdCounter);
+    const isClientSide = _isOnlineNonHostFlash();
+
     const mesh = createThrownProjectileMesh('flash');
     mesh.position.copy(pos);
     scene.add(mesh);
 
     let body = null;
-    if (window.PHYSICS && window.PHYSICS.isReady()) {
+    if (!isClientSide && window.PHYSICS && window.PHYSICS.isReady()) {
         body = window.PHYSICS.createProjectileBody(pos, vel, 'flash');
     }
 
-    activeFlashes.push({
-        mesh, pos: pos.clone(), vel: vel.clone(),
-        fuseEnd: now + fuseMs, state: 'flying',
-        body
-    });
+    const proj = {
+        id,
+        mesh,
+        pos: pos.clone(),
+        vel: vel.clone(),
+        fuseEnd: now + fuseMs,
+        state: 'flying',
+        body,
+        _waitUntil: 0,
+        _clientSide: isClientSide,
+        _targetX: 0, _targetY: 0, _targetZ: 0,
+        _hasTarget: false,
+    };
+
+    activeFlashes.push(proj);
+    return proj;
 }
 window.spawnFlashProjectile = spawnFlashProjectile;
 
@@ -202,8 +238,21 @@ function detonateFlash(pos, now) {
 function updateFlashes(dt, now) {
     for (let i = activeFlashes.length - 1; i >= 0; i--) {
         const s = activeFlashes[i];
+
         if (s.state === 'flying') {
-            if (s.body) {
+            if (s._clientSide) {
+                // ★ 客户端：完全信任房主广播
+                //   · 位置：指数插值
+                //   · 旋转：由 handleProjectilesUpdateFlashes 直接写入
+                if (s._hasTarget) {
+                    const k = 1 - Math.exp(-25 * dt);
+                    const m = s.mesh.position;
+                    m.x += (s._targetX - m.x) * k;
+                    m.y += (s._targetY - m.y) * k;
+                    m.z += (s._targetZ - m.z) * k;
+                    s.pos.copy(m);
+                }
+            } else if (s.body) {
                 s.pos.set(s.body.position.x, s.body.position.y, s.body.position.z);
                 s.mesh.position.copy(s.pos);
                 _projQuat.set(
@@ -214,30 +263,109 @@ function updateFlashes(dt, now) {
             }
 
             if (now >= s.fuseEnd) {
-                scene.remove(s.mesh);
-                s.mesh = null;
-
                 if (s.body) {
                     window.PHYSICS.removeProjectileBody(s.body);
                     s.body = null;
                 }
 
-                const isAuthority = (gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost);
-                if (isAuthority) {
-                    detonateFlash(s.pos.clone(), now);
-                } else {
-                    spawnFlashBurst(s.pos.clone());
-                    if (typeof emitWorldSound === 'function') {
-                        emitWorldSound('flashDetonate', s.pos.x, s.pos.y, s.pos.z, false);
-                    } else if (typeof sFlashDetonate === 'function') {
-                        sFlashDetonate();
-                    }
+                // ★ 客户端：不 detonate，进入 waiting
+                if (s._clientSide) {
+                    s.state = 'waiting';
+                    s._waitUntil = now + 5000;
+                    continue;
+                }
+
+                // ---- 房主 / 单机：正常 detonate ----
+                scene.remove(s.mesh);
+                s.mesh = null;
+
+                detonateFlash(s.pos.clone(), now);
+
+                if (typeof gameMode !== 'undefined' && gameMode === 'online'
+                    && typeof NET !== 'undefined' && NET.isHost
+                    && typeof NET_broadcast === 'function') {
+                    NET_broadcast({
+                        type: 'flashDetonate',
+                        id: s.id,
+                        px: s.pos.x, py: s.pos.y, pz: s.pos.z,
+                    });
+                }
+
+                activeFlashes.splice(i, 1);
+            }
+        } else if (s.state === 'waiting') {
+            if (now > s._waitUntil) {
+                if (s.mesh) {
+                    scene.remove(s.mesh);
+                    s.mesh = null;
                 }
                 activeFlashes.splice(i, 1);
             }
         }
     }
 }
+
+// ============================================================
+// ★ 客户端：处理房主广播的投掷物位置 + 旋转更新
+// ============================================================
+function handleProjectilesUpdateFlashes(list) {
+    if (!list || list.length === 0) return;
+    for (let i = 0; i < list.length; i++) {
+        const d = list[i];
+        const s = _findFlashById(d.id);
+        if (!s) continue;
+
+        // ---- 位置：写入插值目标 ----
+        s._targetX = d.x;
+        s._targetY = d.y;
+        s._targetZ = d.z;
+        s._hasTarget = true;
+
+        // ★ 新增旋转同步：直接赋值
+        if (d.qw !== undefined && s.mesh) {
+            s.mesh.quaternion.set(d.qx, d.qy, d.qz, d.qw);
+        }
+    }
+}
+window.handleProjectilesUpdateFlashes = handleProjectilesUpdateFlashes;
+
+// ============================================================
+// ★ 客户端：收到房主 flashDetonate 广播
+// ============================================================
+function handleRemoteFlashDetonate(data) {
+    if (typeof scene === 'undefined' || !scene) return;
+
+    const pos = new THREE.Vector3(data.px, data.py, data.pz);
+
+    // 找 waiting 的投掷物删掉
+    let target = null;
+    if (data.id != null) target = _findFlashById(data.id);
+    if (!target) {
+        for (let i = 0; i < activeFlashes.length; i++) {
+            if (activeFlashes[i].state === 'waiting') {
+                target = activeFlashes[i];
+                break;
+            }
+        }
+    }
+    if (target) {
+        if (target.mesh) {
+            scene.remove(target.mesh);
+            target.mesh = null;
+        }
+        const idx = activeFlashes.indexOf(target);
+        if (idx >= 0) activeFlashes.splice(idx, 1);
+    }
+
+    // 显示爆闪特效（是否被闪由 flashEvent 决定）
+    spawnFlashBurst(pos);
+    if (typeof emitWorldSound === 'function') {
+        emitWorldSound('flashDetonate', pos.x, pos.y, pos.z, false);
+    } else if (typeof sFlashDetonate === 'function') {
+        sFlashDetonate();
+    }
+}
+window.handleRemoteFlashDetonate = handleRemoteFlashDetonate;
 
 // ============================================================
 // 闪光覆盖层
@@ -276,7 +404,7 @@ function updateFlashOverlay(now) {
 }
 
 // ============================================================
-// 投掷闪光弹
+// 投掷闪光弹（房主 / 单机调用）
 // ============================================================
 function throwFlash(p, now, fuseMs) {
     if (gameState !== 'combat') return;
@@ -290,7 +418,7 @@ function throwFlash(p, now, fuseMs) {
     const vel = dir.clone().multiplyScalar(FLASH.throwSpeed);
     vel.y += FLASH.throwUpBias * FLASH.throwSpeed;
 
-    spawnFlashProjectile(origin, vel, effectiveFuseMs, now);
+    const proj = spawnFlashProjectile(origin, vel, effectiveFuseMs, now);
 
     if (typeof emitWorldSound === 'function') {
         emitWorldSound('flashThrow', p.pos.x, p.pos.y + p.eyeH, p.pos.z, p.id === 1);
@@ -304,6 +432,7 @@ function throwFlash(p, now, fuseMs) {
         && typeof NET_broadcast === 'function') {
         NET_broadcast({
             type: 'flashSpawn',
+            id: proj ? proj.id : null,
             px: origin.x, py: origin.y, pz: origin.z,
             vx: vel.x, vy: vel.y, vz: vel.z,
             fuseMs: effectiveFuseMs

@@ -120,6 +120,43 @@
     const _ray = new THREE.Raycaster();
 
     // ============================================================
+    // ★ P0-1：敌人红点光晕 sprite（离屏预渲染一次，之后每帧 drawImage）
+    //
+    //   背景：
+    //     原代码在 draw() 里每帧调用 ctx.createRadialGradient()，
+    //     每次都会分配新对象，然后被 GC 回收。
+    //     60fps 下就是每秒 60 次分配 + 回收，白费 CPU。
+    //
+    //   做法：
+    //     把"红光晕"预渲染到一张小 canvas 上，每帧用 drawImage 缩放贴图。
+    //     drawImage 是 GPU 加速的，比现场建渐变便宜很多。
+    // ============================================================
+    const HALO_SPRITE_R = 16;
+    let _enemyHaloSprite = null;
+
+    function _ensureEnemyHaloSprite() {
+        if (_enemyHaloSprite) return _enemyHaloSprite;
+
+        const size = HALO_SPRITE_R * 2;
+        const c = document.createElement('canvas');
+        c.width = c.height = size;
+
+        const cx = c.getContext('2d');
+        const g = cx.createRadialGradient(
+            HALO_SPRITE_R, HALO_SPRITE_R, 0,
+            HALO_SPRITE_R, HALO_SPRITE_R, HALO_SPRITE_R
+        );
+        g.addColorStop(0, 'rgba(255, 80, 64, 0.6)');
+        g.addColorStop(1, 'rgba(255, 80, 64, 0)');
+
+        cx.fillStyle = g;
+        cx.fillRect(0, 0, size, size);
+
+        _enemyHaloSprite = c;
+        return c;
+    }
+
+    // ============================================================
     // ★ 优化：可见性缓存（10Hz 节流）
     // ============================================================
     let _enemyVisibleLastCheck = 0;
@@ -262,16 +299,12 @@
             const t = performance.now() / 450;
             const pulse = 1 + Math.sin(t) * 0.35;
 
-            // 光晕
-            const halo = ctx.createRadialGradient(ex, ey, 0, ex, ey, 12 * pulse);
-            halo.addColorStop(0, 'rgba(255, 80, 64, 0.6)');
-            halo.addColorStop(1, 'rgba(255, 80, 64, 0)');
-            ctx.beginPath();
-            ctx.arc(ex, ey, 12 * pulse, 0, Math.PI * 2);
-            ctx.fillStyle = halo;
-            ctx.fill();
+            // ★ P0-1：光晕用预渲染 sprite + drawImage，替代每帧 createRadialGradient
+            const sprite = _ensureEnemyHaloSprite();
+            const drawR = 12 * pulse;
+            ctx.drawImage(sprite, ex - drawR, ey - drawR, drawR * 2, drawR * 2);
 
-            // 红点
+            // 红点本体
             ctx.beginPath();
             ctx.arc(ex, ey, 5, 0, Math.PI * 2);
             ctx.fillStyle = '#ff5040';
