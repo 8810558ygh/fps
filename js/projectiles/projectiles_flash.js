@@ -260,6 +260,13 @@ function updateFlashes(dt, now) {
                     s.body.quaternion.z, s.body.quaternion.w
                 );
                 s.mesh.quaternion.copy(_projQuat);
+            
+                 // ★ 新增：地形穿模修正
+                if (typeof resolveProjectileTerrain === 'function') {
+                    resolveProjectileTerrain(s);
+                    s.pos.set(s.body.position.x, s.body.position.y, s.body.position.z);
+                    s.mesh.position.copy(s.pos);
+                }
             }
 
             if (now >= s.fuseEnd) {

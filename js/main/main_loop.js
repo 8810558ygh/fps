@@ -283,6 +283,8 @@ function loop() {
         updateZiplineTowerLights(now);
     }
 
+    if (typeof updateDamageNumbers === 'function') updateDamageNumbers();
+
     updateEffects(dt, now);
     updateHUD(now);
     syncMinimapVisibility();

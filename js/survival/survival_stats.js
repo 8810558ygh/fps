@@ -1,4 +1,4 @@
-// ===== js/survival/survival_stats.js – 个人属性系统（真实数据版） =====
+// ===== js/survival/survival_stats.js – 个人属性系统 =====
 //
 // 通过金币升级，仅生存模式生效。
 //
@@ -8,7 +8,9 @@
 //   · 暴击：0% / 20% / 40% / 60% / 80%（暴击伤害 ×2）
 // 升级费用：10 / 30 / 50 / 100 金币
 //
-// 依赖：SurvivalState（金币）、HP_MAX、p1
+// 入口：商店"属性"按钮 → 关商店 → 开属性面板
+// 返回：属性面板"商店"按钮 → 关属性 → 开商店
+// 不再有 V 键快捷键。
 
 (function () {
     'use strict';
@@ -31,7 +33,6 @@
         DAMAGE_MUL_TABLE,
         CRIT_RATE_TABLE,
 
-        // ---- 每局开始重置 ----
         reset() {
             this.hp = 1;
             this.damage = 1;
@@ -69,7 +70,6 @@
             }
             this[stat] += 1;
 
-            // 血量升级：立即同步 maxHp + 回血
             if (stat === 'hp' && typeof p1 !== 'undefined' && p1) {
                 const oldMax = p1.maxHp || HP_MAX;
                 const newMax = this.getMaxHp();
@@ -81,7 +81,6 @@
             return true;
         },
 
-        // ---- 取值 ----
         getHpBonus() {
             return HP_BONUS_TABLE[this.hp - 1] || 0;
         },
@@ -99,7 +98,6 @@
             return CRIT_RATE_TABLE[this.crit - 1] || 0;
         },
 
-        // 应用伤害：先乘倍率，再判定暴击
         rollDamage(baseDmg) {
             let dmg = baseDmg * this.getDamageMul();
             let isCrit = false;
@@ -190,7 +188,6 @@
         const div = document.createElement('div');
         div.className = 'stats-row';
 
-        // ---- 按钮文本 / 类名 / 禁用 ----
         let btnText, btnClass, btnDisabled;
         if (maxed) {
             btnText = '已 满 级';
@@ -202,7 +199,6 @@
             btnDisabled = !SurvivalStats.canUpgrade(stat);
         }
 
-        // ---- 当前值 → 下一级值 ----
         const currentDesc = meta.describe(lv);
         const nextDesc = maxed ? null : meta.describe(lv + 1);
 
@@ -220,7 +216,6 @@
             <button class="${btnClass}" ${btnDisabled ? 'disabled' : ''} data-key="${stat}">${btnText}</button>
         `;
 
-        // ---- 点击升级 ----
         if (!maxed) {
             const btn = div.querySelector('.stats-btn');
             btn.addEventListener('click', () => {
@@ -259,18 +254,20 @@
         if (el) el.style.display = 'flex';
 
         _render();
+        _bindBackToShopBtn();
 
         console.log('[stats] 面板打开');
     }
 
-    function close() {
+    function close(skipLock) {
         if (!_open) return;
         _open = false;
 
         const el = _el('survivalStatsPanel');
         if (el) el.style.display = 'none';
 
-        if (typeof isTouchDevice !== 'undefined' && !isTouchDevice
+        if (!skipLock
+            && typeof isTouchDevice !== 'undefined' && !isTouchDevice
             && typeof renderer !== 'undefined' && renderer
             && typeof running !== 'undefined' && running) {
             try { renderer.domElement.requestPointerLock(); } catch (e) {}
@@ -284,6 +281,9 @@
         else open();
     }
 
+    // ============================================================
+    // 点击空白关闭
+    // ============================================================
     function _bindBackgroundClick() {
         const el = _el('survivalStatsPanel');
         if (!el || el._bgBound) return;
@@ -294,6 +294,28 @@
                 e.preventDefault();
                 e.stopPropagation();
                 close();
+            }
+        });
+    }
+
+    // ============================================================
+    // ★ 返回商店按钮：关属性面板 → 开商店
+    //   · close(true) 跳过指针锁定，避免和商店抢锁
+    // ============================================================
+    function _bindBackToShopBtn() {
+        const btn = _el('statsBackToShopBtn');
+        if (!btn || btn._bound) return;
+        btn._bound = true;
+
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            close(true);
+
+            if (typeof window.Shop !== 'undefined'
+                && typeof window.Shop.open === 'function') {
+                window.Shop.open();
             }
         });
     }

@@ -1,10 +1,5 @@
 // ===== js/combat/combat_fire.js – 开火 =====
 // 从 game_combat.js 拆出，不改变任何对外接口
-// 依赖：
-//   · combat_shared.js 提供 _ray / _rcOrigin / _resolveDamage / _applyVulnerabilityBonus / _addDamage
-//                       / _computeFireInterval（★ 射速计算共用）
-//   · combat_recoil.js 提供 _getMovementSpread / applyRecoil
-//   · combat_damage.js 提供 damage（运行时读取）
 
 function tryFire(p, now) {
     if (gameState !== 'combat') return;
@@ -21,7 +16,6 @@ function tryFire(p, now) {
     }
     p.ammo--;
 
-    // ★ 射速计算已抽到 combat_shared.js 的 _computeFireInterval
     const currentFireMs = _computeFireInterval(p, w, now);
     p.nextShot = now + currentFireMs;
     p.lastShotTime = now;
@@ -84,11 +78,6 @@ function tryFire(p, now) {
     const pellets = w.pellets || 1;
     const spread = (w.spread || 0) + _getMovementSpread(p);
 
-    // ============================================================
-    // ★ targets 拼装
-    //   · 生存模式：加所有存活僵尸的 hitMeshes
-    //   · 其他模式：加 p2（对手）的 hitMeshes
-    // ============================================================
     const targets = prepareShotTargets();
     const o = other(p);
 
@@ -102,6 +91,10 @@ function tryFire(p, now) {
                 for (let pi = 0; pi < zParts.length; pi++) targets.push(zParts[pi]);
             }
         }
+        if (typeof PlayerZombie !== 'undefined' && PlayerZombie.active && !PlayerZombie.active.dead) {
+            const pz = PlayerZombie.active;
+            for (let pi = 0; pi < pz.hitMeshes.length; pi++) targets.push(pz.hitMeshes[pi]);
+        }
     } else {
         if (now >= o.deadUntil) {
             const parts = getPlayerHitMeshes(o);
@@ -110,7 +103,6 @@ function tryFire(p, now) {
     }
 
     const isOnlineHost = (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost);
-
     let hitmarkSent = false;
 
     for (let i = 0; i < pellets; i++) {
@@ -131,83 +123,98 @@ function tryFire(p, now) {
         const hits = _ray.intersectObjects(targets, false);
 
         _rcEnd.copy(_rcOrigin).addScaledVector(_rcRandDir, 150);
-        if (hits.length) {
-            const h = hits[0];
-            _rcEnd.copy(h.point);
 
-            const barrelRef = h.object.userData.barrelRef;
-            if (barrelRef) {
-                const dmg = w.dmgBody || 30;
-                window.hitBarrel(barrelRef, dmg, p, h.point);
-                if (p.id === 1) {
-                    hitmark(p);
-                } else if (isOnlineHost && !hitmarkSent) {
-                    NET_broadcast({ type: 'hitmarkForClient' });
-                    hitmarkSent = true;
-                }
-                emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
-            } else {
+        if (hits.length > 0) {
+            let pierceLeft = w.pierce || 0;
+            const hitTargets = new Set(); // 防止一次穿透打中同一个目标的不同部位两次
+
+            for (let j = 0; j < hits.length; j++) {
+                const h = hits[j];
+                
+                // 曳光弹终点暂时停在当前命中点
+                _rcEnd.copy(h.point);
+
+                const barrelRef = h.object.userData.barrelRef;
                 const part = h.object.userData.part;
+                const zombie = h.object.userData.zombieRef;
 
-                // ============================================================
-                // ★ 命中僵尸
-                //   · 部位映射：zombie_head → head，zombie_leg → leg，其他 → body
-                //   · 走 damageZombie()，不走玩家的 damage()/护甲/复活
-                //   · 生存模式 + p1 → 应用个人属性倍率 + 暴击
-                // ============================================================
-                if (part && part.startsWith('zombie_')) {
-                    const zombie = h.object.userData.zombieRef;
-                    if (zombie && zombie.alive) {
-                        const dmgPart = (part === 'zombie_head') ? 'head'
-                                      : (part === 'zombie_leg')  ? 'leg'
-                                      : 'body';
-                        let dmg = _resolveDamage(w, dmgPart, h.distance);
-                        let isCrit = false;
+                let entityTarget = null;
+                let isBarrel = false;
+                let isZombie = false;
+                let isPlayer = false;
 
-                        // ★ 个人属性加成：伤害倍率 + 暴击（仅生存模式 + 玩家 p1）
-                        if (gameMode === 'survival'
-                            && p.id === 1
-                            && typeof SurvivalStats !== 'undefined') {
-                            const roll = SurvivalStats.rollDamage(dmg);
-                            dmg = roll.dmg;
-                            isCrit = roll.isCrit;
-                        }
-
-                        if (typeof damageZombie === 'function') {
-                            damageZombie(zombie, dmg, p);
-                        }
-
-                        spawnSparks(h.point, isCrit ? 0xffd24a : 0xff5040);
-
-                        if (p.id === 1) {
-                            hitmark(p);
-                            if (isCrit && typeof _flashCritHitmark === 'function') {
-                                _flashCritHitmark();
-                            }
-                        }
-                        emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
-                    }
+                if (barrelRef) {
+                    entityTarget = barrelRef;
+                    isBarrel = true;
+                } else if (part && part.startsWith('zombie_')) {
+                    entityTarget = zombie;
+                    isZombie = true;
                 } else if (part) {
-                    // ============================================================
-                    // ★ 命中玩家（原有逻辑）
-                    // ============================================================
-                    const rawDmg = _resolveDamage(w, part, h.distance);
+                    entityTarget = o;
+                    isPlayer = true;
+                }
 
-                    // ★ 应用易伤（在 _addDamage 之前，保证统计一致）
-                    const dmg = _applyVulnerabilityBonus(o, rawDmg, now);
+                if (entityTarget) {
+                    // 防止同一颗子弹在穿透时，击中同一个目标的多个部位（比如打穿手臂又打中身体）
+                    if (hitTargets.has(entityTarget)) continue;
+                    hitTargets.add(entityTarget);
 
-                    _addDamage(p, o.id, part, dmg);
+                    // ---- 处理伤害 ----
+                    if (isBarrel) {
+                        const dmg = w.dmgBody || 30;
+                        window.hitBarrel(barrelRef, dmg, p, h.point);
+                        if (p.id === 1) hitmark(p);
+                        else if (isOnlineHost && !hitmarkSent) { NET_broadcast({ type: 'hitmarkForClient' }); hitmarkSent = true; }
+                        emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
+                    } else if (isZombie) {
+                        if (zombie && zombie.alive) {
+                            const dmgPart = (part === 'zombie_head') ? 'head' : (part === 'zombie_leg') ? 'leg' : 'body';
+                            let dmg = _resolveDamage(w, dmgPart, h.distance);
+                            let isCrit = false;
 
-                    spawnSparks(h.point, 0xff5040);
-                    if (p.id === 1) {
-                        hitmark(p);
-                    } else if (isOnlineHost && !hitmarkSent) {
-                        NET_broadcast({ type: 'hitmarkForClient' });
-                        hitmarkSent = true;
+                            if (gameMode === 'survival' && p.id === 1 && typeof SurvivalStats !== 'undefined') {
+                                const roll = SurvivalStats.rollDamage(dmg);
+                                dmg = roll.dmg;
+                                isCrit = roll.isCrit;
+                            }
+
+                            if (zombie._isPlayerZombie) {
+                                if (typeof PlayerZombie !== 'undefined') PlayerZombie.damage(dmg, p);
+                            } else if (typeof damageZombie === 'function') {
+                                damageZombie(zombie, dmg, p);
+                            }
+
+                            if (p.id === 1 && typeof spawnDamageNumber === 'function') {
+                                spawnDamageNumber(h.point, dmg, isCrit);
+                            }
+                            spawnSparks(h.point, isCrit ? 0xffd24a : 0xff5040);
+
+                            if (p.id === 1) {
+                                hitmark(p);
+                                if (isCrit && typeof _flashCritHitmark === 'function') _flashCritHitmark();
+                            }
+                            emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
+                        }
+                    } else if (isPlayer) {
+                        const rawDmg = _resolveDamage(w, part, h.distance);
+                        const dmg = _applyVulnerabilityBonus(o, rawDmg, now);
+                        _addDamage(p, o.id, part, dmg);
+
+                        spawnSparks(h.point, 0xff5040);
+                        if (p.id === 1) hitmark(p);
+                        else if (isOnlineHost && !hitmarkSent) { NET_broadcast({ type: 'hitmarkForClient' }); hitmarkSent = true; }
+                        emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
+                        damage(o, dmg, p);
                     }
-                    emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
-                    damage(o, dmg, p);
+
+                    // ★ 判断穿透
+                    if (pierceLeft > 0) {
+                        pierceLeft--; // 消耗一次穿透，继续循环检测后面的物体
+                    } else {
+                        break; // 没穿透了，子弹停止
+                    }
                 } else {
+                    // ---- 打中墙、箱子、地面（不可穿透物）----
                     spawnSparks(h.point, 0xffd28a);
                     const n = getHitWorldNormal(h);
                     spawnBulletHole(h.point, n);
@@ -218,9 +225,11 @@ function tryFire(p, now) {
                             nx: n.x, ny: n.y, nz: n.z
                         });
                     }
+                    break; // 穿墙失败，子弹立即停止
                 }
             }
         }
+
         if (i === 0) {
             const mw = muzzleWorld(p, _rcMuzzle);
             spawnTracer(mw, _rcEnd);

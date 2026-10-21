@@ -44,6 +44,13 @@
     text-shadow: 0 2px 14px rgba(255, 210, 74, 0.4);
 }
 
+/* ---------- 顶部右侧容器 ---------- */
+.stats-topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
 .stats-coins {
     display: flex;
     align-items: center;
@@ -61,6 +68,37 @@
 
 .stats-coins .coin-icon { font-size: 20px; }
 
+/* ---------- 返回商店按钮 ---------- */
+.stats-shop-btn {
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 8px;
+    color: #cfe0f0;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    white-space: nowrap;
+}
+
+.stats-shop-btn:hover {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 210, 74, 0.5);
+    color: #ffd24a;
+    transform: translateY(-1px);
+}
+
+.stats-shop-btn:active {
+    transform: translateY(0) scale(0.97);
+}
+
+@media (pointer: coarse) {
+    .stats-shop-btn { padding: 6px 10px; font-size: 11px; letter-spacing: 0; }
+}
+
 .stats-hint {
     text-align: center;
     font-size: 12px;
@@ -73,17 +111,16 @@
 .stats-list {
     display: flex;
     flex-direction: column;
-    gap: 18px;             /* ★ 行间距从 14 拉到 18 */
+    gap: 18px;
     margin-top: 22px;
 }
 
-/* ---------- 单行属性（横向 grid） ---------- */
 .stats-row {
     display: grid;
-    grid-template-columns: 120px 1fr 150px;   /* ★ 列宽加大 */
-    gap: 20px;                                 /* ★ 列间距从 16 拉到 20 */
+    grid-template-columns: 120px 1fr 150px;
+    gap: 20px;
     align-items: center;
-    padding: 18px 22px;                        /* ★ 内边距从 14 18 拉到 18 22 */
+    padding: 18px 22px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 12px;
@@ -95,7 +132,7 @@
 }
 
 .stats-name {
-    font-size: 17px;                           /* ★ 从 16 到 17 */
+    font-size: 17px;
     font-weight: 700;
     color: #cfe0f0;
     letter-spacing: 1px;
@@ -130,7 +167,7 @@
 
 /* ---------- 升级按钮 ---------- */
 .stats-btn {
-    padding: 11px 18px;                        /* ★ 稍微加高 */
+    padding: 11px 18px;
     background: linear-gradient(180deg, #ffd24a, #f0a92e);
     color: #08131f;
     border: none;

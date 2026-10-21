@@ -939,3 +939,90 @@ body.online-mode #opponentInfo {
     #medkitProgress .mk-bar-wrap { height: 12px; }
     #medkitProgress .mk-hint { font-size: 10px; }
 }
+
+/* ============================================================
+   ★ 伤害飘字
+   ============================================================ */
+#damageNumbers {
+    position: fixed;
+    inset: 0;
+    z-index: 13;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.dmg-number {
+    position: absolute;
+    left: 0;
+    top: 0;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 22px;
+    font-weight: 900;
+    color: #ff6b5a;
+    text-shadow:
+        0 0 4px #000,
+        0 0 8px rgba(255, 80, 80, 0.85),
+        0 2px 6px rgba(0, 0, 0, 0.9);
+    pointer-events: none;
+    letter-spacing: 1px;
+    white-space: nowrap;
+    will-change: transform, opacity;
+}
+
+.dmg-number.crit {
+    font-size: 30px;
+    color: #ffd24a;
+    text-shadow:
+        0 0 6px #000,
+        0 0 12px rgba(255, 210, 74, 1),
+        0 0 22px rgba(255, 210, 74, 0.7),
+        0 2px 8px rgba(0, 0, 0, 0.9);
+}
+
+@media (pointer: coarse) {
+    .dmg-number { font-size: 18px; }
+    .dmg-number.crit { font-size: 24px; }
+}
+
+/* ============================================================
+   ★ 演奏僵尸减速提示
+   ============================================================ */
+#slowIndicator {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 12;
+    display: none;
+    padding: 5px 16px;
+    background: rgba(80, 20, 120, 0.78);
+    border: 1px solid rgba(192, 132, 252, 0.65);
+    border-radius: 8px;
+    color: #e9d5ff;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-shadow: 0 1px 4px #000;
+    box-shadow:
+        0 4px 16px rgba(0, 0, 0, 0.55),
+        0 0 12px rgba(192, 132, 252, 0.35);
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+    font-family: "Microsoft YaHei", Arial, sans-serif;
+    animation: slowPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes slowPulse {
+    0%, 100% { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55), 0 0 12px rgba(192, 132, 252, 0.35); }
+    50%      { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55), 0 0 22px rgba(192, 132, 252, 0.65); }
+}
+
+@media (pointer: coarse) {
+    #slowIndicator {
+        bottom: 20px;
+        font-size: 12px;
+        padding: 4px 12px;
+        letter-spacing: 1px;
+    }
+}

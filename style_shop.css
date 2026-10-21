@@ -45,6 +45,13 @@
     text-shadow: 0 2px 14px rgba(255, 210, 74, 0.4);
 }
 
+/* ---------- 顶部右侧容器 ---------- */
+.shop-topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
 .shop-coins {
     display: flex;
     align-items: center;
@@ -60,6 +67,37 @@
     letter-spacing: 1px;
 }
 .shop-coins .coin-icon { font-size: 20px; }
+
+/* ---------- 属性按钮 ---------- */
+.shop-stats-btn {
+    padding: 8px 16px;
+    background: linear-gradient(180deg, rgba(255, 210, 74, 0.9), rgba(240, 169, 46, 0.9));
+    border: 1px solid #ffd24a;
+    border-radius: 8px;
+    color: #08131f;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(255, 210, 74, 0.3);
+}
+
+.shop-stats-btn:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(255, 210, 74, 0.5);
+}
+
+.shop-stats-btn:active {
+    transform: translateY(0) scale(0.97);
+}
+
+@media (pointer: coarse) {
+    .shop-stats-btn { padding: 6px 10px; font-size: 11px; letter-spacing: 0; }
+}
 
 .shop-section-title {
     margin: 18px 0 10px;

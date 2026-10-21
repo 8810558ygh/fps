@@ -38,7 +38,8 @@ function _findSmokeById(id) {
 // ============================================================
 function createSmokeCloud(pos, radius, verticalRadius, centerHeight) {
     const group = new THREE.Group();
-    group.position.set(pos.x, centerHeight, pos.z);
+    // ★ 修改：加上 pos.y，让烟雾云基于起爆点高度生成
+    group.position.set(pos.x, pos.y + centerHeight, pos.z);
 
     const meshList = [];
     const layers = [
@@ -165,6 +166,13 @@ function updateSmokes(dt, now) {
                     s.body.quaternion.z, s.body.quaternion.w
                 );
                 s.mesh.quaternion.copy(_projQuat);
+
+                // ★ 新增：地形穿模修正
+                if (typeof resolveProjectileTerrain === 'function') {
+                    resolveProjectileTerrain(s);
+                    s.pos.set(s.body.position.x, s.body.position.y, s.body.position.z);
+                    s.mesh.position.copy(s.pos);
+                }
             }
 
             if (now >= s.fuseEnd) {
@@ -186,7 +194,8 @@ function updateSmokes(dt, now) {
 
                 const cloud = createSmokeCloud(s.pos, SMOKE.radius, SMOKE.verticalRadius, SMOKE.centerHeight);
                 cloud.scale.set(0.04, 0.04, 0.04);
-                cloud.position.y = SMOKE.radius * 0.3;
+                // ★ 修改：加上起爆点高度
+                cloud.position.y = s.pos.y + SMOKE.radius * 0.3;
                 scene.add(cloud);
                 s.cloudMesh = cloud;
                 s.state = 'expanding';
@@ -223,9 +232,12 @@ function updateSmokes(dt, now) {
             const e = 1 - Math.pow(1 - t, 3);
             const scale = 0.04 + e * 0.96;
             s.cloudMesh.scale.set(scale, scale, scale);
-            const startY = SMOKE.radius * 0.3;
-            const endY = SMOKE.centerHeight;
+            
+            // ★ 修改：高度基于起爆点 s.pos.y 计算
+            const startY = s.pos.y + SMOKE.radius * 0.3;
+            const endY = s.pos.y + SMOKE.centerHeight;
             s.cloudMesh.position.y = startY + (endY - startY) * e;
+            
             if (s.cloudMesh.userData.layers) {
                 for (const m of s.cloudMesh.userData.layers) {
                     m.material.opacity = m.userData.baseOpacity * e;
@@ -235,12 +247,15 @@ function updateSmokes(dt, now) {
                 s.state = 'active';
                 s.doneAt = now + SMOKE.durationMs;
                 s.cloudMesh.scale.set(1, 1, 1);
-                s.cloudMesh.position.y = SMOKE.centerHeight;
+                // ★ 修改：加上起爆点高度
+                s.cloudMesh.position.y = s.pos.y + SMOKE.centerHeight;
             }
         } else if (s.state === 'active') {
             const pulse = 1 + Math.sin(now * 0.0013) * 0.018;
             s.cloudMesh.scale.set(pulse, pulse * 1.005, pulse);
-            s.cloudMesh.position.y = SMOKE.centerHeight + Math.sin(now * 0.0009) * 0.18;
+            // ★ 修改：加上起爆点高度
+            s.cloudMesh.position.y = s.pos.y + SMOKE.centerHeight + Math.sin(now * 0.0009) * 0.18;
+            
             const remain = s.doneAt - now;
             if (remain < 2200) {
                 const fade = Math.max(0, remain / 2200);
@@ -313,7 +328,8 @@ function handleRemoteSmokePop(data) {
         }
         const cloud = createSmokeCloud(pos, SMOKE.radius, SMOKE.verticalRadius, SMOKE.centerHeight);
         cloud.scale.set(0.04, 0.04, 0.04);
-        cloud.position.y = SMOKE.radius * 0.3;
+        // ★ 修改：加上 pos.y
+        cloud.position.y = pos.y + SMOKE.radius * 0.3;
         scene.add(cloud);
         target.cloudMesh = cloud;
         target.state = 'expanding';
@@ -322,7 +338,8 @@ function handleRemoteSmokePop(data) {
         // 没有 waiting 的 → 直接新建
         const cloud = createSmokeCloud(pos, SMOKE.radius, SMOKE.verticalRadius, SMOKE.centerHeight);
         cloud.scale.set(0.04, 0.04, 0.04);
-        cloud.position.y = SMOKE.radius * 0.3;
+        // ★ 修改：加上 pos.y
+        cloud.position.y = pos.y + SMOKE.radius * 0.3;
         scene.add(cloud);
         activeSmokes.push({
             id: data.id,

@@ -151,7 +151,6 @@ function aiFire(now) {
 
     const w = p2.weapon;
     if (p2.ammo <= 0) {
-        // ★ 空间化：AI 空弹
         emitWorldSound('empty', p2.pos.x, p2.pos.y + p2.eyeH, p2.pos.z, false);
         p2.nextShot = now + 300;
         aiStartReload(now);
@@ -159,15 +158,10 @@ function aiFire(now) {
     }
     p2.ammo--;
 
-    // ============================================================
-    // ★ 射速计算已抽到 combat_shared.js 的 _computeFireInterval
-    //   —— 与 combat_fire.js 的 tryFire 共用同一份逻辑
-    // ============================================================
     const currentFireMs = _computeFireInterval(p2, w, now);
     p2.nextShot = now + currentFireMs;
     p2.lastShotTime = now;
 
-    // ★ 空间化：AI 开火音效（AI 是 p2，isSelf = false）
     const _aiEyeY = p2.pos.y + p2.eyeH;
     switch (w.key) {
         case 'sniper':  emitWorldSound('sniper',  p2.pos.x, _aiEyeY, p2.pos.z, false); break;
@@ -184,7 +178,6 @@ function aiFire(now) {
     _aiDir.set(0, 0, -1).applyEuler(_aiEuler);
 
     const pellets = w.pellets || 1;
-    // ★ 加上移动 / 跳跃散布（复用 game_combat.js 里的函数）
     const spread = (w.spread || 0) + (typeof _getMovementSpread === 'function' ? _getMovementSpread(p2) : 0);
 
     const targets = prepareShotTargets();
@@ -193,9 +186,20 @@ function aiFire(now) {
         for (let i = 0; i < parts.length; i++) targets.push(parts[i]);
     }
 
+    // 如果是生存模式，AI 也会打僵尸（虽然目前人机模式没有，但为了扩展性）
+    if (gameMode === 'survival') {
+        if (typeof getAllZombies === 'function') {
+            const zombies = getAllZombies();
+            for (let zi = 0; zi < zombies.length; zi++) {
+                const z = zombies[zi];
+                if (!z.alive) continue;
+                for (let pi = 0; pi < z.hitMeshes.length; pi++) targets.push(z.hitMeshes[pi]);
+            }
+        }
+    }
+
     for (let i = 0; i < pellets; i++) {
         _aiRandDir.copy(_aiDir);
-        // ★ 由 spread 决定是否加散布，单发武器也能生效
         if (spread > 0) {
             const theta = Math.random() * 2 * Math.PI;
             const phi = Math.acos(1 - Math.random() * (1 - Math.cos(spread)));
@@ -212,28 +216,75 @@ function aiFire(now) {
         const hits = _aiRay.intersectObjects(targets, false);
 
         _aiEnd.copy(_aiEye).addScaledVector(_aiRandDir, 150);
-        if (hits.length) {
-            const h = hits[0];
-            _aiEnd.copy(h.point);
-            const part = h.object.userData.part;
-            if (part) {
-                const dmg = _resolveDamage(w, part, h.distance);
 
-                if (!p2.damageDealt[1]) {
-                    p2.damageDealt[1] = { body: 0, head: 0, leg: 0, total: 0 };
-                }
-                if (part === 'head') p2.damageDealt[1].head += dmg;
-                else if (part === 'leg') p2.damageDealt[1].leg += dmg;
-                else p2.damageDealt[1].body += dmg;
-                p2.damageDealt[1].total += dmg;
+        if (hits.length > 0) {
+            let pierceLeft = w.pierce || 0;
+            const hitTargets = new Set(); // 防止穿透打中同一目标的不同部位
 
-                spawnSparks(h.point, 0xff5040);
-                damage(p1, dmg, p2);
-                emitWorldSound('hit', h.point.x, h.point.y, h.point.z, false);
-            } else {
-                spawnSparks(h.point, 0xffd28a);
-                if (typeof spawnBulletHole === 'function' && typeof getHitWorldNormal === 'function') {
-                    spawnBulletHole(h.point, getHitWorldNormal(h));
+            for (let j = 0; j < hits.length; j++) {
+                const h = hits[j];
+                _aiEnd.copy(h.point); // 曳光弹终点更新
+
+                const barrelRef = h.object.userData.barrelRef;
+                const part = h.object.userData.part;
+                const zombieRef = h.object.userData.zombieRef;
+
+                if (barrelRef) {
+                    // 打中油桶
+                    const dmg = w.dmgBody || 30;
+                    if (typeof window.hitBarrel === 'function') {
+                        window.hitBarrel(barrelRef, dmg, p2, h.point);
+                    }
+                    spawnSparks(h.point, 0xff5040);
+                    emitWorldSound('hit', h.point.x, h.point.y, h.point.z, false);
+                    
+                    if (pierceLeft > 0) pierceLeft--;
+                    else break;
+
+                } else if (part && part.startsWith('zombie_')) {
+                    // 打中僵尸
+                    if (zombieRef && zombieRef.alive) {
+                        if (hitTargets.has(zombieRef)) continue;
+                        hitTargets.add(zombieRef);
+                        
+                        const dmgPart = (part === 'zombie_head') ? 'head' : (part === 'zombie_leg') ? 'leg' : 'body';
+                        const dmg = _resolveDamage(w, dmgPart, h.distance);
+                        if (zombieRef._isPlayerZombie) {
+                            if (typeof PlayerZombie !== 'undefined') PlayerZombie.damage(dmg, p2);
+                        } else if (typeof damageZombie === 'function') {
+                            damageZombie(zombieRef, dmg, p2);
+                        }
+                        spawnSparks(h.point, 0xff5040);
+                        emitWorldSound('hit', h.point.x, h.point.y, h.point.z, false);
+                        
+                        if (pierceLeft > 0) pierceLeft--;
+                        else break;
+                    }
+                } else if (part) {
+                    // 打中玩家 p1
+                    if (hitTargets.has(p1)) continue;
+                    hitTargets.add(p1);
+
+                    const dmg = _resolveDamage(w, part, h.distance);
+                    if (!p2.damageDealt[1]) p2.damageDealt[1] = { body: 0, head: 0, leg: 0, total: 0 };
+                    if (part === 'head') p2.damageDealt[1].head += dmg;
+                    else if (part === 'leg') p2.damageDealt[1].leg += dmg;
+                    else p2.damageDealt[1].body += dmg;
+                    p2.damageDealt[1].total += dmg;
+
+                    spawnSparks(h.point, 0xff5040);
+                    damage(p1, dmg, p2);
+                    emitWorldSound('hit', h.point.x, h.point.y, h.point.z, false);
+
+                    if (pierceLeft > 0) pierceLeft--;
+                    else break;
+                } else {
+                    // 打中墙壁/箱子/地面
+                    spawnSparks(h.point, 0xffd28a);
+                    if (typeof spawnBulletHole === 'function' && typeof getHitWorldNormal === 'function') {
+                        spawnBulletHole(h.point, getHitWorldNormal(h));
+                    }
+                    break; // 子弹遇到墙壁直接停止
                 }
             }
         }

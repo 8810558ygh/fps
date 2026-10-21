@@ -32,9 +32,6 @@ function updatePlayer(p, dt, now) {
     const _stunned = p.stunUntil > now;
     const _healing = p.healing;
 
-    // ============================================================
-    // ★ 硬直 / 治疗：在【移动计算之前】锁死输入
-    // ============================================================
     if (_stunned) {
         if (p.input) {
             p.input.forward = 0;
@@ -56,7 +53,6 @@ function updatePlayer(p, dt, now) {
             p.input.jump    = false;
             p.input.crouch  = false;
             p.input.aim     = false;
-            // ★ 注意：不清 fire —— 治疗需要一直按住左键
         }
         p.aiming = false;
         p.aimStage = 0;
@@ -114,6 +110,15 @@ function updatePlayer(p, dt, now) {
     if (p.height < HEIGHT_STAND - 0.1) spd = SPEED_CROUCH * wMul;
     if (p.aiming && !p.isMelee && !p.isSmoke && !p.isFlash && !p.isMedkit) spd *= p.weapon.adsSpeedMul;
 
+    // ★ 演奏僵尸减速（仅生存模式 + 本地玩家）
+    if (gameMode === 'survival'
+        && p.id === 1
+        && typeof PlayerZombie !== 'undefined'
+        && PlayerZombie.slowAmount > 0) {
+        spd *= (1 - PlayerZombie.slowAmount);
+        if (spd < 0) spd = 0;
+    }
+
     const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
     const rx = Math.cos(p.yaw),  rz = -Math.sin(p.yaw);
     p.pos.x += (fx * f + rx * s) * spd * dt;
@@ -141,10 +146,6 @@ function updatePlayer(p, dt, now) {
         updateRecoilRecovery(p, dt, now);
     }
 
-    // ============================================================
-    // ★ 医疗包：按住左键蓄力，松开取消
-    //   ★ 使用 p.maxHp 而不是 HP_MAX（支持个人属性加成后的上限）
-    // ============================================================
     if (p.isMedkit) {
         const holding = !!p.input.fire;
         const _maxHp = p.maxHp || HP_MAX;
@@ -152,7 +153,6 @@ function updatePlayer(p, dt, now) {
         if (!p.healing) {
             if (holding && gameState === 'combat' && !_stunned && now >= p.deadUntil) {
                 if ((p.medkits || 0) > 0 && p.hp < _maxHp) {
-                    // ★ 开始使用
                     p.healing = true;
                     p.healStart = now;
                     p.healEnd = now + MEDKIT.useTimeMs;
@@ -175,12 +175,10 @@ function updatePlayer(p, dt, now) {
             }
         } else {
             if (!holding) {
-                // ★ 松开 → 取消
                 p.healing = false;
                 p.healStart = 0;
                 p.healEnd = 0;
             } else if (now >= p.healEnd) {
-                // ★ 完成
                 p.healing = false;
                 p.medkits = Math.max(0, (p.medkits || 0) - 1);
                 const before = p.hp;

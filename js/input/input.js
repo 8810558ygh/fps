@@ -18,13 +18,12 @@ function _isSurvivalMode() {
 }
 
 // ============================================================
-// ★ 修复：联机客户端投掷物不同步
+// 引信（客户端 mousedown 进入，mouseup 上报）
 // ============================================================
 function _requestFuseStart(type) {
     if (_isOnlineClient()) {
         if (typeof NET !== 'undefined') NET.pendingFuseStart = type;
 
-        // ---- 客户端本地立即进入引信状态 ----
         if (typeof p1 !== 'undefined' && p1) {
             const now = performance.now();
             if (now < p1.deadUntil || now < p1.equipEnd) return;
@@ -107,12 +106,22 @@ function _canOpenWeaponPanel() {
     return false;
 }
 
+// ============================================================
+// 面板是否拦截输入
+// ============================================================
+function _isAnyPanelOpen() {
+    if (typeof window.Shop !== 'undefined'
+        && typeof window.Shop.isOpen === 'function'
+        && window.Shop.isOpen()) return true;
+    if (typeof window.StatsPanel !== 'undefined'
+        && typeof window.StatsPanel.isOpen === 'function'
+        && window.StatsPanel.isOpen()) return true;
+    return false;
+}
+
 window.addEventListener('keydown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
 
-    // ============================================================
-    // ★ 商店打开时拦截
-    // ============================================================
     if (typeof window.Shop !== 'undefined'
         && typeof window.Shop.isOpen === 'function'
         && window.Shop.isOpen()) {
@@ -123,16 +132,10 @@ window.addEventListener('keydown', e => {
         return;
     }
 
-    // ============================================================
-    // ★ 新增：个人属性面板打开时拦截
-    //   · V 键 → 关闭
-    //   · Esc  → 不处理（让浏览器自己处理全屏退出）
-    //   · 其他键 → 全部吞掉
-    // ============================================================
     if (typeof window.StatsPanel !== 'undefined'
         && typeof window.StatsPanel.isOpen === 'function'
         && window.StatsPanel.isOpen()) {
-        if (e.code === 'KeyV') {
+        if (e.code === 'KeyB') {
             e.preventDefault();
             window.StatsPanel.close();
         }
@@ -251,17 +254,6 @@ window.addEventListener('keydown', e => {
             }
         }
 
-        // ★ 新增：V 键打开个人属性面板
-        if (e.code === 'KeyV') {
-            if (isSV
-                && typeof window.StatsPanel !== 'undefined'
-                && typeof window.StatsPanel.canOpen === 'function'
-                && window.StatsPanel.canOpen()) {
-                window.StatsPanel.toggle();
-            }
-            return;
-        }
-
         if (e.code === 'KeyT') {
             if (typeof gameMode !== 'undefined' && gameMode === 'ai'
                 && running && !isOver()) {
@@ -277,20 +269,23 @@ window.addEventListener('keydown', e => {
                 return;
             }
 
-            if (running && !isOver() && gameState === 'combat') {
-                if (typeof p1 !== 'undefined' && p1
-                    && typeof window.tryMountZipline === 'function') {
-                    const mounted = window.tryMountZipline(p1);
-                    if (mounted && isOC && p1.zipline) {
-                        NET.pendingZiplineMount = {
-                            lineIdx: p1.zipline.lineIdx,
-                            t: p1.zipline.t,
-                            dir: p1.zipline.dir,
-                        };
+            // ★ 修改：只有在不靠近弹药箱时，才尝试滑索
+            if (!(typeof isPlayerNearAmmoDrop === 'function' && isPlayerNearAmmoDrop())) {
+                if (running && !isOver() && gameState === 'combat') {
+                    if (typeof p1 !== 'undefined' && p1
+                        && typeof window.tryMountZipline === 'function') {
+                        const mounted = window.tryMountZipline(p1);
+                        if (mounted && isOC && p1.zipline) {
+                            NET.pendingZiplineMount = {
+                                lineIdx: p1.zipline.lineIdx,
+                                t: p1.zipline.t,
+                                dir: p1.zipline.dir,
+                            };
+                        }
                     }
                 }
             }
-            return;
+            // 注意：这里不要 return，让底部的 keys[e.code] = true 生效
         }
 
         if (e.code === 'Space') {
@@ -315,10 +310,7 @@ window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; }
 
 document.addEventListener('mousedown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
-
-    if (typeof window.Shop !== 'undefined'
-        && typeof window.Shop.isOpen === 'function'
-        && window.Shop.isOpen()) return;
+    if (_isAnyPanelOpen()) return;
 
     if (_isSpectatorSafe()) {
         if (e.button === 0) {
@@ -365,6 +357,8 @@ document.addEventListener('mousedown', e => {
 document.addEventListener('mouseup', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     if (_isSpectatorSafe()) { e.preventDefault(); e.stopPropagation(); return; }
+    if (_isAnyPanelOpen()) return;
+
     if (e.button === 0) {
         mouse.leftDown = false;
         if (typeof p1 !== 'undefined' && p1 && p1.isMedkit) {
@@ -378,10 +372,7 @@ document.addEventListener('mouseup', e => {
 document.addEventListener('wheel', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     if (_isSpectatorSafe()) return;
-
-    if (typeof window.Shop !== 'undefined'
-        && typeof window.Shop.isOpen === 'function'
-        && window.Shop.isOpen()) return;
+    if (_isAnyPanelOpen()) return;
 
     e.preventDefault(); e.stopPropagation();
     if (!running || isOver()) return;

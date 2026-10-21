@@ -1,23 +1,23 @@
 // ===== js/survival/survival_ammo_drop.js – 弹药包掉落 =====
 //
 // 规则：
-//   · 偶数波清空时，最后一个死亡的僵尸位置掉落弹药箱
-//   · 玩家靠近（默认 2m）自动拾取
-//   · 拾取效果：为【手里拿着的那把枪】补一个弹匣的备弹
-//       拿枪时：补当前枪
-//       拿刀/烟/闪时：补主武器
-//   · 不直接进弹匣，玩家需要手动按 R 换弹
-//   · 进入下一波（准备阶段结束）时自动消失
-//
-// ★ 弹药同步：
-//   · 拾取前：若手里拿着这把枪，先从 p.reserve 同步到 weaponAmmo
-//   · 拾取时：同时更新 p.reserve 和 p.weaponAmmo[key].reserve
-//   · 保证切枪 / 死亡 / 切地图都不丢
+//   · 靠近后长按 F 蓄力 2 秒
+//   · 只补充手里拿的主武器（恢复弹匣和初始备弹）
+//   · 奥丁不补充，提示“没有机枪子弹”
+//   · 补给后箱子不消失，一直留在原地，直到下一波开始
 
-const AMMO_DROP_PICKUP_RADIUS = 2.0;
+const AMMO_DROP_PICKUP_RADIUS = 2.5; // 交互半径
+const AMMO_FILL_TIME_MS = 2000;      // 补充所需时间 (2秒)
 
 let _ammoDropMesh = null;
 let _ammoDrop = null;
+let _ammoPromptEl = null;
+let _fillBarEl = null;
+let _fillBarFill = null;
+
+let _filling = false;
+let _fillStartTime = 0;
+let _targetWeaponKey = null;
 
 // ============================================================
 // 懒创建 mesh
@@ -78,7 +78,7 @@ function _ensureAmmoDropMesh() {
 }
 
 // ============================================================
-// 生成弹药包
+// 生成 / 移除
 // ============================================================
 function spawnAmmoDrop(x, y, z) {
     const mesh = _ensureAmmoDropMesh();
@@ -95,12 +95,12 @@ function spawnAmmoDrop(x, y, z) {
 }
 window.spawnAmmoDrop = spawnAmmoDrop;
 
-// ============================================================
-// 移除弹药包
-// ============================================================
 function despawnAmmoDrop() {
     if (_ammoDropMesh) _ammoDropMesh.visible = false;
     _ammoDrop = null;
+    if (_ammoPromptEl) _ammoPromptEl.style.display = 'none';
+    if (_fillBarEl) _fillBarEl.style.display = 'none';
+    _filling = false;
 }
 window.despawnAmmoDrop = despawnAmmoDrop;
 
@@ -110,7 +110,73 @@ function isAmmoDropActive() {
 window.isAmmoDropActive = isAmmoDropActive;
 
 // ============================================================
-// 每帧更新：浮动动画 + 拾取检测
+// 距离检测 (供 input.js 拦截 F 键)
+// ============================================================
+function isPlayerNearAmmoDrop() {
+    if (!_ammoDrop || !_ammoDrop.active) return false;
+    if (typeof p1 === 'undefined' || !p1 || p1.hp <= 0) return false;
+    const dx = p1.pos.x - _ammoDrop.x;
+    const dz = p1.pos.z - _ammoDrop.z;
+    return (dx * dx + dz * dz) < AMMO_DROP_PICKUP_RADIUS * AMMO_DROP_PICKUP_RADIUS;
+}
+window.isPlayerNearAmmoDrop = isPlayerNearAmmoDrop;
+
+// ============================================================
+// 提示 UI
+// ============================================================
+function _ensureAmmoPrompt() {
+    if (_ammoPromptEl) return _ammoPromptEl;
+    if (typeof document === 'undefined') return null;
+
+    const el = document.createElement('div');
+    el.id = 'ammoDropPrompt';
+    el.style.cssText = [
+        'position:fixed', 'left:50%', 'bottom:160px',
+        'transform:translateX(-50%)', 'z-index:16',
+        'padding:8px 22px', 'background:rgba(255,210,74,0.92)',
+        'color:#08131f', 'border-radius:8px', 'font-size:15px',
+        'font-weight:700', 'letter-spacing:2px', 'pointer-events:none',
+        'display:none', 'box-shadow:0 6px 20px rgba(0,0,0,0.6)',
+        'font-family:"Microsoft YaHei",Arial,sans-serif',
+    ].join(';');
+    document.body.appendChild(el);
+    _ammoPromptEl = el;
+    return el;
+}
+
+// ============================================================
+// 进度条 UI
+// ============================================================
+function _ensureFillBar() {
+    if (_fillBarEl) return;
+    if (typeof document === 'undefined') return;
+
+    const el = document.createElement('div');
+    el.id = 'ammoFillBar';
+    el.style.cssText = [
+        'position:fixed', 'left:50%', 'bottom:22%',
+        'transform:translateX(-50%)', 'z-index:15',
+        'display:none', 'flex-direction:column', 'align-items:center',
+        'gap:8px', 'padding:14px 30px',
+        'background:rgba(13,19,30,0.9)', 'border:2px solid rgba(255,210,74,0.55)',
+        'border-radius:12px', 'box-shadow:0 8px 30px rgba(0,0,0,0.75)',
+        'pointer-events:none', 'font-family:"Microsoft YaHei",Arial,sans-serif',
+    ].join(';');
+
+    el.innerHTML = `
+        <div style="font-size:15px;font-weight:700;color:#ffd24a;letter-spacing:3px;">正在补充弹药</div>
+        <div style="width:220px;height:14px;background:rgba(255,210,74,0.12);border:1px solid rgba(255,210,74,0.4);border-radius:7px;overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,0.6);">
+            <div id="ammoFillBarFill" style="height:100%;width:0%;background:linear-gradient(90deg,#ffd24a,#f0a92e);border-radius:7px;box-shadow:0 0 10px rgba(255,210,74,0.8);transition:width 0.05s linear;"></div>
+        </div>
+        <div style="font-size:11px;color:#9fb2c8;letter-spacing:2px;">松开 F 取消</div>
+    `;
+    document.body.appendChild(el);
+    _fillBarEl = el;
+    _fillBarFill = document.getElementById('ammoFillBarFill');
+}
+
+// ============================================================
+// 每帧更新
 // ============================================================
 function updateAmmoDrop(dt, now) {
     if (!_ammoDrop || !_ammoDrop.active) return;
@@ -121,98 +187,117 @@ function updateAmmoDrop(dt, now) {
     _ammoDropMesh.position.y = _ammoDrop.y + 0.5 + Math.sin(t * 2.5) * 0.10;
 
     if (typeof p1 === 'undefined' || !p1) return;
-    if (p1.hp <= 0) return;
-    if (p1.deadUntil > now) return;
 
-    const dx = p1.pos.x - _ammoDrop.x;
-    const dz = p1.pos.z - _ammoDrop.z;
-    const d2 = dx * dx + dz * dz;
+    const near = isPlayerNearAmmoDrop();
+    const promptEl = _ensureAmmoPrompt();
 
-    if (d2 < AMMO_DROP_PICKUP_RADIUS * AMMO_DROP_PICKUP_RADIUS) {
-        _pickupAmmoDrop(p1);
-    }
-}
-window.updateAmmoDrop = updateAmmoDrop;
-
-// ============================================================
-// ★ 拾取逻辑
-//
-//   · 手里拿着枪 → 补当前枪
-//   · 手里拿着刀/烟/闪 → 补主武器
-//   · 只加【一个弹匣】，不超过 reserveMax
-//
-//   ★ 关键修复：
-//     拾取前，如果手里拿着目标枪，先把 p.reserve 同步到 weaponAmmo，
-//     否则 weaponAmmo 里可能是"很久以前"的旧值（例如 p.reserve 已经
-//     打空到 0，但 weaponAmmo 里还留着初始值 50），
-//     会导致 0 + 25 → 错误地变成 75（看起来像"直接回满"）
-// ============================================================
-function _pickupAmmoDrop(p) {
-    if (!p) return;
-
-    let key = null;
-    let cfg = null;
-
-    // ---- 决定目标武器 ----
-    if (p.weapon && p.weapon.mag > 0
-        && !p.isMelee && !p.isSmoke && !p.isFlash) {
-        key = p.weaponKey;
-        cfg = p.weapon;
-    } else {
-        key = p.primaryWeaponKey || 'rifle';
-        cfg = (typeof WEAPONS !== 'undefined') ? WEAPONS[key] : null;
-    }
-
-    if (!key || !cfg || cfg.mag <= 0) {
-        despawnAmmoDrop();
+    // 1. 如果不在附近或死亡，取消蓄力
+    if (!near || p1.hp <= 0 || p1.deadUntil > now) {
+        if (promptEl) promptEl.style.display = 'none';
+        if (_fillBarEl) _fillBarEl.style.display = 'none';
+        _filling = false;
         return;
     }
 
-    const magAmount = cfg.mag;
-    const reserveMax = cfg.reserveMax || (cfg.mag * 3);
-
-    // ---- 确保 weaponAmmo 存在 ----
-    if (!p.weaponAmmo) p.weaponAmmo = {};
-    if (!p.weaponAmmo[key]) {
-        p.weaponAmmo[key] = { ammo: cfg.mag, reserve: cfg.startReserve };
+    // 2. 判断当前武器的状态
+    let key = null;
+    if (p1.weapon && p1.weapon.mag > 0 && !p1.isMelee && !p1.isSmoke && !p1.isFlash && !p1.isMedkit) {
+        key = p1.weaponKey;
+    } else {
+        key = p1.primaryWeaponKey || 'rifle';
     }
 
-    // ---- ★ 修复：手里拿着目标枪 → p.reserve 是权威值，先同步 ----
-    const isHoldingThis = (p.weaponKey === key)
-        && p.weapon && p.weapon.mag !== undefined
-        && !p.isMelee && !p.isSmoke && !p.isFlash;
-    if (isHoldingThis) {
-        p.weaponAmmo[key].reserve = p.reserve;
-        p.weaponAmmo[key].ammo    = p.ammo;
+    if (key === 'odin') {
+        if (promptEl) {
+            promptEl.textContent = '没有机枪子弹';
+            promptEl.style.display = 'block';
+        }
+        if (_fillBarEl) _fillBarEl.style.display = 'none';
+        _filling = false;
+        return;
     }
 
-    // ---- 加备弹（只加一个弹匣，不超过 reserveMax）----
-    const before = p.weaponAmmo[key].reserve;
-    p.weaponAmmo[key].reserve = Math.min(before + magAmount, reserveMax);
-    const gained = p.weaponAmmo[key].reserve - before;
+    const w = window.getWeaponConfig(key);
+    if (!w) return;
 
-    // ---- 手里拿着 → 同步回 p.reserve ----
-    if (isHoldingThis) {
-        p.reserve = p.weaponAmmo[key].reserve;
+    let curAmmo, curRes;
+    if (p1.weaponKey === key && !p1.isMelee && !p1.isSmoke && !p1.isFlash && !p1.isMedkit) {
+        curAmmo = p1.ammo;
+        curRes = p1.reserve;
+    } else {
+        if (!p1.weaponAmmo) p1.weaponAmmo = {};
+        const wa = p1.weaponAmmo[key];
+        curAmmo = wa ? wa.ammo : 0;
+        curRes = wa ? wa.reserve : 0;
     }
 
-    // ---- 反馈 ----
-    if (typeof sPickup === 'function') sPickup(1);
+    const isFull = (curAmmo >= w.mag && curRes >= w.startReserve);
 
-    const weaponName = (typeof WEAPONS !== 'undefined' && WEAPONS[key])
-        ? WEAPONS[key].name : key;
+    if (isFull) {
+        if (promptEl) {
+            promptEl.textContent = '当前武器弹药已充足';
+            promptEl.style.display = 'block';
+        }
+        if (_fillBarEl) _fillBarEl.style.display = 'none';
+        _filling = false;
+        return;
+    }
 
-    if (typeof feed === 'function' && p.id === 1) {
-        if (gained > 0) {
-            feed(p, `💛 拾取 <b style="color:#ffd24a">${weaponName}</b> 弹药 ` +
-                    `<b style="color:#ffd24a">+${gained}</b> 备弹`);
-        } else {
-            feed(p, `💛 ${weaponName} 备弹已满`);
+    // 3. 处理长按蓄力逻辑
+    _ensureFillBar();
+
+    if (typeof keys !== 'undefined' && keys['KeyF']) {
+        if (!_filling) {
+            _filling = true;
+            _fillStartTime = now;
+            _targetWeaponKey = key;
+        }
+
+        // 如果蓄力中途切枪了，或者切成了奥丁，取消蓄力
+        if (key !== _targetWeaponKey) {
+            _filling = false;
+            _fillStartTime = 0;
+            if (_fillBarEl) _fillBarEl.style.display = 'none';
+            return;
+        }
+
+        const elapsed = now - _fillStartTime;
+        const progress = Math.min(1, elapsed / AMMO_FILL_TIME_MS);
+
+        if (_fillBarEl) _fillBarEl.style.display = 'flex';
+        if (_fillBarFill) _fillBarFill.style.width = (progress * 100) + '%';
+
+        if (progress >= 1) {
+            // ★ 蓄力完成，补充弹药
+            if (!p1.weaponAmmo) p1.weaponAmmo = {};
+            p1.weaponAmmo[key] = {
+                ammo: w.mag,
+                reserve: w.startReserve
+            };
+
+            if (p1.weaponKey === key && !p1.isMelee && !p1.isSmoke && !p1.isFlash && !p1.isMedkit) {
+                p1.ammo = w.mag;
+                p1.reserve = w.startReserve;
+                p1.reloadEnd = 0;
+            }
+
+            if (typeof sPickup === 'function') sPickup(1);
+            if (typeof feed === 'function') feed(p1, `💛 补充 <b style="color:#ffd24a">${w.name}</b> 弹药`);
+
+            // 重置蓄力状态，允许继续按住F补下一把枪
+            _filling = false;
+            _fillStartTime = 0;
+            if (_fillBarEl) _fillBarEl.style.display = 'none';
+        }
+    } else {
+        // 松开 F，重置进度
+        _filling = false;
+        _fillStartTime = 0;
+        if (_fillBarEl) _fillBarEl.style.display = 'none';
+        if (promptEl) {
+            promptEl.textContent = '按住 F 补充主武器弹药';
+            promptEl.style.display = 'block';
         }
     }
-
-    despawnAmmoDrop();
-
-    console.log('[ammoDrop] 拾取', weaponName, '+' + gained + ' 备弹，当前：'
-                + p.weaponAmmo[key].reserve + ' / ' + reserveMax);
 }
+window.updateAmmoDrop = updateAmmoDrop;

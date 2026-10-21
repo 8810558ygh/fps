@@ -75,11 +75,8 @@ const ZOMBIE_SEPARATION_STRENGTH = 0.55;
 //
 //   每多循环一轮（endlessLoop +1）：
 //     · 血量  ×(1 + 0.15 * loop)
-//     · 攻击  ×(1 + 0.04 * loop)
+//     · 攻击  ×(1 + 0.08 * loop)
 //     · 金币  ×(1 + 0.20 * loop)
-//
-//   第 1 轮（loop=0）都是 1.00×，不影响首次通关的难度。
-//   从第 2 轮开始生效，不设上限，但增幅较缓，可玩性更长。
 // ============================================================
 function _getEndlessLoop() {
     return (typeof SurvivalState !== 'undefined' && SurvivalState)
@@ -105,8 +102,7 @@ function _getEndlessCoinMul() {
 //   wave：本轮内的"等效全局波次"（battlefield 1~5, desert 6~10）
 //   extraNormals：无限模式额外加普通僵尸的数量
 //
-//   基础公式保持 3 + wave * 2 不变（第一轮曲线不变）
-//   无限模式的加成通过 extraNormals 追加
+//   ★ 演奏僵尸：只占第一个精英位，无限模式 + 本波 ≥ 3 波 + 25% 概率
 // ============================================================
 function buildWaveComposition(wave, extraNormals) {
     const total  = 3 + wave * 2;
@@ -120,7 +116,21 @@ function buildWaveComposition(wave, extraNormals) {
         ? ZOMBIE_ELITE_TYPES
         : ['small'];
 
+    // ============================================================
+    // ★ 演奏僵尸：只占第一个精英位，每波最多 1 只
+    // ============================================================
+    let musicianSpawned = false;
+
     for (let i = 0; i < elites; i++) {
+        if (!musicianSpawned
+            && typeof PlayerZombie !== 'undefined'
+            && PlayerZombie.canSpawn(wave)
+            && Math.random() < 0.25) {
+            list.push('musician');
+            musicianSpawned = true;
+            continue;
+        }
+
         const t = elitePool[Math.floor(Math.random() * elitePool.length)];
         list.push(t);
     }
@@ -210,7 +220,6 @@ function _initZombiePool() {
         partsLegacy.group.visible = false;
         scene.add(partsLegacy.group);
 
-        // ---- hitMeshes ----
         const hitLegacy = [
             partsLegacy.head, partsLegacy.body,
             partsLegacy.armL, partsLegacy.armR,
@@ -226,7 +235,6 @@ function _initZombiePool() {
             ];
         }
 
-        // ---- zombie 实例 ----
         const zombie = {
             _isZombie: true,
             id: 100 + i,
@@ -270,7 +278,6 @@ function _initZombiePool() {
             _stuckTime: 0,
             _nextJumpAt: 0,
 
-            // ★ 叫声调度（由 zombie_sounds.js 使用）
             _nextGrowlAt: 0,
 
             _aiState: {},
@@ -300,7 +307,6 @@ function _acquireZombie() {
 
 // ============================================================
 // 切换僵尸模型
-//   ★ 所有类型（normal / small / big）都优先使用新模型
 // ============================================================
 function _switchZombieModel(zombie, type) {
     if (zombie._partsNormal) {
@@ -371,6 +377,16 @@ function _applyZombieSize(zombie, cfg) {
 // ============================================================
 function spawnZombie(x, z, wave, type) {
     type = type || 'normal';
+
+    // ★ 演奏僵尸：走独立路径，不进池
+    if (type === 'musician') {
+        if (typeof PlayerZombie !== 'undefined' && PlayerZombie.spawn) {
+            return PlayerZombie.spawn(x, z);
+        }
+        // 兜底：PlayerZombie 未加载 → 降级成普通僵尸
+        type = 'normal';
+    }
+
     const cfg = ZOMBIE_TYPES[type] || ZOMBIE_TYPES.normal;
 
     const zombie = _acquireZombie();
@@ -454,7 +470,7 @@ function updateZombie(zombie, dt, now) {
 
     const cfg = ZOMBIE_TYPES[zombie.type] || ZOMBIE_TYPES.normal;
 
-    // ★ 周期性叫声（由 zombie_sounds.js 内部判断是否该叫）
+    // ★ 周期性叫声
     if (window.ZombieSounds && typeof window.ZombieSounds.tick === 'function') {
         window.ZombieSounds.tick(zombie, now);
     }
@@ -711,7 +727,7 @@ function _zombieAttack(zombie, target, cfg) {
 
     const now = performance.now();
 
-    // ★ 攻击时急叫（比周期叫更频繁，玩家更紧张）
+    // ★ 攻击时急叫
     if (window.ZombieSounds && typeof window.ZombieSounds.triggerAttack === 'function') {
         window.ZombieSounds.triggerAttack(zombie, now);
     }
@@ -827,7 +843,6 @@ function _killZombie(zombie, from) {
         }
 
         if (drop > 0) {
-            // ★ 无限模式金币加成（四舍五入，至少 1）
             drop = Math.max(1, Math.round(drop * _getEndlessCoinMul()));
 
             SurvivalState.coins = (SurvivalState.coins || 0) + drop;
@@ -841,18 +856,30 @@ function _killZombie(zombie, from) {
         }
     }
 
-    // 弹药掉落
+// 弹药掉落
     if (getZombiesAliveCount() === 0
         && typeof SurvivalState !== 'undefined'
         && SurvivalState
-        && SurvivalState.wave > 0
-        && SurvivalState.wave % 2 === 0) {
+        && SurvivalState.wave > 0) {
 
-        const queueLen = (SurvivalState.waveQueue && SurvivalState.waveQueue.length)
-            ? SurvivalState.waveQueue.length : 0;
+        // ★ 计算全局波次（战场1-5，沙漠6-10，循环累加）
+        const baseGlobalWave = SurvivalState.mapIndex * SurvivalState.maxWaves + SurvivalState.wave;
+        const globalWave = SurvivalState.endlessLoop * (SurvivalState.maps.length * SurvivalState.maxWaves) + baseGlobalWave;
+        
+        // ★ 只在每一轮的第 3 波和第 8 波掉落
+        const isDropWave = (globalWave % 10 === 3) || (globalWave % 10 === 8);
 
-        if (queueLen === 0 && typeof spawnAmmoDrop === 'function') {
-            spawnAmmoDrop(zombie.pos.x, zombie.pos.y, zombie.pos.z);
+        if (isDropWave) {
+            const queueLen = (SurvivalState.waveQueue && SurvivalState.waveQueue.length)
+                ? SurvivalState.waveQueue.length : 0;
+
+            if (queueLen === 0 && typeof spawnAmmoDrop === 'function') {
+                spawnAmmoDrop(zombie.pos.x, zombie.pos.y, zombie.pos.z);
+                // 可选：在屏幕上提示一下
+                if (typeof feed === 'function' && typeof p1 !== 'undefined' && p1) {
+                    feed(p1, `💛 精英波清空！掉落弹药箱`);
+                }
+            }
         }
     }
 }
@@ -864,6 +891,12 @@ function getZombiesAliveCount() {
     let n = 0;
     for (let i = 0; i < _zombiePool.length; i++) {
         if (_zombiePool[i].alive) n++;
+    }
+    // ★ 演奏僵尸也算活着的僵尸（卡波用）
+    if (typeof PlayerZombie !== 'undefined'
+        && PlayerZombie.active
+        && !PlayerZombie.active.dead) {
+        n++;
     }
     return n;
 }

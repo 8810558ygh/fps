@@ -70,11 +70,9 @@ function buildZiplineTower(parent, x, topY, z, baseY) {
     group.add(lightBall);
     group.userData.warningLight = lightBall;
 
-    // 点光源（会呼吸）
-    const pt = new THREE.PointLight(0xff5544, 0.6, 12);
-    pt.position.set(x, topY + 0.8, z);
-    group.add(pt);
-    group.userData.light = pt;
+    // ★ 已移除 PointLight（原来塔顶 4 个 PointLight 会参与全局 shader 光照循环，
+    //   即使 distance=12 且远离玩家，片元仍会为它算一遍）
+    // ★ 视觉上的红色警示灯由上方 MeshBasicMaterial 红球保留，效果不变
 
     parent.add(group);
     _ziplineTowers.push(group);

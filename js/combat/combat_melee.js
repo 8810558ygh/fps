@@ -5,13 +5,6 @@
 //   · combat_damage.js 提供 damage（运行时读取）
 //   · survival/zombie.js 提供 getAllZombies / damageZombie（生存模式）
 
-// ============================================================
-// 近战攻击
-//   ★ 硬直期间禁止近战
-//   ★ 易伤在 _addDamage 之前应用
-//   ★ 生存模式命中僵尸 → 走 damageZombie()，不走玩家伤害链
-//   ★ 生存模式 + p1 → 应用个人属性倍率 + 暴击
-// ============================================================
 function tryMelee(p, now, isHeavy) {
     if (gameState !== 'combat') return;
     if (!p.isMelee) return;
@@ -44,7 +37,7 @@ function tryMelee(p, now, isHeavy) {
 
     // ============================================================
     // ★ targets 拼装
-    //   · 生存模式：加所有存活僵尸的 hitMeshes
+    //   · 生存模式：加所有存活僵尸的 hitMeshes + 演奏僵尸
     //   · 其他模式：加 p2（对手）的 hitMeshes
     // ============================================================
     const targets = prepareShotTargets();
@@ -58,6 +51,16 @@ function tryMelee(p, now, isHeavy) {
                 if (!z.alive) continue;
                 const zParts = z.hitMeshes;
                 for (let pi = 0; pi < zParts.length; pi++) targets.push(zParts[pi]);
+            }
+        }
+
+        // ★ 演奏僵尸 hitMeshes
+        if (typeof PlayerZombie !== 'undefined'
+            && PlayerZombie.active
+            && !PlayerZombie.active.dead) {
+            const pz = PlayerZombie.active;
+            for (let pi = 0; pi < pz.hitMeshes.length; pi++) {
+                targets.push(pz.hitMeshes[pi]);
             }
         }
     } else {
@@ -75,9 +78,6 @@ function tryMelee(p, now, isHeavy) {
     if (hits.length > 0) {
         const h = hits[0];
 
-        // ============================================================
-        // 命中油桶
-        // ============================================================
         const barrelRef = h.object.userData.barrelRef;
         if (barrelRef) {
             const dmg = isHeavy ? m.dmgHeavy : m.dmgLight;
@@ -91,22 +91,13 @@ function tryMelee(p, now, isHeavy) {
         } else {
             const part = h.object.userData.part;
 
-            // ============================================================
-            // ★ 命中僵尸
-            //   · 部位映射：zombie_head → head，zombie_leg → leg，其他 → body
-            //   · 直接走 damageZombie()，不做玩家易伤/护甲/背刺
-            //   · 刀对僵尸造成与打玩家相同的伤害（dmgLight / dmgHeavy）
-            //   · 生存模式 + p1 → 应用个人属性倍率 + 暴击
-            // ============================================================
             if (part && part.startsWith('zombie_')) {
                 const zombie = h.object.userData.zombieRef;
                 if (zombie && zombie.alive) {
-                    // 僵尸没有明确弱点（头/腿伤害一样），用普通伤害
-                    // 背刺也不做（僵尸没背）
                     let dmg = isHeavy ? m.dmgHeavy : m.dmgLight;
                     let isCrit = false;
 
-                    // ★ 个人属性加成：伤害倍率 + 暴击（仅生存模式 + 玩家 p1）
+                    // ★ 个人属性加成：伤害倍率 + 暴击
                     if (gameMode === 'survival'
                         && p.id === 1
                         && typeof SurvivalStats !== 'undefined') {
@@ -115,8 +106,18 @@ function tryMelee(p, now, isHeavy) {
                         isCrit = roll.isCrit;
                     }
 
-                    if (typeof damageZombie === 'function') {
+                    // ★ 演奏僵尸走独立伤害入口
+                    if (zombie._isPlayerZombie) {
+                        if (typeof PlayerZombie !== 'undefined') {
+                            PlayerZombie.damage(dmg, p);
+                        }
+                    } else if (typeof damageZombie === 'function') {
                         damageZombie(zombie, dmg, p);
+                    }
+
+                    // ★ 伤害飘字
+                    if (p.id === 1 && typeof spawnDamageNumber === 'function') {
+                        spawnDamageNumber(h.point, dmg, isCrit);
                     }
 
                     spawnSparks(h.point, isCrit ? 0xffd24a : 0xff5040);
@@ -130,14 +131,10 @@ function tryMelee(p, now, isHeavy) {
                     emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                 }
             } else if (part) {
-                // ============================================================
-                // ★ 命中玩家（原有逻辑）
-                // ============================================================
                 const isBack = isBackAttack(p, o);
                 let rawDmg = isHeavy ? m.dmgHeavy : m.dmgLight;
                 if (isBack) rawDmg *= m.backMultiplier;
 
-                // 应用易伤（在 _addDamage 之前）
                 const dmg = _applyVulnerabilityBonus(o, rawDmg, now);
 
                 _addDamage(p, o.id, 'body', dmg);
@@ -151,9 +148,6 @@ function tryMelee(p, now, isHeavy) {
                 emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                 damage(o, dmg, p);
             } else {
-                // ============================================================
-                // ★ 命中场景（墙 / 箱子）→ 生成刀痕
-                // ============================================================
                 spawnSparks(h.point, 0xffd28a);
 
                 const n = (typeof getHitWorldNormal === 'function')

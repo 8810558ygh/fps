@@ -15,6 +15,12 @@ function exitToLobby() {
         stopSurvivalMode();
     }
 
+    // ★ 强制停音乐（演奏僵尸可能还活着）
+    if (typeof PlayerZombie !== 'undefined'
+        && typeof PlayerZombie.forceStopMusic === 'function') {
+        PlayerZombie.forceStopMusic();
+    }
+
     if (document.pointerLockElement) document.exitPointerLock();
 
     if (window.closeCombatReport) window.closeCombatReport();
@@ -110,13 +116,11 @@ window.enterGame = enterGame;
 
 // ============================================================
 // ★ 生存模式入口
-//   —— loading 已加载战场图，这里只负责切模式 + 开始
 // ============================================================
 function enterSurvival() {
     audio();
     if (typeof window.SETTINGS_Close === 'function') window.SETTINGS_Close();
 
-    // ★ 不再判断 getCurrentMapId / loadMap —— loading 已经强制加载了 battlefield
     window.GAME_setMode('survival');
 
     document.getElementById('lobbyOverlay').style.display = 'none';
@@ -124,15 +128,13 @@ function enterSurvival() {
     const exitBtn = document.getElementById('exitBtn');
     if (exitBtn) exitBtn.style.display = 'block';
 
-    resetMatch();   // startRound → startSurvivalMode
+    resetMatch();
     enterFullscreenAndLock();
 }
 window.enterSurvival = enterSurvival;
 
 // ============================================================
 // Lobby 按钮
-//   · lobbyAiBtn / lobbySurvivalBtn：由 loading.js 的 installLobbyHooks() 劫持
-//   · lobbyOnlineBtn：走自己的逻辑
 // ============================================================
 document.getElementById('lobbyOnlineBtn').addEventListener('click', () => {
     audio();

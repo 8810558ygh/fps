@@ -28,6 +28,7 @@ const _crossEl   = q('#hud1 .cross');
 const _adsRetEl  = document.getElementById('adsReticle');
 const _mkEl      = document.getElementById('medkitProgress');
 const _mkFill    = document.getElementById('mkBarFill');
+const _slowIndEl = document.getElementById('slowIndicator');
 
 const _hudState = {
     score: -1, hp: -1, armor: -1, armorColor: '',
@@ -37,6 +38,7 @@ const _hudState = {
     cdDisplay: '', hintDisplay: '',
     cdIcon: '', cdLabel: '', cdTime: '', cdTimeColor: '',
     mkDisplay: '', mkWidth: '',
+    slowText: '', slowDisplay: '',
 };
 
 function feed(p, html) {
@@ -328,6 +330,33 @@ function updateHUD(now) {
     if (_hudState.adsRetDisplay !== adsRetDisplay) {
         if (_adsRetEl) _adsRetEl.style.display = adsRetDisplay;
         _hudState.adsRetDisplay = adsRetDisplay;
+    }
+
+    // ============================================================
+    // ★ 演奏僵尸减速提示
+    // ============================================================
+    if (_slowIndEl) {
+        const slowAmt = (typeof PlayerZombie !== 'undefined')
+            ? (PlayerZombie.slowAmount || 0) : 0;
+
+        if (slowAmt > 0) {
+            const pct = Math.round(slowAmt * 100);
+            const text = `🎵 减速 -${pct}%`;
+
+            if (_hudState.slowText !== text) {
+                _slowIndEl.textContent = text;
+                _hudState.slowText = text;
+            }
+            if (_hudState.slowDisplay !== 'block') {
+                _slowIndEl.style.display = 'block';
+                _hudState.slowDisplay = 'block';
+            }
+        } else {
+            if (_hudState.slowDisplay !== 'none') {
+                _slowIndEl.style.display = 'none';
+                _hudState.slowDisplay = 'none';
+            }
+        }
     }
 
     if (typeof _tickScorePanel === 'function') _tickScorePanel();

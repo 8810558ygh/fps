@@ -123,6 +123,8 @@ const WEAPONS = {
         scope: true, boltMs: 850,
         speedMul: 0.72, adsSpeedMul: 0.72,
 
+        pierce: 1, // ★ 新增：穿透数量（可穿透 1 个实体）
+
         spread: 0,
         moveSpread: 0.025,
         airSpread: 0.110,
@@ -175,4 +177,27 @@ const WEAPONS = {
             maxOffsetYaw: 0.11,
         },
     }
+};
+
+// ★ 生存模式专属枪械数值覆盖
+const SURVIVAL_WEAPONS_OVERRIDE = {
+    rifle:   { mag: 40,  reserveMax: 150, startReserve: 100 }, // 狂徒 40发 / 150备弹
+    sniper:  { mag: 15,  reserveMax: 30,  startReserve: 30  }, // 冥驹 15发 / 30备弹
+    shotgun: { mag: 10,  reserveMax: 50,  startReserve: 50  }, // 判官 10发 / 50备弹
+    odin:    { mag: 150, reserveMax: 300, startReserve: 200 }  // 奥丁 150发 / 300备弹
+};
+
+// 全局获取函数：自动判断当前模式并返回对应配置
+window.getWeaponConfig = function(key) {
+    const base = WEAPONS[key];
+    if (!base) return null;
+    
+    // 如果是生存模式，且这把枪有覆盖配置，则返回强化版数据
+    if (typeof gameMode !== 'undefined' && gameMode === 'survival') {
+        const ov = SURVIVAL_WEAPONS_OVERRIDE[key];
+        if (ov) {
+            return Object.assign({}, base, ov);
+        }
+    }
+    return base;
 };

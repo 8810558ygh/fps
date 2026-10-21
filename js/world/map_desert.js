@@ -53,7 +53,7 @@ const desertClamp  = (v, a, b) => Math.min(b, Math.max(a, v));
 /* ---------- 沙丘高度场 ---------- */
 const DESERT_WIND = new THREE.Vector2(1.0, 0.35).normalize();
 
-const DESERT_MAP_HALF = 160;
+const DESERT_MAP_HALF = 125;  // ★ 160 → 125 (地形变为 250×250)
 const DESERT_ARENA_R  = 32;
 const DESERT_BLEND_W  = 60;
 const DESERT_ARENA_SCALE = 0.12;
@@ -191,7 +191,7 @@ registerMap('desert', {
   name: '沙漠',
   hideGround: true,
 
-  // ★ 沙漠地图活动半径（半宽）
+  // ★ 沙漠地图活动半径（半宽）保持不变
   arenaHalf: 80,
   // ★ 阴影相机覆盖半径
   shadowHalf: 80,
@@ -200,7 +200,7 @@ registerMap('desert', {
   ambience: {
     background: 0xc19a68,
     fogExp2:    0xc19a68,
-    fogDensity: 0.0026
+    fogDensity: 0.0028    // ★ 0.0026 → 0.0028，雾稍微浓一点点，更好的掩盖边界
   },
   spawns: {
     p1: { x: -21, z: -21, yaw: -3 * Math.PI / 4 },
@@ -209,7 +209,7 @@ registerMap('desert', {
   build() {
     // -------- 1. 沙丘地形 --------
     const TERRAIN_SIZE = DESERT_MAP_HALF * 2;
-    const TERRAIN_SEG  = 320;
+    const TERRAIN_SEG  = 160;   // ★ 200 → 160 (配合缩小后的地图，精度几乎不变)
 
     const { texCol, texNor } = createDesertSandTextures(512);
     const REPEAT = 32;
@@ -261,7 +261,7 @@ registerMap('desert', {
 
     const terrain = new THREE.Mesh(geo, sandMaterial);
     terrain.receiveShadow = true;
-    terrain.castShadow = true;
+    terrain.castShadow = false;
     currentMapGroup.add(terrain);
 
     // -------- 2. 天空球 --------
@@ -306,10 +306,16 @@ registerMap('desert', {
       `
     });
 
-    const skyGeo = new THREE.SphereGeometry(200, 48, 32);
+    const skyGeo = new THREE.SphereGeometry(150, 32, 20);   // ★ 半径 200 → 150 足够包住视距
     const skyMesh = new THREE.Mesh(skyGeo, skyMaterial);
     skyMesh.renderOrder = -1000;
     skyMesh.frustumCulled = false;
+    
+    // 让天空球始终跟随相机
+    skyMesh.onBeforeRender = function(renderer, scene, camera) {
+        this.position.copy(camera.position);
+    };
+    
     currentMapGroup.add(skyMesh);
 
     // -------- 3. 干草 --------
@@ -346,18 +352,21 @@ registerMap('desert', {
       const g2 = g1.clone();
       g2.rotateY(Math.PI / 2);
 
-      const COUNT = 700;
+      const COUNT = 400;   // ★ 480 → 400，地图小了，草相应减少一点，保持合理的视觉密度
       const grass1 = new THREE.InstancedMesh(g1, grassMat, COUNT);
       const grass2 = new THREE.InstancedMesh(g2, grassMat, COUNT);
-      grass1.castShadow = grass2.castShadow = true;
-      grass1.receiveShadow = grass2.receiveShadow = true;
+
+      grass1.castShadow = grass2.castShadow = false;
+      grass1.receiveShadow = grass2.receiveShadow = false;
+
       grass1.frustumCulled = grass2.frustumCulled = false;
 
       const dummy = new THREE.Object3D();
       const rnd = desertMulberry32(90210);
 
       for (let i = 0; i < COUNT; i++){
-        const r = Math.sqrt(rnd()) * 250;
+        // ★ 分布半径限制在地形范围内（125 - 10 缓冲 = 115）
+        const r = Math.sqrt(rnd()) * 115;
         const a = rnd() * Math.PI * 2;
         const x = Math.cos(a) * r;
         const z = Math.sin(a) * r;
@@ -384,7 +393,7 @@ registerMap('desert', {
         && typeof window.buildZiplineTower === 'function'
         && typeof window.buildZiplineRope === 'function') {
 
-      const TOWER_DIST   = 68;   // 塔距中心的距离
+      const TOWER_DIST   = 60;   // ★ 68 → 60，把塔往里收一收，配合缩小的地图
       const TOWER_HEIGHT = 15;   // 塔顶相对地形的高度
 
       const towerPositions = [

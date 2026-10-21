@@ -12,18 +12,14 @@ const SurvivalState = {
     SUMMARY_MS: 3000,
     PORTAL_TRIGGER_RADIUS: 2.5,
 
-    MAX_ALIVE_ZOMBIES: 10,
-    REFILL_DELAY_MS: 1500,
+    MAX_ALIVE_ZOMBIES: 20,
+    REFILL_DELAY_MS: 1000,
     waveQueue: [],
     nextSpawnAt: 0,
 
-    // ★ 已解锁的武器（每局重置为只有狂徒）
     unlockedWeapons: ['rifle'],
-
-    // ★ 金币（每局重置为 0）
     coins: 0,
 
-    // ★ 无限模式
     endlessMode: false,
     endlessLoop: 0,
 };
@@ -35,9 +31,6 @@ let _summaryTimer = null;
 let _portalPromptEl = null;
 let _endlessChoiceEl = null;
 
-// ============================================================
-// 武器中文名 / 描述
-// ============================================================
 const WEAPON_NAMES_ZH = {
     rifle: '狂徒',
     sniper: '冥驹',
@@ -51,9 +44,6 @@ const WEAPON_DESCS_ZH = {
     odin: '100发 · 越打越快',
 };
 
-// ============================================================
-// 玩家列表
-// ============================================================
 function getSurvivalPlayers() {
     const arr = [];
     if (typeof p1 !== 'undefined' && p1) arr.push(p1);
@@ -82,43 +72,19 @@ function checkSurvivalDefeat() {
 }
 window.checkSurvivalDefeat = checkSurvivalDefeat;
 
-// ============================================================
-// ★ 切地图补弹
-// ============================================================
 function _refillPlayerOnNextMap(p) {
     if (!p) return;
 
-    if (!p.weaponAmmo) p.weaponAmmo = {};
+    // ★ 移除了所有的弹药补给逻辑，现在切图时保留当前的所有子弹和备弹状态
 
-    const unlocked = (SurvivalState.unlockedWeapons && SurvivalState.unlockedWeapons.length)
-        ? SurvivalState.unlockedWeapons
-        : ['rifle'];
-
-    for (const key of unlocked) {
-        const wk = (typeof WEAPONS !== 'undefined') ? WEAPONS[key] : null;
-        if (!wk || wk.mag === undefined) continue;
-
-        if (!p.weaponAmmo[key]) {
-            p.weaponAmmo[key] = { ammo: wk.mag, reserve: wk.startReserve };
-        } else {
-            p.weaponAmmo[key].ammo = wk.mag;
-            p.weaponAmmo[key].reserve = Math.max(p.weaponAmmo[key].reserve, wk.startReserve);
-        }
-    }
-
-    if (p.weapon && p.weapon.mag !== undefined && !p.isMelee && !p.isSmoke && !p.isFlash) {
-        const cur = p.weaponAmmo[p.weaponKey];
-        if (cur) {
-            p.ammo = cur.ammo;
-            p.reserve = cur.reserve;
-        }
-    }
-
+    // 护甲依然补满
     if (typeof ARMOR_MAX !== 'undefined') p.armor = ARMOR_MAX;
 
+    // 投掷物按规则清零
     p.smokeCharges = 0;
     p.flashCharges = 0;
 
+    // 重置射击、换弹状态
     p.reloadEnd = 0;
     p.nextShot = 0;
     p.boltEnd = 0;
@@ -190,9 +156,6 @@ function _spawnZombieAroundPlayer(type) {
     spawnZombie(x, z, SurvivalState.wave, type);
 }
 
-// ============================================================
-// ★ 刷新武器面板的锁定状态
-// ============================================================
 function updateWeaponPanelLocks() {
     const panel = document.getElementById('weaponPanel');
     if (!panel) return;
@@ -266,7 +229,6 @@ function startSurvivalMode() {
     _teleportPlayerToMapCenter();
 
     if (typeof p1 !== 'undefined' && p1) {
-        // ★ 应用个人属性到玩家 maxHp
         p1.maxHp = (typeof SurvivalStats !== 'undefined')
             ? SurvivalStats.getMaxHp()
             : HP_MAX;
@@ -335,6 +297,11 @@ function survivalTick(dt, now) {
         updateAmmoDrop(dt, now);
     }
 
+    // ★ 演奏僵尸每帧更新（不分 phase，保证音乐状态同步）
+    if (typeof PlayerZombie !== 'undefined') {
+        PlayerZombie.tick(dt, now);
+    }
+
     if (SurvivalState.phase === 'prep') {
         if (now >= SurvivalState.prepEndTime) {
             SurvivalState.wave++;
@@ -400,7 +367,6 @@ window.tryEnterPortal = tryEnterPortal;
 function _enterNextMap() {
     const nextIndex = SurvivalState.mapIndex + 1;
 
-    // 最后一张图的传送门 + 未进入无限模式 → 弹选择框
     if (nextIndex >= SurvivalState.maps.length && !SurvivalState.endlessMode) {
         _showEndlessChoice();
         return;
@@ -798,6 +764,13 @@ function _handleDefeat() {
     if (window.Shop && window.Shop.isOpen && window.Shop.isOpen()) {
         window.Shop.close();
     }
+
+    // ★ 强制停音乐（演奏僵尸可能还活着）
+    if (typeof PlayerZombie !== 'undefined'
+        && typeof PlayerZombie.forceStopMusic === 'function') {
+        PlayerZombie.forceStopMusic();
+    }
+
     console.log('[survival] 失败');
 
     const endOv = document.getElementById('survivalEndOverlay');
@@ -826,6 +799,11 @@ function _handleDefeat() {
 function startSurvivalWave(wave) {
     SurvivalState.phase = 'wave';
 
+    // ★ 重置演奏僵尸"本波是否刷过"标记
+    if (typeof PlayerZombie !== 'undefined') {
+        PlayerZombie.resetWaveFlag();
+    }
+
     if (typeof despawnAmmoDrop === 'function') {
         despawnAmmoDrop();
     }
@@ -835,12 +813,6 @@ function startSurvivalWave(wave) {
         if (p) p.survivalKills = 0;
     }
 
-    // ============================================================
-    // ★ globalWave：整局游戏累加波次（用于日志）
-    // ★ baseGlobalWave：本轮内的等效全局波次（用于数量计算）
-    //   battlefield → 1~5，desert → 6~10，每轮都一样
-    //   无限模式加成通过 extraNormals 追加，不污染基础曲线
-    // ============================================================
     const globalWave = SurvivalState.endlessLoop * SurvivalState.maps.length * SurvivalState.maxWaves
         + SurvivalState.mapIndex * SurvivalState.maxWaves
         + wave;
@@ -848,7 +820,6 @@ function startSurvivalWave(wave) {
     const baseGlobalWave = SurvivalState.mapIndex * SurvivalState.maxWaves
         + wave;
 
-    // ★ 每多一轮，加 2 只普通僵尸
     const endlessBonus = SurvivalState.endlessMode
         ? SurvivalState.endlessLoop * 2
         : 0;

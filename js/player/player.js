@@ -103,8 +103,8 @@ function setWeapon(p, key) {
         return;
     }
 
-    // 枪械分支
-    const w = WEAPONS[key];
+        // 枪械分支
+    const w = window.getWeaponConfig(key);
     if (!w) return;
 
     p.weaponKey = key; p.primaryWeaponKey = key; p.weapon = w;
@@ -203,7 +203,7 @@ window.applyWeaponToPlayer = applyWeaponToPlayer;
 function getPlayerHitMeshes(p) {
     if (!p) return [];
     return [
-        p.head, p.body, p.visor, p.pack,
+        p.head, p.body, p.visor, 
         p.legL, p.legR, p.footL, p.footR,
         p.armLUp, p.armLLow, p.armRUp, p.armRLow,
         p.handL, p.handR
@@ -225,10 +225,6 @@ function makePlayer(id, color, spawn, weaponKey) {
     const visor = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.09, 0.05), DARK_MAT);
     visor.position.set(0, 1.70, -0.17);
     visor.userData.part = 'head';
-
-    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.44, 0.16), DARK_MAT);
-    pack.position.set(0, 1.24, 0.24);
-    pack.userData.part = 'body';
 
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.62, 0.32), mat);
     body.position.y = 1.23;
@@ -275,7 +271,7 @@ function makePlayer(id, color, spawn, weaponKey) {
     light.position.set(0.26, 1.3, -0.85);
 
     g.add(
-        body, head, visor, pack,
+        body, head, visor, 
         legL, legR, footL, footR,
         armLUp, armLLow, armRUp, armRLow,
         handL, handR,
@@ -356,7 +352,7 @@ function makePlayer(id, color, spawn, weaponKey) {
         flashIndicator,
         vulnIndicator,
 
-        head, body, visor, pack,
+        head, body, visor, 
         legL, legR, footL, footR,
         armLUp, armLLow, armRUp, armRLow,
         handL, handR,

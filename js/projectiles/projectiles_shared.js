@@ -73,3 +73,39 @@ function createThrownProjectileMesh(kind) {
 // 共享临时四元数（供 updateSmokes / updateFlashes 使用）
 // ============================================================
 const _projQuat = new THREE.Quaternion();
+
+// ============================================================
+// ★ 投掷物地形碰撞修正（仅对房主/单机生效）
+//   如果投掷物掉到沙子高度以下，强行拉回表面并反弹
+// ============================================================
+function resolveProjectileTerrain(s) {
+    if (typeof window.terrainHeightFn !== 'function') return;
+    if (!s.body) return;
+    
+    // 罐子的半径大概 0.09，为了安全给 0.12 的容差
+    const RADIUS = 0.12; 
+    
+    // 获取当前 x,z 坐标处的沙丘高度
+    const terrY = window.terrainHeightFn(s.body.position.x, s.body.position.z);
+    const targetY = terrY + RADIUS;
+    
+    // 如果低于地形高度，强行拉回表面
+    if (s.body.position.y < targetY) {
+        s.body.position.y = targetY;
+        
+        // 如果正在下坠，给一个反弹
+        if (s.body.velocity.y < 0) {
+            const bounce = 0.35; // 弹力系数（0~1）
+            s.body.velocity.y = -s.body.velocity.y * bounce;
+            
+            // 增加地面摩擦
+            s.body.velocity.x *= 0.60;
+            s.body.velocity.z *= 0.60;
+            
+            // 速度极小时直接静止，防止在斜坡上无限抖动
+            if (s.body.velocity.y < 0.5) {
+                s.body.velocity.y = 0;
+            }
+        }
+    }
+}

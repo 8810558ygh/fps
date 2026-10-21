@@ -50,9 +50,7 @@ function resetPlayer(p, now) {
     p.hp = p.maxHp;
     p.armor = ARMOR_MAX;
 
-    const primaryW = (typeof WEAPONS !== 'undefined')
-        ? WEAPONS[p.primaryWeaponKey || 'rifle']
-        : null;
+    const primaryW = window.getWeaponConfig(p.primaryWeaponKey || 'rifle');
     if (primaryW) {
         p.ammo = primaryW.mag;
         p.reserve = primaryW.startReserve;
@@ -301,6 +299,7 @@ function resetMatch() {
     clearAllSmokes();
     clearAllFlashes();
     clearAllBulletHoles();
+    if (typeof clearDamageNumbers === 'function') clearDamageNumbers();
     if (flashOverlayEl) flashOverlayEl.style.opacity = '0';
     document.getElementById('endOverlay').style.display = 'none';
 

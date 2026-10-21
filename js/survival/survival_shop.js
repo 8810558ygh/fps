@@ -2,25 +2,12 @@
 //
 // 规则：
 //   · B 键随时打开/关闭（仅生存模式）
-//   · ★ Esc 不关闭（避免与 pointer lock 冲突）
-//   · ★ 点击面板外的遮罩区域 → 关闭
-//   · 枪：点击解锁或换枪
-//       狂徒 50💰 / 冥驹 50💰 / 判官 40💰 / 奥丁 60💰
-//   · 子弹：狂徒/奥丁 1💰/发，冥驹/判官 2💰/发
-//   · 未解锁的枪不能买对应子弹
-//   · 子弹起卖门槛 = 一个弹匣的全额金币
-//   · ★ 医疗包：30 💰 / 个，上限 1 个
-//
-// 依赖：SurvivalState（survival_state.js）
-//       WEAPONS / setWeapon / p1（player.js）
-//       toast（online_net.js）
+//   · 顶部"属性"按钮：关商店 → 开属性面板
+//   · 点击面板外的遮罩区域 → 关闭
 
 (function () {
     'use strict';
 
-    // ============================================================
-    // 配置
-    // ============================================================
     const GUN_PRICE = {
         rifle:   50,
         sniper:  50,
@@ -28,11 +15,12 @@
         odin:    60,
     };
 
-    const AMMO_PRICE = {
-        rifle:   1,
-        odin:    1,
-        sniper:  2,
-        shotgun: 2,
+    // ★ 新增：定义子弹包（不再依赖弹匣容量计算）
+    const AMMO_PACKS = {
+        rifle:   { amount: 40, cost: 40 }, // 40金币买40发
+        sniper:  { amount: 15, cost: 30 }, // 30金币买15发
+        shotgun: { amount: 15, cost: 30 }, // 30金币买15发
+        odin:    { amount: 50, cost: 50 }, // 50金币买50发
     };
 
     const GUN_NAMES = {
@@ -69,12 +57,31 @@
         el._bgClickBound = true;
 
         el.addEventListener('mousedown', (e) => {
-            // 只有点击到【遮罩本身】才关闭
-            // 点 .shop-panel 内的卡片 / 文字 / 空白，target 都不是 el
             if (e.target === el) {
                 e.preventDefault();
                 e.stopPropagation();
                 closeShop();
+            }
+        });
+    }
+
+    // ============================================================
+    // ★ 属性按钮：关商店 → 开属性面板
+    // ============================================================
+    function _bindStatsBtn() {
+        const btn = document.getElementById('shopStatsBtn');
+        if (!btn || btn._bound) return;
+        btn._bound = true;
+
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            closeShop(true);
+
+            if (typeof StatsPanel !== 'undefined'
+                && typeof StatsPanel.open === 'function') {
+                StatsPanel.open();
             }
         });
     }
@@ -88,6 +95,7 @@
         _open = true;
 
         _bindBackgroundClick();
+        _bindStatsBtn();
 
         if (document.pointerLockElement) document.exitPointerLock();
 
@@ -106,17 +114,19 @@
         if (el) el.style.display = 'flex';
 
         renderShop();
+
         console.log('[shop] 打开');
     }
 
-    function closeShop() {
+    function closeShop(skipLock) {
         if (!_open) return;
         _open = false;
 
         const el = document.getElementById('survivalShop');
         if (el) el.style.display = 'none';
 
-        if (typeof isTouchDevice !== 'undefined' && !isTouchDevice) {
+        if (!skipLock
+            && typeof isTouchDevice !== 'undefined' && !isTouchDevice) {
             if (typeof renderer !== 'undefined' && renderer
                 && typeof running !== 'undefined' && running) {
                 try { renderer.domElement.requestPointerLock(); } catch (e) {}
@@ -198,10 +208,7 @@
 
         for (const key of GUN_ORDER) {
             const unlocked = isUnlocked(key);
-            const price    = AMMO_PRICE[key] || 1;
-            const w        = (typeof WEAPONS !== 'undefined') ? WEAPONS[key] : null;
-            const mag      = w ? w.mag : 0;
-            const fullCost = mag * price;
+            const pack     = AMMO_PACKS[key];
 
             let reserveText = '';
             let subText     = '';
@@ -212,7 +219,8 @@
                 const cur     = getAmmoReserve(key);
                 const maxRes  = getMaxReserve(key);
                 reserveText   = `${cur} / ${maxRes}`;
-                subText       = `一匣 ${mag} 发 · 起卖 ${fullCost} 💰`;
+                // ★ 显示信息修改
+                subText       = `一包 ${pack.amount} 发 · 起卖 ${pack.cost} 💰`;
             }
 
             const card = document.createElement('div');
@@ -282,10 +290,10 @@
     }
 
     // ============================================================
-    // 弹药工具（读取时做双向同步）
+    // 弹药工具
     // ============================================================
     function getMaxReserve(key) {
-        const w = WEAPONS[key];
+        const w = window.getWeaponConfig(key);
         if (!w) return 0;
         return w.reserveMax || (w.mag * 3);
     }
@@ -299,7 +307,7 @@
     function getAmmoReserve(key) {
         if (typeof p1 === 'undefined' || !p1) return 0;
 
-        const w = WEAPONS[key];
+        const w = window.getWeaponConfig(key);
         if (!w || !w.mag) return 0;
 
         if (!p1.weaponAmmo) p1.weaponAmmo = {};
@@ -372,10 +380,9 @@
             return;
         }
 
-        const w = WEAPONS[key];
-        if (!w || !w.mag) return;
+        const pack = AMMO_PACKS[key];
+        if (!pack) return;
 
-        const price  = AMMO_PRICE[key] || 1;
         const maxRes = getMaxReserve(key);
         const curRes = getAmmoReserve(key);
         const space  = maxRes - curRes;
@@ -386,16 +393,17 @@
             return;
         }
 
-        const magPrice = w.mag * price;
-
-        if ((SurvivalState.coins || 0) < magPrice) {
-            toast(`金币不足，起卖 ${magPrice} 💰（一匣 ${w.mag} 发）`);
+        // ★ 判断金币是否足够买一包
+        if ((SurvivalState.coins || 0) < pack.cost) {
+            toast(`金币不足，起卖 ${pack.cost} 💰（一包 ${pack.amount} 发）`);
             if (typeof sEmpty === 'function') sEmpty(1);
             return;
         }
 
-        const wantBuy = Math.min(w.mag, space);
-        const cost    = wantBuy * price;
+        // 计算能买多少发（如果空间不够一包，就买零散的）
+        const wantBuy = Math.min(pack.amount, space);
+        const unitPrice = pack.cost / pack.amount;
+        const cost = Math.round(wantBuy * unitPrice); // 零散购买时按比例扣钱
 
         SurvivalState.coins -= cost;
         _setAmmoReserve(key, curRes + wantBuy);
@@ -419,7 +427,7 @@
         if (typeof p1 !== 'undefined' && p1) {
             if (!p1.weaponAmmo) p1.weaponAmmo = {};
             if (!p1.weaponAmmo[key]) {
-                const w = WEAPONS[key];
+                const w = window.getWeaponConfig(key);
                 if (w && w.mag) {
                     p1.weaponAmmo[key] = {
                         ammo: w.mag,

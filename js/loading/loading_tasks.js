@@ -6,13 +6,6 @@
 
     // ============================================================
     // 完整加载任务表（首局进入 / 换模式）
-    //   mapId : 要加载的地图 id
-    //   mode  : 'ai' | 'survival'
-    //
-    // ★ 生存模式优化：
-    //   · 跳过 smoke / flash 的武器模板与渲染（游戏内不提供）
-    //   · 跳过烟雾云 / 闪光爆发 / 闪光指示器预热
-    //   · 增加僵尸模型预热
     // ============================================================
     function buildGameLoadTasks(mapId, mode) {
         const W = window.LoadingWarmup;
@@ -23,7 +16,6 @@
 
         const isSurvival = (mode === 'survival');
 
-        // ★ 按模式过滤武器列表
         const ALL_WEAPON_TYPES = W.ALL_WEAPON_TYPES;
         const WEAPON_TYPES = isSurvival
             ? ALL_WEAPON_TYPES.filter(t => t !== 'smoke' && t !== 'flash')
@@ -82,7 +74,6 @@
         // ---- 特效 ----
         tasks.push({ name: '预热特效材质', weight: 6, fn: () => W.warmupEffectMaterials() });
 
-        // ★ 生存模式：跳过烟雾云 / 闪光爆发
         if (!isSurvival) {
             tasks.push({ name: '预热烟雾云', weight: 3, fn: () => W.warmupSmokeCloud() });
             tasks.push({ name: '预热闪光爆发', weight: 2, fn: () => W.warmupFlashBurst() });
@@ -90,7 +81,6 @@
 
         tasks.push({ name: '预热油桶爆炸', weight: 3, fn: () => W.warmupExplosion() });
 
-        // ★ 生存模式：跳过闪光指示器
         if (!isSurvival) {
             tasks.push({ name: '预热闪光指示器', weight: 2, fn: () => W.warmupFlashIndicator() });
         }
@@ -139,6 +129,19 @@
                 }
             },
         });
+
+        // ★ 新增：进入沙漠图时预热演奏僵尸
+        if (mapId === 'desert') {
+            tasks.push({
+                name: '预热演奏僵尸',
+                weight: 3,
+                fn: () => {
+                    if (window.PlayerZombie && typeof window.PlayerZombie.warmup === 'function') {
+                        window.PlayerZombie.warmup();
+                    }
+                },
+            });
+        }
 
         tasks.push({
             name: '上传地图纹理',
