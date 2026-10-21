@@ -2,6 +2,7 @@
 document.write(`
     <canvas id="minimap" style="display:none;"></canvas>
     <div id="timer" class="timer">5:00</div>
+    <div id="slowIndicator">🎵 减速 -5%</div>
 
     <div id="scorePanel">
         <div class="sp-title">战 绩</div>
@@ -59,6 +60,7 @@ document.write(`
         <div class="mk-hint">按住左键 · 松开取消</div>
     </div>
 
+    <div id="damageNumbers"></div> 
     <div id="adsReticle"></div>
     <div id="fpsCounter">-- FPS</div>
     <div id="exitBtn" class="exit-btn">退 出</div>

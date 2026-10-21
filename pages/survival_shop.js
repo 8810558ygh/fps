@@ -5,9 +5,12 @@ document.write(`
 
             <div class="shop-topbar">
                 <h2 class="shop-title">🛒 生 存 商 店</h2>
-                <div class="shop-coins">
-                    <span class="coin-icon">💰</span>
-                    <span id="shopCoinCount">0</span>
+                <div class="shop-topbar-right">
+                    <div class="shop-coins">
+                        <span class="coin-icon">💰</span>
+                        <span id="shopCoinCount">0</span>
+                    </div>
+                    <button id="shopStatsBtn" class="shop-stats-btn">⚔ 属 性</button>
                 </div>
             </div>
 
