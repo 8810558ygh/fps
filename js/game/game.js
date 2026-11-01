@@ -151,6 +151,14 @@ function resetPlayer(p, now) {
 }
 
 function startRound(now) {
+    // ★ 新增：每回合开始时，清空油桶伤害统计
+    window.RoundStats = {
+        p1ToBarrel: 0,
+        p2ToBarrel: 0,
+        barrelToP1: 0,
+        barrelToP2: 0
+    };
+    
     roundNumber++;
     clearAllSmokes();
     clearAllFlashes();

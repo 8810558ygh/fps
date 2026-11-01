@@ -43,10 +43,6 @@ const crateMeshes = [];
 const colliders = [];
 window.platforms = [];
 
-// ★ C3：路灯 PointLight 列表
-//   ★ 优化后：不再往里添加任何 light（保留数组本身，兼容 main_loop.js 的遍历）
-window.lampLights = [];
-
 let currentMapGroup = null;
 let currentMapId = null;
 let currentMapDef = null;
@@ -297,9 +293,6 @@ function clearMap() {
     crateMeshes.length = 0;
     colliders.length = 0;
     window.platforms.length = 0;
-
-    // ★ 清空路灯列表（现在永远是空数组，保留兼容）
-    window.lampLights.length = 0;
 
     // ★ 清空油桶注册表
     if (typeof window.clearBarrels === 'function') {

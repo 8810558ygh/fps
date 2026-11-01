@@ -265,22 +265,6 @@ function loop() {
             }
             if (typeof updateXrayVisibility === 'function') updateXrayVisibility();
         }
-
-        if (window.lampLights && window.lampLights.length > 0) {
-            const camPos = p1.cam.position;
-            const lights = window.lampLights;
-            for (let i = 0; i < lights.length; i++) {
-                const L = lights[i];
-                const dx = L.position.x - camPos.x;
-                const dz = L.position.z - camPos.z;
-                L.visible = (dx * dx + dz * dz) < LAMP_CULL_DIST_SQ;
-            }
-        }
-    }
-
-    // ★ 滑索塔警示灯呼吸效果
-    if (typeof updateZiplineTowerLights === 'function') {
-        updateZiplineTowerLights(now);
     }
 
     if (typeof updateDamageNumbers === 'function') updateDamageNumbers();

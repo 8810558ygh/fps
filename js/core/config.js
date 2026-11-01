@@ -48,8 +48,8 @@ const SMOKE = {
     throwSpeed: 20, throwUpBias: 0.35,
     gravity: GRAV,
     bounces: 0.35, friction: 0.55,
-    fuseMs: 5000, growMs: 1500, durationMs: 15000,
-    radius: 4.2, verticalRadius: 4.6, centerHeight: 3.8,
+    fuseMs: 5000, growMs: 1200, durationMs: 15000,
+    radius: 6.2, verticalRadius: 6.8, centerHeight: 4.0,
     cooldownMs: 800, maxPerRound: 1,
     speedMul: 1.0, scope: false, adsSpeedMul: 1.0,
     mag: 0, startReserve: 0, reloadMs: 0

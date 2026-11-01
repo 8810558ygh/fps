@@ -16,7 +16,7 @@ registerMap('battlefield', {
         // 获取 HD_UTIL（用于生成圆角汽车和反光）
         // ----------------------------------------------------
         const U = window.HD_UTIL;
-        const envMap = U ? U.buildEnvMap({ key: 'rifle_env' }) : null; // 复用步枪的环境贴图
+        const envMap = U ? U.buildEnvMap({ key: 'rifle_env', width: 512, height: 256 }) : null; // 复用步枪的环境贴图
 
         // ---- 外围墙 ----
         solid(0, -(ARENA + 0.5), ARENA * 2 + 2, 4.5, 1, concreteTex);

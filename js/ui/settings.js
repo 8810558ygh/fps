@@ -1,4 +1,4 @@
-// ===== js/settings.js – 设置系统（准星 + 灵敏度 + 画面） =====
+// ===== js/ui/settings.js – 设置系统（准星 + 灵敏度 + 画面） =====
 // 入口：大厅右上角齿轮按钮
 // 关闭：设置页左上角"← 返回"
 // 无快捷键，纯鼠标点击
@@ -31,6 +31,7 @@
         },
         graphics: {
             shadows: true,
+            zombieMaxAlive: 20,      // ★ 只保留这一项（池容量固定 50）
         },
     };
 
@@ -133,17 +134,13 @@
 
         const want = !!SETTINGS.graphics.shadows;
 
-        // 避免重复应用
         if (!force && _lastShadowsApplied === want) return;
 
         const prev = renderer.shadowMap.enabled;
         _lastShadowsApplied = want;
 
-        // 设置新值
         renderer.shadowMap.enabled = want;
 
-        // 若切换 → 需要重新编译所有材质
-        // （因为材质 shader 里是否包含阴影采样，由 shadowMap.enabled 决定）
         if (prev !== want) {
             _forceRecompileMaterials();
             if (want) renderer.shadowMap.needsUpdate = true;
@@ -152,9 +149,19 @@
         console.log('[settings] 阴影:', want ? '开' : '关');
     }
 
+    // ============================================================
+    // ★ 应用僵尸设置（只应用同屏上限，池容量固定 50）
+    // ============================================================
+    function applyZombieSettings() {
+        const g = SETTINGS.graphics;
+        if (typeof window.setSurvivalMaxAlive === 'function') {
+            window.setSurvivalMaxAlive(g.zombieMaxAlive);
+        }
+    }
+    window.SETTINGS_ApplyZombie = applyZombieSettings;
+
     // 遍历场景 + 武器模板，让所有材质重新编译
     function _forceRecompileMaterials() {
-        // ---- 1. 场景中所有 mesh 的材质 ----
         if (typeof scene !== 'undefined' && scene) {
             scene.traverse(o => {
                 if (!o.isMesh && !o.isPoints && !o.isLine) return;
@@ -167,8 +174,6 @@
             });
         }
 
-        // ---- 2. ★ 武器 HD 模板的材质（不在 scene 里）----
-        //   否则换枪时从模板 clone 的材质会现场编译 shader → 卡
         if (typeof window.markAllWeaponTemplatesDirty === 'function') {
             try { window.markAllWeaponTemplatesDirty(); } catch (e) {}
         }
@@ -302,6 +307,19 @@
             if (val) val.textContent = e.target.checked ? '开' : '关';
             applyGraphics(true);
         });
+
+        // ★ 同屏僵尸上限（池容量固定 50，无需联动）
+        const gfxZombieMaxAlive    = $('gfxZombieMaxAlive');
+        const gfxZombieMaxAliveVal = $('gfxZombieMaxAliveVal');
+
+        if (gfxZombieMaxAlive) {
+            gfxZombieMaxAlive.addEventListener('input', () => {
+                const v = parseInt(gfxZombieMaxAlive.value, 10);
+                SETTINGS.graphics.zombieMaxAlive = v;
+                if (gfxZombieMaxAliveVal) gfxZombieMaxAliveVal.textContent = v;
+                applyZombieSettings();
+            });
+        }
     }
 
     // ============================================================
@@ -344,6 +362,10 @@
         if ($('gfxShadows'))    $('gfxShadows').checked = !!g.shadows;
         if ($('gfxShadowsVal')) $('gfxShadowsVal').textContent = g.shadows ? '开' : '关';
 
+        // ★ 同屏僵尸上限
+        if ($('gfxZombieMaxAlive'))    $('gfxZombieMaxAlive').value    = g.zombieMaxAlive;
+        if ($('gfxZombieMaxAliveVal')) $('gfxZombieMaxAliveVal').textContent = g.zombieMaxAlive;
+
         applyCrosshair();
     }
 
@@ -364,7 +386,6 @@
         refreshRuntime();
         applyCrosshair();
 
-        // 打开：点击齿轮按钮
         const btn = document.getElementById('settingsBtn');
         if (btn) {
             btn.addEventListener('click', (e) => {
@@ -374,11 +395,9 @@
             });
         }
 
-        // 关闭
         const closeBtn = document.getElementById('settingsCloseBtn');
         if (closeBtn) closeBtn.addEventListener('click', closePanel);
 
-        // 恢复默认
         const resetBtn = document.getElementById('settingsResetBtn');
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
@@ -386,6 +405,7 @@
                 refreshRuntime();
                 applyCrosshair();
                 applyGraphics(true);
+                applyZombieSettings();
                 syncUIFromSettings();
                 save();
                 if (typeof toast === 'function') toast('已恢复默认设置');
@@ -397,7 +417,6 @@
         toggleTouchUI();
         syncUIFromSettings();
 
-        // 启动时立即应用一次画面设置
         const tryApply = (attempt) => {
             if (typeof renderer !== 'undefined' && renderer) {
                 applyGraphics(true);
@@ -406,6 +425,8 @@
             }
         };
         tryApply(0);
+
+        applyZombieSettings();
 
         console.log('[settings] 设置系统已就绪（准星 + 灵敏度 + 画面）');
     }

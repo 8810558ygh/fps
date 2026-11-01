@@ -45,5 +45,3 @@ renderer.shadowMap.needsUpdate = true;
 window.requestShadowUpdate = function () {
     renderer.shadowMap.needsUpdate = true;
 };
-
-const LAMP_CULL_DIST_SQ = 22 * 22;

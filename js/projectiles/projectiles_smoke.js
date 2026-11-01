@@ -38,25 +38,34 @@ function _findSmokeById(id) {
 // ============================================================
 function createSmokeCloud(pos, radius, verticalRadius, centerHeight) {
     const group = new THREE.Group();
-    // ★ 修改：加上 pos.y，让烟雾云基于起爆点高度生成
     group.position.set(pos.x, pos.y + centerHeight, pos.z);
 
     const meshList = [];
+    
+    // ★ 1. 把所有层级的不透明度大幅拉高，颜色加深，让透光率降到极低
     const layers = [
-        { scale: 1.18, opacity: 0.22, color: 0xd0dad0, order: 1 },
-        { scale: 1.00, opacity: 0.52, color: 0xb6c4b6, order: 2 },
-        { scale: 0.84, opacity: 0.80, color: 0x9aa89a, order: 3 },
-        { scale: 0.62, opacity: 0.97, color: 0x84928a, order: 4 },
+        { scale: 1.24, opacity: 0.65, color: 0x8c968c, order: 1 }, // 从 0.28 拉到 0.65
+        { scale: 1.06, opacity: 0.88, color: 0x768076, order: 2 }, // 从 0.58 拉到 0.88
+        { scale: 0.90, opacity: 0.96, color: 0x626c62, order: 3 }, // 从 0.82 拉到 0.96
+        { scale: 0.72, opacity: 0.99, color: 0x4e564e, order: 4 },
+        { scale: 0.52, opacity: 1.00, color: 0x404840, order: 5 }, // 最内层完全不透光
     ];
     const vScale = verticalRadius / radius;
 
+    function createSmokeMat(color) {
+        return new THREE.MeshBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: 0,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+    }
+
+    // 1. 外层球壳
     for (const L of layers) {
         const geo = new THREE.SphereGeometry(radius * L.scale, 24, 18);
-        const mat = new THREE.MeshLambertMaterial({
-            color: L.color, transparent: true, opacity: 0,
-            side: THREE.DoubleSide, depthWrite: false,
-            emissive: 0x4a5a4a, emissiveIntensity: 0.22
-        });
+        const mat = createSmokeMat(L.color);
         const mesh = new THREE.Mesh(geo, mat);
         mesh.scale.y = vScale;
         mesh.renderOrder = L.order;
@@ -65,30 +74,48 @@ function createSmokeCloud(pos, radius, verticalRadius, centerHeight) {
         meshList.push(mesh);
     }
 
-    for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2 + Math.random() * 0.6;
-        const rFactor = 0.25 + Math.random() * 0.45;
+    // 2. 外围凸起（★ 不透明度从 0.72 拉高到 0.90 以上，确保边缘缝隙不漏人）
+    for (let i = 0; i < 14; i++) {
+        const a = (i / 14) * Math.PI * 2 + Math.random() * 0.5;
+        const rFactor = 0.30 + Math.random() * 0.55;
         const dist = radius * rFactor;
-        const subR = radius * (0.28 + Math.random() * 0.22);
+        const subR = radius * (0.32 + Math.random() * 0.28);
         const geo = new THREE.SphereGeometry(subR, 14, 10);
-        const mat = new THREE.MeshLambertMaterial({
-            color: 0x8c9a8e, transparent: true, opacity: 0,
-            side: THREE.DoubleSide, depthWrite: false,
-            emissive: 0x4a5a4a, emissiveIntensity: 0.2
-        });
+        const mat = createSmokeMat(0x6a746a);
         const m = new THREE.Mesh(geo, mat);
         m.position.set(
             Math.cos(a) * dist,
-            (Math.random() - 0.5) * verticalRadius * 0.85,
+            (Math.random() - 0.5) * verticalRadius * 0.9,
             Math.sin(a) * dist
         );
-        m.scale.set(0.85 + Math.random() * 0.3, 0.9 + Math.random() * 0.35, 0.85 + Math.random() * 0.3);
+        m.scale.set(0.8 + Math.random() * 0.45, 0.85 + Math.random() * 0.5, 0.8 + Math.random() * 0.45);
         m.renderOrder = 10 + i;
-        m.userData.baseOpacity = 0.55 + Math.random() * 0.25;
+        m.userData.baseOpacity = 0.90 + Math.random() * 0.10; // ★ 拉满
         group.add(m);
         meshList.push(m);
     }
 
+    // ★ 3. 内部填充（数量从 16 增加到 24，把球心彻底塞满）
+    for (let i = 0; i < 24; i++) {
+        const r = radius * (Math.random() * 0.75);
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos((Math.random() * 2) - 1);
+        const x = r * Math.sin(phi) * Math.cos(theta);
+        const y = r * Math.cos(phi) * vScale;
+        const z = r * Math.sin(phi) * Math.sin(theta);
+        
+        const subR = radius * (0.3 + Math.random() * 0.25);
+        const geo = new THREE.SphereGeometry(subR, 12, 8);
+        const mat = createSmokeMat(0x4e564e);
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set(x, y, z);
+        m.renderOrder = 30 + i;
+        m.userData.baseOpacity = 0.95 + Math.random() * 0.05; // ★ 拉满
+        group.add(m);
+        meshList.push(m);
+    }
+
+    group.userData.allSmokeMats = []; // 用于统一的显隐管理
     group.userData.layers = meshList;
     return group;
 }

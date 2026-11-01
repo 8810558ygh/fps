@@ -1,9 +1,11 @@
 // ===== js/survival/zombie.js – 僵尸系统 =====
 //
 // 模型策略：
-//   · 所有类型都使用 js/survival/zombies/zombie_normal_model.js
+//   · 所有类型统一使用 js/survival/zombies/zombie_normal_model.js
 //   · 通过 sizeMul 缩放：normal 1.0 / small 0.7 / big 2.0
-//   · legacy 方块模型仅在无法加载新模型时作为回退
+//
+// 池容量：固定 50（不再运行时调节）
+// 同屏上限：SurvivalState.MAX_ALIVE_ZOMBIES（通过设置页调节，5~45）
 
 const ZOMBIE_TYPES = {
 
@@ -17,9 +19,6 @@ const ZOMBIE_TYPES = {
         attackCooldown: 1000,
         jumpV: 11,
         sizeMul: 1.0,
-        color: 0x4a6a3a,
-        headColor: 0x5a7a4a,
-        darkColor: 0x2a3a2a,
         ai: null,
     },
 
@@ -33,9 +32,6 @@ const ZOMBIE_TYPES = {
         attackCooldown: 800,
         jumpV: 13,
         sizeMul: 0.7,
-        color: 0x8a3a3a,
-        headColor: 0xaa4a4a,
-        darkColor: 0x3a1a1a,
         ai: null,
     },
 
@@ -49,9 +45,6 @@ const ZOMBIE_TYPES = {
         attackCooldown: 1400,
         jumpV: 8,
         sizeMul: 2.0,
-        color: 0x2a3a4a,
-        headColor: 0x3a4a5a,
-        darkColor: 0x1a2a3a,
         ai: null,
     },
 };
@@ -61,7 +54,11 @@ const ZOMBIE_ELITE_TYPES = ['small', 'big'];
 const ZOMBIE_JUMP_COOLDOWN    = 900;
 const ZOMBIE_STUCK_THRESHOLD  = 0.3;
 const ZOMBIE_STUCK_MOVE_RATIO = 0.3;
-const ZOMBIE_POOL_SIZE        = 32;
+
+// ============================================================
+// 池容量（固定 50）
+// ============================================================
+const ZOMBIE_POOL_SIZE = 50;
 
 const ZOMBIE_BASE_HEIGHT = 1.8;
 const ZOMBIE_BASE_EYE_H  = 1.6;
@@ -71,12 +68,7 @@ const ZOMBIE_SEPARATION_RADIUS   = 0.50;
 const ZOMBIE_SEPARATION_STRENGTH = 0.55;
 
 // ============================================================
-// ★ 无限模式属性加成
-//
-//   每多循环一轮（endlessLoop +1）：
-//     · 血量  ×(1 + 0.15 * loop)
-//     · 攻击  ×(1 + 0.08 * loop)
-//     · 金币  ×(1 + 0.20 * loop)
+// 无限模式属性加成
 // ============================================================
 function _getEndlessLoop() {
     return (typeof SurvivalState !== 'undefined' && SurvivalState)
@@ -98,11 +90,6 @@ function _getEndlessCoinMul() {
 
 // ============================================================
 // 波次生成
-//
-//   wave：本轮内的"等效全局波次"（battlefield 1~5, desert 6~10）
-//   extraNormals：无限模式额外加普通僵尸的数量
-//
-//   ★ 演奏僵尸：只占第一个精英位，无限模式 + 本波 ≥ 3 波 + 25% 概率
 // ============================================================
 function buildWaveComposition(wave, extraNormals) {
     const total  = 3 + wave * 2;
@@ -116,9 +103,7 @@ function buildWaveComposition(wave, extraNormals) {
         ? ZOMBIE_ELITE_TYPES
         : ['small'];
 
-    // ============================================================
-    // ★ 演奏僵尸：只占第一个精英位，每波最多 1 只
-    // ============================================================
+    // 演奏僵尸：只占第一个精英位，每波最多 1 只
     let musicianSpawned = false;
 
     for (let i = 0; i < elites; i++) {
@@ -139,166 +124,96 @@ function buildWaveComposition(wave, extraNormals) {
 }
 
 // ============================================================
-// legacy 方块僵尸模型（仅作回退）
-// ============================================================
-function _makeLegacyZombieMesh() {
-    const matBody = new THREE.MeshLambertMaterial({ color: 0x4a6a3a });
-    const matDark = new THREE.MeshLambertMaterial({ color: 0x2a3a2a });
-    const matHead = new THREE.MeshLambertMaterial({ color: 0x5a7a4a });
-
-    const g = new THREE.Group();
-
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.70, 0.30), matBody);
-    body.position.y = 1.05;
-    body.userData.part = 'zombie_body';
-
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.30, 0.30), matHead);
-    head.position.y = 1.60;
-    head.userData.part = 'zombie_head';
-
-    const armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.55, 0.14), matBody);
-    armL.position.set(-0.32, 1.10, 0);
-    armL.userData.part = 'zombie_body';
-
-    const armR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.55, 0.14), matBody);
-    armR.position.set(0.32, 1.10, 0);
-    armR.userData.part = 'zombie_body';
-
-    const legL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.70, 0.20), matDark);
-    legL.position.set(-0.11, 0.35, 0);
-    legL.userData.part = 'zombie_leg';
-
-    const legR = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.70, 0.20), matDark);
-    legR.position.set(0.11, 0.35, 0);
-    legR.userData.part = 'zombie_leg';
-
-    g.add(body, head, armL, armR, legL, legR);
-
-    body.castShadow = true;
-    head.castShadow = true;
-    armL.castShadow = false;
-    armR.castShadow = false;
-    legL.castShadow = false;
-    legR.castShadow = false;
-
-    g.traverse(o => { if (o.isMesh) o.receiveShadow = true; });
-
-    return { group: g, body, head, armL, armR, legL, legR, pivots: null };
-}
-
-// ============================================================
 // 池
 // ============================================================
 const _zombiePool = [];
-let _zombiePoolInited = false;
 
-function _initZombiePool() {
-    if (_zombiePoolInited) return;
-    if (typeof scene === 'undefined' || !scene) return;
-    _zombiePoolInited = true;
+// ============================================================
+// 创建一个僵尸实例（只使用新模型）
+// ============================================================
+function _createOneZombie(index) {
+    const partsNormal = window.ZOMBIE_MODEL_NORMAL.build();
 
-    const hasNormalModel = !!(window.ZOMBIE_MODEL_NORMAL
-        && typeof window.ZOMBIE_MODEL_NORMAL.build === 'function');
+    partsNormal.group.visible = false;
+    scene.add(partsNormal.group);
 
-    for (let i = 0; i < ZOMBIE_POOL_SIZE; i++) {
-        const partsLegacy = _makeLegacyZombieMesh();
+    const hitNormal = [
+        partsNormal.head, partsNormal.body,
+        partsNormal.armL, partsNormal.armR,
+        partsNormal.legL, partsNormal.legR,
+    ];
 
-        let partsNormal = null;
-        if (hasNormalModel) {
-            try {
-                partsNormal = window.ZOMBIE_MODEL_NORMAL.build();
-            } catch (e) {
-                console.warn('[zombie] 新模型构建失败，回退 legacy:', e);
-                partsNormal = null;
-            }
-        }
+    const zombie = {
+        _isZombie: true,
+        id: 100 + index,
+        poolIndex: index,
+        alive: false,
+        type: 'normal',
+        hp: 0,
+        maxHp: 0,
+        pos: new THREE.Vector3(0, 0, 0),
+        yaw: 0,
+        height: ZOMBIE_BASE_HEIGHT,
+        eyeH: ZOMBIE_BASE_EYE_H,
+        deadUntil: 0,
+        invulnUntil: 0,
+        armor: 0,
+        nextAttackTime: 0,
 
-        if (partsNormal) {
-            partsNormal.group.visible = false;
-            scene.add(partsNormal.group);
-        }
-        partsLegacy.group.visible = false;
-        scene.add(partsLegacy.group);
+        mesh:       partsNormal.group,
+        body:       partsNormal.body,
+        head:       partsNormal.head,
+        armL:       partsNormal.armL,
+        armR:       partsNormal.armR,
+        legL:       partsNormal.legL,
+        legR:       partsNormal.legR,
+        hitMeshes:  hitNormal,
 
-        const hitLegacy = [
-            partsLegacy.head, partsLegacy.body,
-            partsLegacy.armL, partsLegacy.armR,
-            partsLegacy.legL, partsLegacy.legR,
-        ];
+        _partsNormal: partsNormal,
+        _pivots:      partsNormal.pivots,
+        _animPhase:   0,
+        _headPhase:   0,
 
-        let hitNormal = null;
-        if (partsNormal) {
-            hitNormal = [
-                partsNormal.head, partsNormal.body,
-                partsNormal.armL, partsNormal.armR,
-                partsNormal.legL, partsNormal.legR,
-            ];
-        }
+        vy: 0,
+        prevY: 0,
+        onGround: true,
+        _vyBeforeLand: 0,
 
-        const zombie = {
-            _isZombie: true,
-            id: 100 + i,
-            poolIndex: i,
-            alive: false,
-            type: 'normal',
-            hp: 0,
-            maxHp: 0,
-            pos: new THREE.Vector3(0, 0, 0),
-            yaw: 0,
-            height: ZOMBIE_BASE_HEIGHT,
-            eyeH: ZOMBIE_BASE_EYE_H,
-            deadUntil: 0,
-            invulnUntil: 0,
-            armor: 0,
-            nextAttackTime: 0,
+        _stuckTime: 0,
+        _nextJumpAt: 0,
 
-            mesh: partsLegacy.group,
-            body: partsLegacy.body,
-            head: partsLegacy.head,
-            armL: partsLegacy.armL,
-            armR: partsLegacy.armR,
-            legL: partsLegacy.legL,
-            legR: partsLegacy.legR,
-            hitMeshes: hitLegacy,
+        _nextGrowlAt: 0,
 
-            _partsNormal: partsNormal,
-            _partsLegacy: partsLegacy,
-            _hitNormal: hitNormal,
-            _hitLegacy: hitLegacy,
-            _pivots: null,
-            _animStyle: 'legacy',
-            _animPhase: 0,
-            _headPhase: 0,
+        _aiState: {},
+    };
 
-            vy: 0,
-            prevY: 0,
-            onGround: true,
-            _vyBeforeLand: 0,
+    for (const m of hitNormal) m.userData.zombieRef = zombie;
 
-            _stuckTime: 0,
-            _nextJumpAt: 0,
-
-            _nextGrowlAt: 0,
-
-            _aiState: {},
-        };
-
-        for (const m of hitLegacy) m.userData.zombieRef = zombie;
-        if (hitNormal) {
-            for (const m of hitNormal) m.userData.zombieRef = zombie;
-        }
-
-        _zombiePool.push(zombie);
-    }
-
-    console.log('[zombie] 僵尸池已初始化:', ZOMBIE_POOL_SIZE,
-                '，新模型:', hasNormalModel ? '可用' : '不可用');
+    return zombie;
 }
 
-window.initZombiePool = function () { _initZombiePool(); };
+// ============================================================
+// 确保池已建满（幂等：已建满时直接 return）
+// ============================================================
+function _ensureZombiePoolSize() {
+    if (_zombiePool.length >= ZOMBIE_POOL_SIZE) return;
+    if (typeof scene === 'undefined' || !scene) return;
 
+    while (_zombiePool.length < ZOMBIE_POOL_SIZE) {
+        _zombiePool.push(_createOneZombie(_zombiePool.length));
+    }
+
+    console.log('[zombie] 僵尸池已就绪：', ZOMBIE_POOL_SIZE, '个');
+}
+
+// 兼容旧名字（loading_warmup.js 调的是 window.initZombiePool）
+window.initZombiePool = function () { _ensureZombiePoolSize(); };
+
+// ============================================================
+// 从池中借一个空闲僵尸
+// ============================================================
 function _acquireZombie() {
-    _initZombiePool();
+    _ensureZombiePoolSize();
     for (let i = 0; i < _zombiePool.length; i++) {
         if (!_zombiePool[i].alive) return _zombiePool[i];
     }
@@ -306,64 +221,8 @@ function _acquireZombie() {
 }
 
 // ============================================================
-// 切换僵尸模型
+// 体型
 // ============================================================
-function _switchZombieModel(zombie, type) {
-    if (zombie._partsNormal) {
-        if (zombie._partsLegacy.group.visible) zombie._partsLegacy.group.visible = false;
-        if (!zombie._partsNormal.group.visible) zombie._partsNormal.group.visible = true;
-
-        zombie.mesh  = zombie._partsNormal.group;
-        zombie.body  = zombie._partsNormal.body;
-        zombie.head  = zombie._partsNormal.head;
-        zombie.armL  = zombie._partsNormal.armL;
-        zombie.armR  = zombie._partsNormal.armR;
-        zombie.legL  = zombie._partsNormal.legL;
-        zombie.legR  = zombie._partsNormal.legR;
-        zombie.hitMeshes = zombie._hitNormal;
-        zombie._pivots = zombie._partsNormal.pivots;
-        zombie._animStyle = 'normal';
-        return;
-    }
-
-    if (zombie._partsNormal && zombie._partsNormal.group.visible) {
-        zombie._partsNormal.group.visible = false;
-    }
-    if (!zombie._partsLegacy.group.visible) zombie._partsLegacy.group.visible = true;
-
-    zombie.mesh  = zombie._partsLegacy.group;
-    zombie.body  = zombie._partsLegacy.body;
-    zombie.head  = zombie._partsLegacy.head;
-    zombie.armL  = zombie._partsLegacy.armL;
-    zombie.armR  = zombie._partsLegacy.armR;
-    zombie.legL  = zombie._partsLegacy.legL;
-    zombie.legR  = zombie._partsLegacy.legR;
-    zombie.hitMeshes = zombie._hitLegacy;
-    zombie._pivots = null;
-    zombie._animStyle = 'legacy';
-}
-
-// ============================================================
-// 颜色 / 体型
-// ============================================================
-function _applyZombieColors(zombie, cfg) {
-    if (zombie._animStyle === 'normal') return;
-
-    const bodyColor = (cfg.color !== undefined) ? cfg.color : 0x4a6a3a;
-    const headColor = (cfg.headColor !== undefined) ? cfg.headColor : bodyColor;
-    const darkColor = (cfg.darkColor !== undefined) ? cfg.darkColor : 0x2a3a2a;
-
-    if (zombie.body && zombie.body.material) {
-        zombie.body.material.color.setHex(bodyColor);
-    }
-    if (zombie.head && zombie.head.material) {
-        zombie.head.material.color.setHex(headColor);
-    }
-    if (zombie.legL && zombie.legL.material) {
-        zombie.legL.material.color.setHex(darkColor);
-    }
-}
-
 function _applyZombieSize(zombie, cfg) {
     const sizeMul = (cfg.sizeMul !== undefined) ? cfg.sizeMul : 1.0;
 
@@ -378,7 +237,7 @@ function _applyZombieSize(zombie, cfg) {
 function spawnZombie(x, z, wave, type) {
     type = type || 'normal';
 
-    // ★ 演奏僵尸：走独立路径，不进池
+    // 演奏僵尸：走独立路径，不进池
     if (type === 'musician') {
         if (typeof PlayerZombie !== 'undefined' && PlayerZombie.spawn) {
             return PlayerZombie.spawn(x, z);
@@ -398,7 +257,7 @@ function spawnZombie(x, z, wave, type) {
     const groundY = (typeof terrainGroundAt === 'function')
         ? terrainGroundAt(x, z) : 0;
 
-    // ★ 无限模式血量加成
+    // 无限模式血量加成
     const hpMul = _getEndlessHpMul();
     const finalHp = Math.round(cfg.hp * hpMul);
 
@@ -420,7 +279,7 @@ function spawnZombie(x, z, wave, type) {
     zombie._stuckTime = 0;
     zombie._nextJumpAt = 0;
 
-    // ★ 叫声调度初始化（随机错开 0~2 秒）
+    // 叫声调度初始化（随机错开 0~2 秒）
     if (window.ZombieSounds && typeof window.ZombieSounds.initSchedule === 'function') {
         window.ZombieSounds.initSchedule(zombie, performance.now());
     } else {
@@ -431,11 +290,10 @@ function spawnZombie(x, z, wave, type) {
     zombie._animPhase = Math.random() * Math.PI * 2;
     zombie._headPhase = Math.random() * Math.PI * 2;
 
-    _switchZombieModel(zombie, type);
-
-    _applyZombieColors(zombie, cfg);
     _applyZombieSize(zombie, cfg);
 
+    // ★ 关键：显示（原来由 _switchZombieModel 负责，现在这里补上）
+    zombie.mesh.visible = true;
     zombie.mesh.position.copy(zombie.pos);
     zombie.mesh.rotation.y = zombie.yaw;
 
@@ -470,7 +328,7 @@ function updateZombie(zombie, dt, now) {
 
     const cfg = ZOMBIE_TYPES[zombie.type] || ZOMBIE_TYPES.normal;
 
-    // ★ 周期性叫声
+    // 周期性叫声
     if (window.ZombieSounds && typeof window.ZombieSounds.tick === 'function') {
         window.ZombieSounds.tick(zombie, now);
     }
@@ -493,7 +351,6 @@ function updateZombie(zombie, dt, now) {
 // 僵尸动画
 // ============================================================
 function _updateZombieAnimation(zombie, dt, now, cfg) {
-    if (zombie._animStyle !== 'normal') return;
     const pivots = zombie._pivots;
     if (!pivots) return;
 
@@ -727,12 +584,12 @@ function _zombieAttack(zombie, target, cfg) {
 
     const now = performance.now();
 
-    // ★ 攻击时急叫
+    // 攻击时急叫
     if (window.ZombieSounds && typeof window.ZombieSounds.triggerAttack === 'function') {
         window.ZombieSounds.triggerAttack(zombie, now);
     }
 
-    // ★ 无限模式攻击加成
+    // 无限模式攻击加成
     let rawDmg = cfg.attackDamage * _getEndlessDmgMul();
 
     if (typeof window._applyVulnerabilityBonus === 'function') {
@@ -806,9 +663,7 @@ function _killZombie(zombie, from) {
     zombie.alive = false;
     zombie.hp = 0;
 
-    if (zombie._partsNormal) zombie._partsNormal.group.visible = false;
-    if (zombie._partsLegacy) zombie._partsLegacy.group.visible = false;
-
+    zombie.mesh.visible = false;
     zombie.mesh.scale.setScalar(1);
     zombie.height = ZOMBIE_BASE_HEIGHT;
     zombie.eyeH   = ZOMBIE_BASE_EYE_H;
@@ -856,17 +711,16 @@ function _killZombie(zombie, from) {
         }
     }
 
-// 弹药掉落
+    // 弹药掉落
     if (getZombiesAliveCount() === 0
         && typeof SurvivalState !== 'undefined'
         && SurvivalState
         && SurvivalState.wave > 0) {
 
-        // ★ 计算全局波次（战场1-5，沙漠6-10，循环累加）
         const baseGlobalWave = SurvivalState.mapIndex * SurvivalState.maxWaves + SurvivalState.wave;
         const globalWave = SurvivalState.endlessLoop * (SurvivalState.maps.length * SurvivalState.maxWaves) + baseGlobalWave;
-        
-        // ★ 只在每一轮的第 3 波和第 8 波掉落
+
+        // 只在每一轮的第 3 波和第 8 波掉落
         const isDropWave = (globalWave % 10 === 3) || (globalWave % 10 === 8);
 
         if (isDropWave) {
@@ -875,7 +729,6 @@ function _killZombie(zombie, from) {
 
             if (queueLen === 0 && typeof spawnAmmoDrop === 'function') {
                 spawnAmmoDrop(zombie.pos.x, zombie.pos.y, zombie.pos.z);
-                // 可选：在屏幕上提示一下
                 if (typeof feed === 'function' && typeof p1 !== 'undefined' && p1) {
                     feed(p1, `💛 精英波清空！掉落弹药箱`);
                 }
@@ -892,7 +745,7 @@ function getZombiesAliveCount() {
     for (let i = 0; i < _zombiePool.length; i++) {
         if (_zombiePool[i].alive) n++;
     }
-    // ★ 演奏僵尸也算活着的僵尸（卡波用）
+    // 演奏僵尸也算活着的僵尸（卡波用）
     if (typeof PlayerZombie !== 'undefined'
         && PlayerZombie.active
         && !PlayerZombie.active.dead) {
@@ -910,8 +763,7 @@ function clearAllZombies() {
         const z = _zombiePool[i];
         z.alive = false;
         z.hp = 0;
-        if (z._partsNormal) z._partsNormal.group.visible = false;
-        if (z._partsLegacy) z._partsLegacy.group.visible = false;
+        z.mesh.visible = false;
         z.mesh.scale.setScalar(1);
         z.height = ZOMBIE_BASE_HEIGHT;
         z.eyeH   = ZOMBIE_BASE_EYE_H;

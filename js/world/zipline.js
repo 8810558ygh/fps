@@ -1,7 +1,6 @@
 // ===== js/zipline.js – 滑索系统（沙漠地图专用） =====
 
 const ZIPLINES = [];
-const _ziplineTowers = [];
 
 const ZIPLINE_MOUNT_RADIUS  = 4.5;    // 水平挂载半径
 const ZIPLINE_SPEED         = 12;     // 滑行速度 m/s
@@ -62,20 +61,7 @@ function buildZiplineTower(parent, x, topY, z, baseY) {
     top.receiveShadow = true;
     group.add(top);
 
-    // 警示灯球体
-    const lightGeo = new THREE.SphereGeometry(0.28, 12, 8);
-    const lightMat = new THREE.MeshBasicMaterial({ color: 0xff3333 });
-    const lightBall = new THREE.Mesh(lightGeo, lightMat);
-    lightBall.position.set(x, topY + 0.8, z);
-    group.add(lightBall);
-    group.userData.warningLight = lightBall;
-
-    // ★ 已移除 PointLight（原来塔顶 4 个 PointLight 会参与全局 shader 光照循环，
-    //   即使 distance=12 且远离玩家，片元仍会为它算一遍）
-    // ★ 视觉上的红色警示灯由上方 MeshBasicMaterial 红球保留，效果不变
-
     parent.add(group);
-    _ziplineTowers.push(group);
     return group;
 }
 
@@ -344,19 +330,6 @@ function updateZiplinePrompt(p) {
 }
 
 // ============================================================
-// 塔警示灯呼吸效果（每帧调用）
-// ============================================================
-function updateZiplineTowerLights(now) {
-    const pulse = 0.5 + 0.5 * Math.sin(now * 0.003);
-    for (let i = 0; i < _ziplineTowers.length; i++) {
-        const g = _ziplineTowers[i];
-        if (!g.userData) continue;
-        const l = g.userData.light;
-        if (l) l.intensity = 0.3 + pulse * 0.8;
-    }
-}
-
-// ============================================================
 // 清空（切图时由 scene.js 调用）
 // ============================================================
 function clearZiplines() {
@@ -364,7 +337,6 @@ function clearZiplines() {
         ZIPLINES[i].mesh = null;
     }
     ZIPLINES.length = 0;
-    _ziplineTowers.length = 0;
 }
 
 // ============================================================
@@ -379,7 +351,6 @@ window.tryMountZipline          = tryMountZipline;
 window.dismountZipline          = dismountZipline;
 window.getNearestZiplinePrompt  = getNearestZiplinePrompt;
 window.updateZiplinePrompt      = updateZiplinePrompt;
-window.updateZiplineTowerLights = updateZiplineTowerLights;
 window.clearZiplines            = clearZiplines;
 
 console.log('[zipline] 滑索系统已就绪');

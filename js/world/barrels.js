@@ -1,4 +1,4 @@
-// ===== js/barrels.js – 可破坏油桶（血量 + 爆炸伤害 · 爆炸后隐藏修复） =====
+// ===== js/world/barrels.js – 可破坏油桶（血量 + 爆炸伤害 · 爆炸后隐藏修复） =====
 
 const BARREL_MAX_HP = 300;
 const BARREL_EXPLODE_RADIUS = 6.0;
@@ -163,6 +163,12 @@ function hitBarrel(barrel, dmg, from, hitPoint) {
     if (!barrel || barrel.exploded) return;
     if (typeof gameState !== 'undefined' && gameState !== 'combat') return;
 
+    // ★ 修复：必须在造成伤害之前先记录
+    if (from && from.id && window.RoundStats) {
+        if (from.id === 1) window.RoundStats.p1ToBarrel += dmg;
+        else if (from.id === 2) window.RoundStats.p2ToBarrel += dmg;
+    }
+
     barrel.hp -= dmg;
 
     if (typeof spawnSparks === 'function' && hitPoint) {
@@ -263,6 +269,12 @@ function _applyExplosionDamageToPlayer(p, ex, ey, ez, from) {
         dmg = window._applyVulnerabilityBonus(p, dmg, now);
     }
 
+    // ★ 修复：必须在造成伤害之前先记录，防止被炸死时面板显示 0
+    if (window.RoundStats) {
+        if (p.id === 1) window.RoundStats.barrelToP1 += dmg;
+        else if (p.id === 2) window.RoundStats.barrelToP2 += dmg;
+    }
+
     if (typeof damage === 'function') {
         const attacker = from || p;
         damage(p, dmg, attacker);
@@ -271,10 +283,6 @@ function _applyExplosionDamageToPlayer(p, ex, ey, ez, from) {
 
 // ============================================================
 // ★ 爆炸对僵尸造成伤害（生存模式）
-//
-//   · 距离衰减同玩家（1 - dist/R）^1.5
-//   · 僵尸没有护甲/易伤，直接扣血
-//   · 击杀了 → damageZombie 内部处理计数
 // ============================================================
 function _applyExplosionDamageToZombies(ex, ey, ez, from) {
     if (typeof getAllZombies !== 'function') return;

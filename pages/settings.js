@@ -152,6 +152,13 @@ document.write(`
                                 <span class="set-val" id="gfxShadowsVal">开</span>
                             </div>
 
+                            <!-- 同屏僵尸上限 -->
+                            <div class="set-row">
+                                <label>同屏僵尸上限</label>
+                                <input type="range" id="gfxZombieMaxAlive" min="5" max="45" step="1" value="20">
+                                <span class="set-val" id="gfxZombieMaxAliveVal">20</span>
+                            </div>
+
                             <div style="
                                 margin-top: 10px;
                                 padding: 10px 14px;

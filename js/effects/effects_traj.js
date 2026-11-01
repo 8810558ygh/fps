@@ -38,11 +38,15 @@ function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounc
     let restX = pos.x, restY = pos.y, restZ = pos.z;
 
     const LINEAR_DAMPING = 0.05;
-    const GROUND_Y = (typeof SMOKE_PROJ_RADIUS !== 'undefined') ? SMOKE_PROJ_RADIUS : 0.09;
+    const PROJ_RADIUS = (typeof SMOKE_PROJ_RADIUS !== 'undefined') ? SMOKE_PROJ_RADIUS : 0.09;
     const dampFactor = Math.pow(1 - LINEAR_DAMPING, dt);
+
+    // 地形高度查询（沙漠图需要，战场图 terrainHeightFn 为 null）
+    const terrainFn = (typeof window.terrainHeightFn === 'function') ? window.terrainHeightFn : null;
 
     for (let i = 0; i < steps; i++) {
         if (stopped) {
+            // 落地后所有剩余点都填在落地点（让 Line 在末端收束成一个点）
             const v = _acquireTrajVec();
             v.set(restX, restY, restZ);
             pts.push(v);
@@ -53,26 +57,29 @@ function simulateThrowTrajectory(origin, dir, throwSpeed, upBias, gravity, bounc
         v.copy(pos);
         pts.push(v);
 
+        // 物理积分
         vel.multiplyScalar(dampFactor);
-
         vel.y -= gravity * dt;
         pos.addScaledVector(vel, dt);
 
-        if (pos.y <= GROUND_Y) {
-            pos.y = GROUND_Y;
-            if (Math.abs(vel.y) > 0.8) {
-                vel.y = -vel.y * bounces;
-                vel.x *= friction;
-                vel.z *= friction;
-            } else {
-                vel.y = 0;
-                vel.x *= 0.2; vel.z *= 0.2;
-                if (vel.lengthSq() < 0.05) {
-                    stopped = true;
-                    restX = pos.x; restY = pos.y; restZ = pos.z;
-                }
-            }
+        // 当前 xz 处的地面高度（含球体半径）
+        const groundY = (terrainFn ? terrainFn(pos.x, pos.z) : 0) + PROJ_RADIUS;
+
+        // ★ 第一次落地 → 立即停止，不再模拟弹跳和滚动
+        if (pos.y <= groundY && vel.y <= 0) {
+            pos.y = groundY;
+            const land = _acquireTrajVec();
+            land.set(pos.x, groundY, pos.z);
+            pts.push(land);
+
+            stopped = true;
+            restX = pos.x;
+            restY = groundY;
+            restZ = pos.z;
+            continue;
         }
+
+        // 边界钳制（和原来一致）
         if (Math.abs(pos.x) > ARENA - 0.5) {
             pos.x = Math.sign(pos.x) * (ARENA - 0.5);
             vel.x *= -0.3;

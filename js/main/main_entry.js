@@ -67,6 +67,9 @@ function returnToOnlineRoom(isRemote) {
         NET.pendingFuseRelease = false;
         NET.pendingMelee = false;
         NET.pendingMeleeHeavy = false;
+        NET.pendingZiplineMount = null;
+        NET.pendingZiplineDismount = false;
+        NET.pendingVulnerableStart = null;
 
         if (NET.isHost && !isRemote && typeof NET_broadcast === 'function') {
             NET_broadcast({ type: 'returnToRoom' });

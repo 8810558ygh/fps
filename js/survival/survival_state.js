@@ -25,6 +25,19 @@ const SurvivalState = {
 };
 window.SurvivalState = SurvivalState;
 
+// ============================================================
+// ★ 运行时调整同屏僵尸上限（即时生效）
+// ============================================================
+window.setSurvivalMaxAlive = function (n) {
+    n = Math.max(1, Math.min(45, n | 0));
+    SurvivalState.MAX_ALIVE_ZOMBIES = n;
+    console.log('[survival] 同屏僵尸上限 →', n);
+};
+
+window.getSurvivalMaxAlive = function () {
+    return SurvivalState.MAX_ALIVE_ZOMBIES;
+};
+
 let _defeatHandled  = false;
 let _victoryHandled = false;
 let _summaryTimer = null;

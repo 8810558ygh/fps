@@ -256,7 +256,7 @@
     function getEnvMap() {
         return U.buildEnvMap({
             key: 'rifle_env',
-            width: 1024, height: 512,
+            width: 512, height: 256,
             gradient: [
                 [0.00, '#0e1218'], [0.30, '#233040'],
                 [0.48, '#6b7f96'], [0.50, '#909fb2'],

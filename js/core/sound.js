@@ -65,6 +65,38 @@ const SELF_GAIN = {
 };
 
 // ============================================================
+// ★ 新增：客户端"本地已经播放过"的动作音效集合
+//
+//   背景（修双响 bug）：
+//     · 客户端自己开枪 / 近战 / 换弹 / 脚步 / 落地时，
+//       本地会调 emitWorldSound(..., isSelf=true) 播一遍（0.5× ~ 0.85×）。
+//     · 房主收到 clientInput 后在 p2 身上复现同样的动作，
+//       会再 emitWorldSound(..., isSelf=false) 广播给所有客户端。
+//     · 客户端收到这条广播时，如果照播，就会出现"双响"：
+//         第一声 = 本地 0.5×（从自己位置）
+//         第二声 = 房主回传 1.0×（从 p2 位置，距离≈0 → 音量极大）
+//
+//   修复策略：
+//     · 房主广播时给"动作音效"打上 skipForSource = true 标记
+//     · 客户端收到时，如果 sourceSeat === NET.mySeat 且 skipForSource，
+//       直接跳过（本地已经播过了）
+//     · kill / death / hit 之外的"事件音效"不打标记，
+//       客户端仍然正常播放（客户端本地没播过，唯一来源就是房主回传）
+//
+//   注意：hit 必须放进这个集合。
+//     · 客户端开火命中 → 本地 emitWorldSound('hit', isSelf=true) 播了
+//     · 房主在 p2 身上复现命中 → emitWorldSound('hit', isSelf=false) 广播
+//     · 客户端收到回传（sourceSeat = 自己）→ 跳过，避免双响
+//     · 房主开火命中客户端时 → sourceSeat = 房主 ≠ 自己 → 不跳过，正常听到命中
+// ============================================================
+const ACTION_SOUND_NAMES = new Set([
+    'rifle', 'sniper', 'shotgun', 'odin',
+    'melee', 'reload', 'empty',
+    'footstep', 'landing',
+    'hit',
+]);
+
+// ============================================================
 // 2. 临时向量（复用）
 // ============================================================
 const _lstPos = new THREE.Vector3();
@@ -213,6 +245,12 @@ window.updateAudioListener = updateAudioListener;
 
 // ============================================================
 // 5. 播放世界声音
+//
+//   ★ 改动：广播时给动作音效打 skipForSource 标记
+//   ★ 改动：只有 isSelf === false 时才需要广播（自己发出的声音不需要广播给自己）
+//            不过原逻辑已经在客户端侧用 NET.isHost 拦了，
+//            客户端调用 emitWorldSound(isSelf=true) 不会广播。
+//            这里保持原样，只加 skipForSource。
 // ============================================================
 function emitWorldSound(name, x, y, z, isSelf, extra) {
     _playWorldSoundLocal(name, x, y, z, isSelf, extra);
@@ -230,6 +268,7 @@ function emitWorldSound(name, x, y, z, isSelf, extra) {
             name: name,
             x: x, y: y, z: z,
             sourceSeat: sourceSeat,
+            skipForSource: ACTION_SOUND_NAMES.has(name),   // ★ 新增
             extra: extra || null,
         });
     }
@@ -342,22 +381,30 @@ function _dispatchSound(name, out, extra) {
 
 // ============================================================
 // 9. 联机：客户端收到主机广播
+//
+//   ★ 关键修复：跳过"客户端自己发起、且本地已播放过"的动作音效
+//
+//   原有逻辑（已删除的 sourceSeat 检查）：
+//     if (data.sourceSeat && data.sourceSeat === NET.mySeat) return;
+//     一刀切跳过，导致击杀音效也听不到。
+//
+//   新逻辑：
+//     · 只有 skipForSource = true（动作音效）且 sourceSeat = 自己 时才跳过
+//     · kill / death / explosion / smokePop 等事件音效不受影响
+//     · 老版本房主（没有 skipForSource 字段）→ undefined → falsy → 正常播放（向后兼容）
 // ============================================================
 function handleRemoteWorldSound(data) {
     if (!data || !data.name) return;
     if (typeof NET === 'undefined') return;
 
-    // ============================================================
-    // ★ 已删除：if (data.sourceSeat && data.sourceSeat === NET.mySeat) return;
-    //
-    // 原因：
-    //   · 客户端本地不会调用 emitWorldSound 广播自己的声音，
-    //     所以不存在"自己发的音被房主回传导致重复"的情况。
-    //   · 反而因为这条跳过，客户端作为【击杀者】时，
-    //     房主广播 worldSound('kill', 客户端位置, sourceSeat=客户端座位)
-    //     会被客户端自己跳过 → 听不到自己的击杀音效。
-    //   · 删掉后，客户端能正确听到包括"自己发出的"在内的所有世界声音。
-    // ============================================================
+    // ★ 跳过：客户端自己发起的动作音效，本地已经播放过
+    //   只对 skipForSource=true 的音效生效
+    //   kill / death / hit（房主打客户端时）/ smokePop 等事件音效不受影响
+    if (data.skipForSource
+        && data.sourceSeat
+        && data.sourceSeat === NET.mySeat) {
+        return;
+    }
 
     _playWorldSoundLocal(
         data.name,
