@@ -36,87 +36,51 @@ function _findSmokeById(id) {
 // ============================================================
 // 烟雾云
 // ============================================================
-function createSmokeCloud(pos, radius, verticalRadius, centerHeight) {
+const SMOKE_SHELL_COLORS = {
+    blue: 0x287dff,
+    red: 0xff3048,
+};
+
+function getSmokeTeamForPlayer(p) {
+    if (typeof gameMode !== 'undefined'
+        && gameMode === 'online'
+        && typeof NET !== 'undefined'
+        && NET.mySeat) {
+        if (p === p1) return NET.mySeat;
+        return NET.mySeat === 'blue' ? 'red' : 'blue';
+    }
+    return p && p.id === 2 ? 'red' : 'blue';
+}
+window.getSmokeTeamForPlayer = getSmokeTeamForPlayer;
+
+function createSmokeCloud(pos, radius, verticalRadius, centerHeight, team) {
     const group = new THREE.Group();
     group.position.set(pos.x, pos.y + centerHeight, pos.z);
 
-    const meshList = [];
-    
-    // ★ 1. 把所有层级的不透明度大幅拉高，颜色加深，让透光率降到极低
-    const layers = [
-        { scale: 1.24, opacity: 0.65, color: 0x8c968c, order: 1 }, // 从 0.28 拉到 0.65
-        { scale: 1.06, opacity: 0.88, color: 0x768076, order: 2 }, // 从 0.58 拉到 0.88
-        { scale: 0.90, opacity: 0.96, color: 0x626c62, order: 3 }, // 从 0.82 拉到 0.96
-        { scale: 0.72, opacity: 0.99, color: 0x4e564e, order: 4 },
-        { scale: 0.52, opacity: 1.00, color: 0x404840, order: 5 }, // 最内层完全不透光
-    ];
+    team = (team === 'red') ? 'red' : 'blue';
     const vScale = verticalRadius / radius;
+    const color = SMOKE_SHELL_COLORS[team];
 
-    function createSmokeMat(color) {
-        return new THREE.MeshBasicMaterial({
-            color: color,
-            transparent: true,
-            opacity: 0,
-            side: THREE.DoubleSide,
-            depthWrite: false
-        });
-    }
+    // 单层空心球壳：完全不透明，避免透明混合、排序和颜色发灰。
+    // DoubleSide 保证从球壳外部和内部都能看到实体内壁。
+    const geometry = new THREE.SphereGeometry(radius, 20, 14);
+    const material = new THREE.MeshBasicMaterial({
+        color,
+        transparent: false,
+        opacity: 1,
+        side: THREE.DoubleSide,
+        depthWrite: true,
+        toneMapped: false,
+    });
+    const shell = new THREE.Mesh(geometry, material);
+    shell.scale.y = vScale;
+    shell.renderOrder = 2;
+    shell.userData.baseOpacity = 1;
+    group.add(shell);
 
-    // 1. 外层球壳
-    for (const L of layers) {
-        const geo = new THREE.SphereGeometry(radius * L.scale, 24, 18);
-        const mat = createSmokeMat(L.color);
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.scale.y = vScale;
-        mesh.renderOrder = L.order;
-        mesh.userData.baseOpacity = L.opacity;
-        group.add(mesh);
-        meshList.push(mesh);
-    }
-
-    // 2. 外围凸起（★ 不透明度从 0.72 拉高到 0.90 以上，确保边缘缝隙不漏人）
-    for (let i = 0; i < 14; i++) {
-        const a = (i / 14) * Math.PI * 2 + Math.random() * 0.5;
-        const rFactor = 0.30 + Math.random() * 0.55;
-        const dist = radius * rFactor;
-        const subR = radius * (0.32 + Math.random() * 0.28);
-        const geo = new THREE.SphereGeometry(subR, 14, 10);
-        const mat = createSmokeMat(0x6a746a);
-        const m = new THREE.Mesh(geo, mat);
-        m.position.set(
-            Math.cos(a) * dist,
-            (Math.random() - 0.5) * verticalRadius * 0.9,
-            Math.sin(a) * dist
-        );
-        m.scale.set(0.8 + Math.random() * 0.45, 0.85 + Math.random() * 0.5, 0.8 + Math.random() * 0.45);
-        m.renderOrder = 10 + i;
-        m.userData.baseOpacity = 0.90 + Math.random() * 0.10; // ★ 拉满
-        group.add(m);
-        meshList.push(m);
-    }
-
-    // ★ 3. 内部填充（数量从 16 增加到 24，把球心彻底塞满）
-    for (let i = 0; i < 24; i++) {
-        const r = radius * (Math.random() * 0.75);
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos((Math.random() * 2) - 1);
-        const x = r * Math.sin(phi) * Math.cos(theta);
-        const y = r * Math.cos(phi) * vScale;
-        const z = r * Math.sin(phi) * Math.sin(theta);
-        
-        const subR = radius * (0.3 + Math.random() * 0.25);
-        const geo = new THREE.SphereGeometry(subR, 12, 8);
-        const mat = createSmokeMat(0x4e564e);
-        const m = new THREE.Mesh(geo, mat);
-        m.position.set(x, y, z);
-        m.renderOrder = 30 + i;
-        m.userData.baseOpacity = 0.95 + Math.random() * 0.05; // ★ 拉满
-        group.add(m);
-        meshList.push(m);
-    }
-
-    group.userData.allSmokeMats = []; // 用于统一的显隐管理
-    group.userData.layers = meshList;
+    group.userData.team = team;
+    group.userData.layers = [shell];
+    group.userData.shell = shell;
     return group;
 }
 
@@ -125,7 +89,7 @@ function createSmokeCloud(pos, radius, verticalRadius, centerHeight) {
 //   serverId：客户端从广播里拿到的 id；房主 / 单机不传（自动分配）
 //   返回：创建的投掷物对象（供房主广播时取 id）
 // ============================================================
-function spawnSmokeProjectile(pos, vel, fuseMs, now, serverId) {
+function spawnSmokeProjectile(pos, vel, fuseMs, now, serverId, team) {
     const id = (serverId != null) ? serverId : (++_smokeIdCounter);
     const isClientSide = _isOnlineNonHostSmoke();
 
@@ -149,6 +113,7 @@ function spawnSmokeProjectile(pos, vel, fuseMs, now, serverId) {
         expandStart: 0,
         doneAt: 0,
         cloudMesh: null,
+        team: (team === 'red') ? 'red' : 'blue',
         body,
         _waitUntil: 0,
         _clientSide: isClientSide,
@@ -219,7 +184,10 @@ function updateSmokes(dt, now) {
                 scene.remove(s.mesh);
                 s.mesh = null;
 
-                const cloud = createSmokeCloud(s.pos, SMOKE.radius, SMOKE.verticalRadius, SMOKE.centerHeight);
+                const cloud = createSmokeCloud(
+                    s.pos, SMOKE.radius, SMOKE.verticalRadius,
+                    SMOKE.centerHeight, s.team
+                );
                 cloud.scale.set(0.04, 0.04, 0.04);
                 // ★ 修改：加上起爆点高度
                 cloud.position.y = s.pos.y + SMOKE.radius * 0.3;
@@ -235,6 +203,7 @@ function updateSmokes(dt, now) {
                     NET_broadcast({
                         type: 'smokePop',
                         id: s.id,
+                        team: s.team,
                         px: s.pos.x, py: s.pos.y, pz: s.pos.z,
                     });
                 }
@@ -267,7 +236,9 @@ function updateSmokes(dt, now) {
             
             if (s.cloudMesh.userData.layers) {
                 for (const m of s.cloudMesh.userData.layers) {
-                    m.material.opacity = m.userData.baseOpacity * e;
+                    if (m.material.transparent) {
+                        m.material.opacity = m.userData.baseOpacity * e;
+                    }
                 }
             }
             if (t >= 1) {
@@ -288,7 +259,9 @@ function updateSmokes(dt, now) {
                 const fade = Math.max(0, remain / 2200);
                 if (s.cloudMesh.userData.layers) {
                     for (const m of s.cloudMesh.userData.layers) {
-                        m.material.opacity = m.userData.baseOpacity * fade;
+                        if (m.material.transparent) {
+                            m.material.opacity = m.userData.baseOpacity * fade;
+                        }
                     }
                 }
             }
@@ -353,7 +326,11 @@ function handleRemoteSmokePop(data) {
             scene.remove(target.mesh);
             target.mesh = null;
         }
-        const cloud = createSmokeCloud(pos, SMOKE.radius, SMOKE.verticalRadius, SMOKE.centerHeight);
+        const team = data.team || (target && target.team) || 'blue';
+        const cloud = createSmokeCloud(
+            pos, SMOKE.radius, SMOKE.verticalRadius,
+            SMOKE.centerHeight, team
+        );
         cloud.scale.set(0.04, 0.04, 0.04);
         // ★ 修改：加上 pos.y
         cloud.position.y = pos.y + SMOKE.radius * 0.3;
@@ -363,7 +340,11 @@ function handleRemoteSmokePop(data) {
         target.expandStart = now;
     } else {
         // 没有 waiting 的 → 直接新建
-        const cloud = createSmokeCloud(pos, SMOKE.radius, SMOKE.verticalRadius, SMOKE.centerHeight);
+        const team = data.team || 'blue';
+        const cloud = createSmokeCloud(
+            pos, SMOKE.radius, SMOKE.verticalRadius,
+            SMOKE.centerHeight, team
+        );
         cloud.scale.set(0.04, 0.04, 0.04);
         // ★ 修改：加上 pos.y
         cloud.position.y = pos.y + SMOKE.radius * 0.3;
@@ -374,6 +355,7 @@ function handleRemoteSmokePop(data) {
             fuseEnd: 0, state: 'expanding',
             expandStart: now, doneAt: 0,
             cloudMesh: cloud, body: null,
+            team,
             _waitUntil: 0, _clientSide: false,
             _targetX: 0, _targetY: 0, _targetZ: 0, _hasTarget: false,
         });
@@ -402,7 +384,8 @@ function throwSmoke(p, now, fuseMs) {
     const vel = dir.clone().multiplyScalar(SMOKE.throwSpeed);
     vel.y += SMOKE.throwUpBias * SMOKE.throwSpeed;
 
-    const proj = spawnSmokeProjectile(origin, vel, effectiveFuseMs, now);
+    const team = getSmokeTeamForPlayer(p);
+    const proj = spawnSmokeProjectile(origin, vel, effectiveFuseMs, now, undefined, team);
 
     if (typeof emitWorldSound === 'function') {
         emitWorldSound('smokeThrow', p.pos.x, p.pos.y + p.eyeH, p.pos.z, p.id === 1);
@@ -419,7 +402,8 @@ function throwSmoke(p, now, fuseMs) {
             id: proj ? proj.id : null,
             px: origin.x, py: origin.y, pz: origin.z,
             vx: vel.x, vy: vel.y, vz: vel.z,
-            fuseMs: effectiveFuseMs
+            fuseMs: effectiveFuseMs,
+            team,
         });
     }
 

@@ -244,7 +244,10 @@ function updateHUD(now) {
         let svColor = '#fff';
         const svBg = 'rgba(70, 15, 15, 0.72)';
 
-        const mapName = (SurvivalState.mapIndex === 0) ? '战场' : '沙漠';
+        const currentMapId = SurvivalState.maps[SurvivalState.mapIndex];
+        const mapName = (typeof getSurvivalMapName === 'function')
+            ? getSurvivalMapName(currentMapId)
+            : (SurvivalState.mapIndex === 0 ? '战场' : '沙漠');
 
         if (SurvivalState.phase === 'prep') {
             const remain = Math.max(0, (SurvivalState.prepEndTime - now) / 1000);

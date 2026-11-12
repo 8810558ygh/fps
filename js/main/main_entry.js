@@ -67,6 +67,9 @@ function returnToOnlineRoom(isRemote) {
         NET.pendingFuseRelease = false;
         NET.pendingMelee = false;
         NET.pendingMeleeHeavy = false;
+        NET.pendingClientShots.length = 0;
+        NET._lastInputPacketAt = 0;
+        NET._clientShotTimes.length = 0;
         NET.pendingZiplineMount = null;
         NET.pendingZiplineDismount = false;
         NET.pendingVulnerableStart = null;

@@ -19,9 +19,17 @@ const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
 function getDesiredPixelRatio() {
     if (isTouchDevice) return 1;
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
-    return Math.min(window.devicePixelRatio || 1, isOnline ? 1.5 : 2);
+    const isDesert = (typeof getCurrentMapId === 'function' && getCurrentMapId() === 'desert');
+    return Math.min(window.devicePixelRatio || 1, (isOnline || isDesert) ? 1.5 : 2);
 }
 renderer.setPixelRatio(getDesiredPixelRatio());
+
+function refreshRenderQualityForMap() {
+    if (!renderer) return;
+    renderer.setPixelRatio(getDesiredPixelRatio());
+    renderer.shadowMap.needsUpdate = true;
+}
+window.refreshRenderQualityForMap = refreshRenderQualityForMap;
 
 if (isTouchDevice) {
     renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -35,6 +43,8 @@ document.body.appendChild(renderer.domElement);
 // ============================================================
 function getShadowUpdateInterval() {
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
+    const isDesert = (typeof getCurrentMapId === 'function' && getCurrentMapId() === 'desert');
+    if (isDesert) return 8;
     return isOnline ? 6 : 3;
 }
 let _shadowFrameCounter = 0;

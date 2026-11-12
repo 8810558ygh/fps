@@ -189,6 +189,9 @@ window.leaveOnlineRoom = function () {
     NET.pendingFuseRelease = false;
     NET.pendingMelee = false;
     NET.pendingMeleeHeavy = false;
+    NET.pendingClientShots.length = 0;
+    NET._lastInputPacketAt = 0;
+    NET._clientShotTimes.length = 0;
 
     // ★ 清理滑索 / 易伤事件
     NET.pendingZiplineMount = null;

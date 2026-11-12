@@ -32,12 +32,17 @@ function handleHostState(data) {
             }
 
             const authX = myData.x, authY = myData.y, authZ = myData.z;
-            const dx = authX - p1.pos.x;
-            const dy = authY - p1.pos.y;
-            const dz = authZ - p1.pos.z;
+            const pingLead = Math.min(0.12, Math.max(0, (NET.ping || 0) * 0.0005));
+            const vel = p1._netVelocity;
+            const predX = authX + (vel ? vel.x * pingLead : 0);
+            const predY = authY + (vel ? vel.y * pingLead : 0);
+            const predZ = authZ + (vel ? vel.z * pingLead : 0);
+            const dx = predX - p1.pos.x;
+            const dy = predY - p1.pos.y;
+            const dz = predZ - p1.pos.z;
             const errSq = dx * dx + dy * dy + dz * dz;
 
-            const HARD_RESYNC_SQ = 1.0;
+            const HARD_RESYNC_SQ = 6.25; // 2.5m 以上才允许硬回拉
             NET._lastDrift = Math.sqrt(errSq);
 
             const localZipActive = !!(p1.zipline && p1.zipline.active);
@@ -54,6 +59,13 @@ function handleHostState(data) {
                         console.log('[net] 客户端位置硬同步，漂移:', NET._lastDrift.toFixed(2), 'm');
                     }
                 }
+            } else if (errSq > 0.0225 && !localZipActive) {
+                // 0.15m 以上的误差不直接瞬移，而是分几帧吸收。
+                // 预测位置已按 ping 向前补偿，因此不会一直产生“逆行阻力”。
+                const absorb = errSq > 1.0 ? 0.28 : 0.16;
+                p1.pos.x += dx * absorb;
+                p1.pos.y += dy * absorb;
+                p1.pos.z += dz * absorb;
             }
 
             p1.hp = myData.hp;
@@ -64,24 +76,10 @@ function handleHostState(data) {
             p1.smokeCharges = myData.smokeCharges;
             p1.flashCharges = myData.flashCharges;
 
-            // ============================================================
-            // ★ 客户端自己（p1）的蹲起平滑：
-            //
-            //   背景：
-            //     · p1 是本地玩家，本地每帧跑 updatePlayer，自己会平滑插值
-            //     · 但 handleHostState 每收到一次房主广播，就把 height 直接赋值
-            //     · 60Hz 覆盖下，本地插值没机会跑完 → 蹲下/起立都跳变
-            //
-            //   做法：
-            //     · 不直接覆盖 height / eyeH，让本地 updatePlayer 处理
-            //     · 只在"本地和房主状态严重不一致"（> 0.3m）时硬同步兜底
-            //       （比如本地撞箱子蹲不下去，但房主算出来能蹲）
-            // ============================================================
-            const expectedH = myData.crouching ? HEIGHT_CROUCH : HEIGHT_STAND;
-            if (Math.abs(p1.height - expectedH) > 0.3) {
-                p1.height = expectedH;
-                p1.eyeH = stanceEye(expectedH);
-            }
+            // 本地蹲姿由输入和 updatePlayer 平滑预测。
+            // 房主的 crouching 字段带有网络延迟，过渡期间会与本地插值
+            // 相互拉扯，因此不能拿它覆盖 p1.height / eyeH。
+            // 头顶空间由本地 canFit() 检查；位置偏差仍由上方逻辑校正。
 
             p1.meleeIsHeavy = !!myData.meleeIsHeavy;
 
@@ -174,6 +172,8 @@ function handleHostState(data) {
             }
 
             p2.pitch = oppData.pitch;
+            if (!p2._netVelocity) p2._netVelocity = new THREE.Vector3();
+            p2._netVelocity.set(oppData.vx || 0, oppData.vy || 0, oppData.vz || 0);
 
             if (oppData.onGround !== undefined) {
                 p2.onGround = !!oppData.onGround;
@@ -248,26 +248,17 @@ window.NET_sendClientInput = function () {
     const hasPending = NET.pendingWeaponSwitch || NET.pendingReload
         || NET.pendingFuseStart || NET.pendingFuseRelease
         || NET.pendingMelee
+        || NET.pendingClientShots.length > 0
         || NET.pendingZiplineMount || NET.pendingZiplineDismount
         || NET.pendingVulnerableStart;
 
     const last = NET._lastSentInput;
 
-    // ============================================================
-    // ★ P2-2：把 yaw / pitch 的"变化阈值"从 0.0008 提到 0.005
-    //
-    //   原值 0.0008 rad ≈ 0.046°，小于屏幕上 1 像素，
-    //   只要鼠标轻微抖动就触发发包 → 实际约 60Hz 上传。
-    //
-    //   新值 0.005 rad ≈ 0.29°，屏幕上约 2 像素，
-    //   视觉上完全看不出偏差，但发包频率从 60Hz 降到约 20Hz。
-    //   站桩时鼠标不动，则完全不发包。
-    //
-    //   注意：其他字段（forward / right / jump / crouch / fire / aim /
-    //        aimStage / hasPending）的判定逻辑一个字都没动，因为那些
-    //        是离散值或关键事件，必须立即上报。
-    // ============================================================
-    const AIM_EPS = 0.005;
+    // 视角变化立即发送；同时保留 30Hz 心跳，避免慢速瞄准时
+    // 因变化量低于阈值而让房主长时间看到旧朝向。
+    const AIM_EPS = 0.0015;
+    const now = performance.now();
+    const heartbeatDue = now - (NET._lastInputPacketAt || 0) >= 33;
 
     const changed = !last
         || last.f !== inp.forward || last.r !== inp.right
@@ -276,7 +267,8 @@ window.NET_sendClientInput = function () {
         || Math.abs(last.yaw   - p1.yaw)   > AIM_EPS
         || Math.abs(last.pitch - p1.pitch) > AIM_EPS
         || last.aimStage !== p1.aimStage
-        || hasPending;
+        || hasPending
+        || heartbeatDue;
 
     if (!changed) return;
 
@@ -287,6 +279,7 @@ window.NET_sendClientInput = function () {
         yaw: p1.yaw, pitch: p1.pitch,
         aimStage: p1.aimStage
     };
+    NET._lastInputPacketAt = now;
 
     sendToHost({
         type: 'clientInput',
@@ -309,6 +302,7 @@ window.NET_sendClientInput = function () {
         fuseRelease: NET.pendingFuseRelease,   // ★ 现在可以是对象
         melee: NET.pendingMelee,
         meleeHeavy: NET.pendingMeleeHeavy,
+        clientShots: NET.pendingClientShots.slice(),
 
         ziplineMount: NET.pendingZiplineMount,
         ziplineDismount: NET.pendingZiplineDismount,
@@ -321,6 +315,7 @@ window.NET_sendClientInput = function () {
     NET.pendingFuseRelease = false;
     NET.pendingMelee = false;
     NET.pendingMeleeHeavy = false;
+    NET.pendingClientShots.length = 0;
 
     NET.pendingZiplineMount = null;
     NET.pendingZiplineDismount = false;

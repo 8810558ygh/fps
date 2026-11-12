@@ -132,20 +132,13 @@ function spawnSurvivalPortal() {
     if (_portalGroup) return _portalGroup;
     if (typeof scene === 'undefined' || !scene) return null;
 
-    // ---- 地面高度 ----
-    const mapId = (typeof window.getCurrentMapId === 'function')
-        ? window.getCurrentMapId() : null;
-
-    let groundY;
-    if (mapId === 'battlefield') {
-        groundY = 2.5;
-    } else {
-        groundY = (typeof terrainGroundAt === 'function')
-            ? terrainGroundAt(0, 0) : 0;
-    }
+    const anchor = (typeof window.getSurvivalMapAnchor === 'function')
+        ? window.getSurvivalMapAnchor()
+        : { x: 0, y: (typeof terrainGroundAt === 'function' ? terrainGroundAt(0, 0) : 0), z: 0 };
+    const groundY = anchor.y;
 
     const g = new THREE.Group();
-    g.position.set(0, groundY + PORTAL_HEIGHT, 0);
+    g.position.set(anchor.x, groundY + PORTAL_HEIGHT, anchor.z);
 
     // ---- 漩涡圆盘 ----
     const geo = new THREE.CircleGeometry(PORTAL_RADIUS, 64);

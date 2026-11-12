@@ -109,7 +109,8 @@ function handleSmokeSpawn(data) {
         new THREE.Vector3(data.vx, data.vy, data.vz),
         data.fuseMs !== undefined ? data.fuseMs : SMOKE.fuseMs,
         now,
-        data.id                                // ★ 新增：serverId
+        data.id,                               // ★ serverId
+        data.team || 'blue'
     );
     if (typeof sSmokeThrow === 'function') sSmokeThrow();
 }

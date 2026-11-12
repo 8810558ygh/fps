@@ -18,6 +18,9 @@ const NET = {
     pendingFuseRelease: false,
     pendingMelee: false,
     pendingMeleeHeavy: false,
+    pendingClientShots: [],
+    _lastInputPacketAt: 0,
+    _clientShotTimes: [],
 
     // ★ 滑索挂载事件：{ lineIdx, t, dir } 或 null
     pendingZiplineMount: null,

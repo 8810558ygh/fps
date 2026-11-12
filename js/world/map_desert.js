@@ -122,38 +122,11 @@ function createDesertSandTextures(size = 512){
   }
   ctxC.putImageData(imgC, 0, 0);
 
-  const cNor = document.createElement('canvas');
-  cNor.width = cNor.height = size;
-  const ctxN = cNor.getContext('2d');
-  const imgN = ctxN.createImageData(size, size);
-  const dn = imgN.data;
-  const S = 3.2;
-  for (let y = 0; y < size; y++){
-    for (let x = 0; x < size; x++){
-      const i = y * size + x;
-      const xl = H[y * size + ((x - 1 + size) % size)];
-      const xr = H[y * size + ((x + 1) % size)];
-      const yd = H[((y - 1 + size) % size) * size + x];
-      const yu = H[((y + 1) % size) * size + x];
-      let nx = (xl - xr) * S, ny = (yd - yu) * S, nz = 1.0;
-      const len = Math.hypot(nx, ny, nz);
-      nx /= len; ny /= len; nz /= len;
-      dn[i * 4]     = (nx * 0.5 + 0.5) * 255;
-      dn[i * 4 + 1] = (ny * 0.5 + 0.5) * 255;
-      dn[i * 4 + 2] = (nz * 0.5 + 0.5) * 255;
-      dn[i * 4 + 3] = 255;
-    }
-  }
-  ctxN.putImageData(imgN, 0, 0);
-
   const texCol = new THREE.CanvasTexture(cCol);
   texCol.encoding = THREE.sRGBEncoding;
   texCol.wrapS = texCol.wrapT = THREE.RepeatWrapping;
 
-  const texNor = new THREE.CanvasTexture(cNor);
-  texNor.wrapS = texNor.wrapT = THREE.RepeatWrapping;
-
-  return { texCol, texNor };
+  return { texCol };
 }
 
 /* ---------- 干草贴图 ---------- */
@@ -194,7 +167,7 @@ registerMap('desert', {
   // ★ 沙漠地图活动半径（半宽）保持不变
   arenaHalf: 80,
   // ★ 阴影相机覆盖半径
-  shadowHalf: 80,
+  shadowHalf: 60,
 
   terrainHeightFn: desertHeight,
   ambience: {
@@ -209,17 +182,15 @@ registerMap('desert', {
   build() {
     // -------- 1. 沙丘地形 --------
     const TERRAIN_SIZE = DESERT_MAP_HALF * 2;
-    const TERRAIN_SEG  = 160;   // ★ 200 → 160 (配合缩小后的地图，精度几乎不变)
+    const TERRAIN_SEG  = 96;    // 远景由雾气遮挡，近景仍保留足够沙丘轮廓
 
-    const { texCol, texNor } = createDesertSandTextures(512);
+    const { texCol } = createDesertSandTextures(512);
     const REPEAT = 32;
     texCol.repeat.set(REPEAT, REPEAT);
-    texNor.repeat.set(REPEAT, REPEAT);
 
     if (typeof renderer !== 'undefined' && renderer.capabilities) {
       const maxAniso = renderer.capabilities.getMaxAnisotropy();
-      texCol.anisotropy = maxAniso;
-      texNor.anisotropy = maxAniso;
+      texCol.anisotropy = Math.min(maxAniso, 4);
     }
 
     const geo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEG, TERRAIN_SEG);
@@ -250,13 +221,9 @@ registerMap('desert', {
       geo.computeVertexNormals();
     }
 
-    const sandMaterial = new THREE.MeshStandardMaterial({
+    const sandMaterial = new THREE.MeshLambertMaterial({
       map: texCol,
-      normalMap: texNor,
-      normalScale: new THREE.Vector2(0.85, 0.85),
       vertexColors: true,
-      roughness: 0.94,
-      metalness: 0.0
     });
 
     const terrain = new THREE.Mesh(geo, sandMaterial);
@@ -295,18 +262,17 @@ registerMap('desert', {
           vec3 col = mix(uHorizon, uTop, smoothstep(0.0, 0.55, h));
           col = mix(uBottom, col, smoothstep(-0.18, 0.02, h));
           float sd = max(dot(dir, uSunDir), 0.0);
-          float disc = smoothstep(0.99970, 0.99996, sd);
-          col += uSunCol * disc * 9.0;
-          col += uSunCol * pow(sd, 900.0) * 1.6;
-          col += uSunCol * pow(sd, 24.0)  * 0.34;
-          col += uSunCol * pow(sd, 4.0)   * 0.10;
-          col += vec3(0.45, 0.24, 0.08) * pow(max(1.0 - abs(h) * 2.4, 0.0), 3.0) * 0.55;
+          float disc = smoothstep(0.99982, 0.99996, sd);
+          col += uSunCol * disc * 5.0;
+          col += uSunCol * pow(sd, 18.0) * 0.24;
+          col += uSunCol * pow(sd, 4.0)  * 0.08;
+          col += vec3(0.45, 0.24, 0.08) * pow(max(1.0 - abs(h) * 2.4, 0.0), 3.0) * 0.45;
           gl_FragColor = vec4(col, 1.0);
         }
       `
     });
 
-    const skyGeo = new THREE.SphereGeometry(150, 32, 20);   // ★ 半径 200 → 150 足够包住视距
+    const skyGeo = new THREE.SphereGeometry(150, 24, 12);
     const skyMesh = new THREE.Mesh(skyGeo, skyMaterial);
     skyMesh.renderOrder = -1000;
     skyMesh.frustumCulled = false;
@@ -319,12 +285,10 @@ registerMap('desert', {
     currentMapGroup.add(skyMesh);
 
     // -------- 3. 干草 --------
-    const grassMat = new THREE.MeshStandardMaterial({
+    const grassMat = new THREE.MeshLambertMaterial({
       map: createDesertGrassTexture(256),
       alphaTest: 0.42,
       side: THREE.DoubleSide,
-      roughness: 1.0,
-      metalness: 0.0,
       color: 0xcfb98a
     });
 
@@ -342,17 +306,26 @@ registerMap('desert', {
           transformed.z += sway * hgt * hgt * 0.30;
         `
       );
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <project_vertex>',
+        `
+          #include <project_vertex>
+          if (length(mvPosition.xyz) > 95.0) {
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+          }
+        `
+      );
     };
 
     {
-      const W = 3.2, H = 3.0;
+      const W = 2.8, H = 2.6;
       const g1 = new THREE.PlaneGeometry(W, H);
       g1.translate(0, H * 0.5, 0);
 
       const g2 = g1.clone();
       g2.rotateY(Math.PI / 2);
 
-      const COUNT = 400;   // ★ 480 → 400，地图小了，草相应减少一点，保持合理的视觉密度
+      const COUNT = 240;
       const grass1 = new THREE.InstancedMesh(g1, grassMat, COUNT);
       const grass2 = new THREE.InstancedMesh(g2, grassMat, COUNT);
 
@@ -366,7 +339,7 @@ registerMap('desert', {
 
       for (let i = 0; i < COUNT; i++){
         // ★ 分布半径限制在地形范围内（125 - 10 缓冲 = 115）
-        const r = Math.sqrt(rnd()) * 115;
+        const r = Math.sqrt(rnd()) * 82;
         const a = rnd() * Math.PI * 2;
         const x = Math.cos(a) * r;
         const z = Math.sin(a) * r;

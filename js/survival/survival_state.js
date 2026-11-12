@@ -6,7 +6,7 @@ const SurvivalState = {
     wave: 0,
     maxWaves: 5,
     mapIndex: 0,
-    maps: ['battlefield', 'desert'],
+    maps: ['battlefield', 'desert', 'indoor_complex'],
     prepEndTime: 0,
     PREP_MS: 15000,
     SUMMARY_MS: 3000,
@@ -56,6 +56,44 @@ const WEAPON_DESCS_ZH = {
     shotgun: '5发 · 散射',
     odin: '100发 · 越打越快',
 };
+
+const _survivalMapNameCache = new Map();
+
+function getSurvivalMapName(mapId) {
+    if (!mapId) return '未知区域';
+    if (_survivalMapNameCache.has(mapId)) return _survivalMapNameCache.get(mapId);
+
+    let name = mapId;
+    if (typeof window.getAvailableMaps === 'function') {
+        const maps = window.getAvailableMaps() || [];
+        const found = maps.find(m => m.id === mapId);
+        if (found && found.name) name = found.name;
+    }
+    _survivalMapNameCache.set(mapId, name);
+    return name;
+}
+window.getSurvivalMapName = getSurvivalMapName;
+
+function getSurvivalMapAnchor(mapId) {
+    const id = mapId || ((typeof window.getCurrentMapId === 'function')
+        ? window.getCurrentMapId() : null);
+
+    const x = 0;
+    let z = 0;
+
+    // 室内图中庭正中心有实体高台，把生存出生点和传送门放在南侧空地。
+    if (id === 'indoor_complex') z = -9.5;
+
+    let y = 0;
+    if (id === 'battlefield') {
+        y = 2.5;
+    } else if (typeof terrainGroundAt === 'function') {
+        y = terrainGroundAt(x, z);
+    }
+
+    return { mapId: id, x, y, z };
+}
+window.getSurvivalMapAnchor = getSurvivalMapAnchor;
 
 function getSurvivalPlayers() {
     const arr = [];
@@ -128,20 +166,17 @@ function _teleportPlayerToMapCenter() {
 
     const mapId = (typeof window.getCurrentMapId === 'function')
         ? window.getCurrentMapId() : null;
+    const anchor = getSurvivalMapAnchor(mapId);
+    const spawnY = anchor.y;
 
-    let spawnY;
-    if (mapId === 'battlefield') spawnY = 2.5;
-    else spawnY = (typeof terrainGroundAt === 'function')
-        ? terrainGroundAt(0, 0) : 0;
-
-    p1.pos.set(0, spawnY, 0);
+    p1.pos.set(anchor.x, spawnY, anchor.z);
     p1.vy = 0; p1.prevY = spawnY; p1.onGround = true;
     p1.yaw = 0; p1.pitch = 0;
     p1.mesh.position.copy(p1.pos);
     p1.mesh.rotation.y = 0;
-    p1.cam.position.set(0, spawnY + p1.eyeH, 0);
+    p1.cam.position.set(anchor.x, spawnY + p1.eyeH, anchor.z);
     p1.cam.rotation.y = 0; p1.cam.rotation.x = 0;
-    if (p1._netTargetPos) p1._netTargetPos.set(0, spawnY, 0);
+    if (p1._netTargetPos) p1._netTargetPos.set(anchor.x, spawnY, anchor.z);
     if (p1._netTargetYaw !== undefined) p1._netTargetYaw = 0;
 
     if (window.PHYSICS && window.PHYSICS.isReady()) {
@@ -149,9 +184,122 @@ function _teleportPlayerToMapCenter() {
     }
 }
 
+const _indoorSurvivalSpawns = [
+    {
+        x: -35, z: 22,
+        route: [
+            { x: -35.5, z: 19 }, { x: -35.5, z: 17.5 }, { x: -31, z: 16 },
+            { x: -26, z: 12 }, { x: -23, z: 9.5 }, { x: -20, z: 9.5 }, { x: -20, z: 6 },
+            { x: -14, z: 6 }, { x: -13, z: 0 }, { x: -13, z: -9 }, { x: 0, z: -9.5 },
+        ],
+    },
+    {
+        x: 35, z: 22,
+        route: [
+            { x: 35.5, z: 19 }, { x: 35.5, z: 17.5 }, { x: 31, z: 16 },
+            { x: 26, z: 12 }, { x: 23, z: 9.5 }, { x: 20, z: 9.5 }, { x: 20, z: -6 },
+            { x: 14, z: -6 }, { x: 13, z: -9 }, { x: 6, z: -9.5 }, { x: 0, z: -9.5 },
+        ],
+    },
+    {
+        x: -35, z: -22,
+        route: [
+            { x: -35.5, z: -19 }, { x: -35.5, z: -16 }, { x: -31, z: -16 },
+            { x: -26, z: -12 }, { x: -23, z: -9.5 }, { x: -20, z: -9.5 },
+            { x: -20, z: -16 }, { x: -6, z: -16 }, { x: -6, z: -13 }, { x: -6, z: -10 },
+            { x: 0, z: -9.5 },
+        ],
+    },
+    {
+        x: 35, z: -22,
+        route: [
+            { x: 35.5, z: -19 }, { x: 35.5, z: -16 }, { x: 31, z: -16 },
+            { x: 26, z: -12 }, { x: 23, z: -9.5 }, { x: 20, z: -9.5 },
+            { x: 20, z: -5.5 }, { x: 14, z: -5.5 }, { x: 13, z: -9 },
+            { x: 6, z: -9.5 }, { x: 0, z: -9.5 },
+        ],
+    },
+    {
+        x: -5, z: 24,
+        route: [
+            { x: -5, z: 22.5 }, { x: -11.5, z: 22.5 }, { x: -11.5, z: 16 }, { x: 6, z: 16 },
+            { x: 6, z: 13 }, { x: 6, z: 10 }, { x: 13, z: 10 }, { x: 13, z: -9 },
+            { x: 6, z: -9.5 }, { x: 0, z: -9.5 },
+        ],
+    },
+    {
+        x: 5, z: -24,
+        route: [
+            { x: 5, z: -22.5 }, { x: 11.5, z: -22.5 }, { x: 11.5, z: -16 }, { x: -6, z: -16 },
+            { x: -6, z: -13 }, { x: -6, z: -10 }, { x: 0, z: -9.5 },
+        ],
+    },
+    {
+        x: -34, z: 0,
+        route: [
+            { x: -29, z: 3 }, { x: -24, z: 9.5 }, { x: -23, z: 9.5 },
+            { x: -20, z: 9.5 }, { x: -20, z: 6 }, { x: -14, z: 6 },
+            { x: -13, z: 0 }, { x: -13, z: -9 }, { x: 0, z: -9.5 },
+        ],
+    },
+    {
+        x: 34, z: 0,
+        route: [
+            { x: 29, z: -2 }, { x: 24, z: -9.5 }, { x: 23, z: -9.5 },
+            { x: 20, z: -9.5 }, { x: 20, z: -5.5 }, { x: 14, z: -5.5 },
+            { x: 13, z: -9 },
+            { x: 6, z: -9.5 }, { x: 0, z: -9.5 },
+        ],
+    },
+];
+
+function _isIndoorSpawnBlocked(x, z) {
+    const radius = 0.7;
+    for (let i = 0; i < colliders.length; i++) {
+        const c = colliders[i];
+        const bottom = c.bottom || 0;
+        const top = (c.top !== undefined) ? c.top : 0;
+        if (bottom > 1.7 || top < 0.15) continue;
+        if (x + radius > c.x0 && x - radius < c.x1
+            && z + radius > c.z0 && z - radius < c.z1) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function findIndoorSurvivalSpawn() {
+    const candidates = _indoorSurvivalSpawns.filter(s => !_isIndoorSpawnBlocked(s.x, s.z));
+    if (candidates.length === 0) return null;
+
+    const source = candidates[Math.floor(Math.random() * candidates.length)];
+    return {
+        x: source.x,
+        z: source.z,
+        route: source.route.map(p => ({ x: p.x, z: p.z })),
+    };
+}
+window.findIndoorSurvivalSpawn = findIndoorSurvivalSpawn;
+window.getIndoorSurvivalSpawns = () => _indoorSurvivalSpawns;
+
 function _spawnZombieAroundPlayer(type) {
     const player = (typeof p1 !== 'undefined' && p1) ? p1 : null;
     if (!player) return;
+
+    const mapId = (typeof window.getCurrentMapId === 'function')
+        ? window.getCurrentMapId() : null;
+
+    if (mapId === 'indoor_complex') {
+        const spot = findIndoorSurvivalSpawn();
+        if (spot) {
+            const zombie = spawnZombie(spot.x, spot.z, SurvivalState.wave, type);
+            if (zombie) {
+                zombie._indoorRoute = spot.route;
+                zombie._indoorRouteIndex = 0;
+            }
+            return;
+        }
+    }
 
     const half = (typeof window.currentArenaHalf === 'number')
         ? window.currentArenaHalf : ARENA;
@@ -356,8 +504,9 @@ function isPlayerNearPortal() {
     if (p1.hp <= 0) return false;
     if (p1.deadUntil > performance.now()) return false;
 
-    const dx = p1.pos.x;
-    const dz = p1.pos.z;
+    const anchor = getSurvivalMapAnchor();
+    const dx = p1.pos.x - anchor.x;
+    const dz = p1.pos.z - anchor.z;
     const d2 = dx * dx + dz * dz;
     const r = SurvivalState.PORTAL_TRIGGER_RADIUS;
     return d2 < r * r;
@@ -492,7 +641,7 @@ function _ensureEndlessChoiceUI() {
                 margin-bottom:10px;margin-left:8px;
             ">通 关</div>
             <div style="font-size:14px;color:#9fb2c8;letter-spacing:2px;margin-bottom:30px;">
-                你已击败全部 10 波僵尸
+                你已击败全部 ${SurvivalState.maps.length * SurvivalState.maxWaves} 波僵尸
             </div>
             <div style="display:flex;gap:20px;justify-content:center;flex-wrap:wrap;">
                 <button id="endlessLobbyBtn" style="

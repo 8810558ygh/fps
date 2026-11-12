@@ -46,25 +46,61 @@ function tryFire(p, now) {
         _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
 
         const cliSpread = (w.spread || 0) + _getMovementSpread(p);
-        _rcRandDir.copy(_rcDir);
-        if (cliSpread > 0) {
-            const theta = Math.random() * 2 * Math.PI;
-            const phi = Math.acos(1 - Math.random() * (1 - Math.cos(cliSpread)));
-            _rcAxis.crossVectors(_rcDir, _rcUp).normalize();
-            if (_rcAxis.length() < 0.01) _rcAxis.set(1, 0, 0);
-            _rcQ1.setFromAxisAngle(_rcAxis, phi);
-            _rcQ2.setFromAxisAngle(_rcDir, theta);
-            _rcRandDir.applyQuaternion(_rcQ1).applyQuaternion(_rcQ2);
+        const localTargets = prepareShotTargets();
+        const opponentParts = (typeof p2 !== 'undefined'
+            && p2
+            && p2.hp > 0
+            && p2.baseVisible !== false
+            && typeof getPlayerHitMeshes === 'function')
+            ? getPlayerHitMeshes(p2)
+            : [];
+        for (let i = 0; i < opponentParts.length; i++) localTargets.push(opponentParts[i]);
+
+        const clientShot = { weapon: w.key, hits: [] };
+        const pellets = Math.max(1, w.pellets || 1);
+        let localHitmarkShown = false;
+
+        for (let i = 0; i < pellets; i++) {
+            _rcRandDir.copy(_rcDir);
+            if (cliSpread > 0) {
+                const theta = Math.random() * 2 * Math.PI;
+                const phi = Math.acos(1 - Math.random() * (1 - Math.cos(cliSpread)));
+                _rcAxis.crossVectors(_rcDir, _rcUp).normalize();
+                if (_rcAxis.length() < 0.01) _rcAxis.set(1, 0, 0);
+                _rcQ1.setFromAxisAngle(_rcAxis, phi);
+                _rcQ2.setFromAxisAngle(_rcDir, theta);
+                _rcRandDir.applyQuaternion(_rcQ1).applyQuaternion(_rcQ2);
+            }
+
+            _ray.set(_rcOrigin, _rcRandDir);
+            _ray.near = 0;
+            _ray.far = 150;
+            const hitsLocal = _ray.intersectObjects(localTargets, false);
+            _rcEnd.copy(_rcOrigin).addScaledVector(_rcRandDir, 150);
+            if (hitsLocal.length > 0) _rcEnd.copy(hitsLocal[0].point);
+
+            if (i === 0) spawnTracer(muzzleWorld(p, _rcMuzzle), _rcEnd);
+
+            if (hitsLocal.length > 0) {
+                const first = hitsLocal[0];
+                const opponentPart = opponentParts.indexOf(first.object) >= 0;
+                if (opponentPart) {
+                    clientShot.hits.push({
+                        part: first.object.userData.part,
+                        distance: first.distance
+                    });
+                    if (!localHitmarkShown) {
+                        localHitmarkShown = true;
+                        hitmark(p);
+                        if (typeof sHit === 'function') sHit(1);
+                    }
+                }
+            }
         }
 
-        const localTargets = getShotTargets();
-        _ray.set(_rcOrigin, _rcRandDir);
-        _ray.near = 0;
-        _ray.far = 150;
-        const hitsLocal = _ray.intersectObjects(localTargets, false);
-        _rcEnd.copy(_rcOrigin).addScaledVector(_rcRandDir, 100);
-        if (hitsLocal.length > 0) _rcEnd.copy(hitsLocal[0].point);
-        spawnTracer(muzzleWorld(p, _rcMuzzle), _rcEnd);
+        if (clientShot.hits.length > 0) {
+            NET.pendingClientShots.push(clientShot);
+        }
 
         if (w.recoil) {
             applyRecoil(p, w, now);
@@ -127,6 +163,7 @@ function tryFire(p, now) {
         if (hits.length > 0) {
             let pierceLeft = w.pierce || 0;
             const hitTargets = new Set(); // 防止一次穿透打中同一个目标的不同部位两次
+            const clientOwnedShot = isOnlineHost && p === p2 && p2._clientShotAuthority;
 
             for (let j = 0; j < hits.length; j++) {
                 const h = hits[j];
@@ -196,6 +233,9 @@ function tryFire(p, now) {
                             emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                         }
                     } else if (isPlayer) {
+                        // 客户端枪击由 clientShots 按客户端看到的画面结算。
+                        // 房主端这份 p2 射线只保留枪口、弹道和音效，避免延迟判定重复伤害。
+                        if (clientOwnedShot) break;
                         const rawDmg = _resolveDamage(w, part, h.distance);
                         const dmg = _applyVulnerabilityBonus(o, rawDmg, now);
                         _addDamage(p, o.id, part, dmg);

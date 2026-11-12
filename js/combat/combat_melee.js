@@ -28,7 +28,12 @@ function tryMelee(p, now, isHeavy) {
         { isHeavy }
     );
 
-    if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) return;
+    if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) {
+        // 轻刀和重刀都必须上报；之前只有右键重刀会上报，客户端左键轻刀没有伤害。
+        NET.pendingMelee = true;
+        NET.pendingMeleeHeavy = !!isHeavy;
+        return;
+    }
 
     const isOnlineHost = (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost);
 

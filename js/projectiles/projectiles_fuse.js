@@ -141,7 +141,9 @@ function dropFuseInPlace(p) {
     const vel = new THREE.Vector3(0, 0, 0);
 
     if (type === 'smoke') {
-        const proj = spawnSmokeProjectile(origin, vel, remainMs, now);
+        const team = typeof getSmokeTeamForPlayer === 'function'
+            ? getSmokeTeamForPlayer(p) : 'blue';
+        const proj = spawnSmokeProjectile(origin, vel, remainMs, now, undefined, team);
         if (typeof sSmokeThrow === 'function') sSmokeThrow();
         if (gameMode === 'online'
             && typeof NET !== 'undefined'
@@ -152,7 +154,8 @@ function dropFuseInPlace(p) {
                 id: proj ? proj.id : null,   // ★ 新增
                 px: origin.x, py: origin.y, pz: origin.z,
                 vx: 0, vy: 0, vz: 0,
-                fuseMs: remainMs
+                fuseMs: remainMs,
+                team,
             });
         }
     } else if (type === 'flash') {
@@ -191,7 +194,9 @@ function detonateInHand(p, type, now) {
     const vel = new THREE.Vector3(0, 0, 0);
 
     if (type === 'smoke') {
-        const proj = spawnSmokeProjectile(origin, vel, 0, now);
+        const team = typeof getSmokeTeamForPlayer === 'function'
+            ? getSmokeTeamForPlayer(p) : 'blue';
+        const proj = spawnSmokeProjectile(origin, vel, 0, now, undefined, team);
         if (typeof sSmokeThrow === 'function') sSmokeThrow();
         if (gameMode === 'online'
             && typeof NET !== 'undefined'
@@ -202,7 +207,8 @@ function detonateInHand(p, type, now) {
                 id: proj ? proj.id : null,   // ★ 新增
                 px: origin.x, py: origin.y, pz: origin.z,
                 vx: 0, vy: 0, vz: 0,
-                fuseMs: 0
+                fuseMs: 0,
+                team,
             });
         }
     } else if (type === 'flash') {

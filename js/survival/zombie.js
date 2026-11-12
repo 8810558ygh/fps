@@ -224,7 +224,12 @@ function _acquireZombie() {
 // 体型
 // ============================================================
 function _applyZombieSize(zombie, cfg) {
-    const sizeMul = (cfg.sizeMul !== undefined) ? cfg.sizeMul : 1.0;
+    let sizeMul = (cfg.sizeMul !== undefined) ? cfg.sizeMul : 1.0;
+    const mapId = (typeof window.getCurrentMapId === 'function')
+        ? window.getCurrentMapId() : null;
+
+    // 室内设施门洞净高 2.9m，大僵尸在室内缩到 1.5 倍才能正常穿门。
+    if (mapId === 'indoor_complex' && sizeMul > 1.5) sizeMul = 1.5;
 
     zombie.mesh.scale.setScalar(sizeMul);
     zombie.height = ZOMBIE_BASE_HEIGHT * sizeMul;
@@ -388,16 +393,42 @@ function _defaultZombieAI(zombie, dt, now, cfg) {
         return;
     }
 
-    const dx = target.pos.x - zombie.pos.x;
-    const dz = target.pos.z - zombie.pos.z;
+    const directDx = target.pos.x - zombie.pos.x;
+    const directDz = target.pos.z - zombie.pos.z;
     const dy = target.pos.y - zombie.pos.y;
+    const directDistH = Math.hypot(directDx, directDz);
+
+    // 室内生存：从外围房间沿门洞/走廊路线进入中庭。
+    let steerX = target.pos.x;
+    let steerZ = target.pos.z;
+    const mapId = (typeof window.getCurrentMapId === 'function')
+        ? window.getCurrentMapId() : null;
+    if (mapId === 'indoor_complex' && zombie._indoorRoute) {
+        const route = zombie._indoorRoute;
+        let ri = zombie._indoorRouteIndex || 0;
+        while (ri < route.length) {
+            const wp = route[ri];
+            if (Math.hypot(wp.x - zombie.pos.x, wp.z - zombie.pos.z) > 1.15) break;
+            ri++;
+        }
+        zombie._indoorRouteIndex = ri;
+        if (ri < route.length) {
+            steerX = route[ri].x;
+            steerZ = route[ri].z;
+        } else {
+            zombie._indoorRoute = null;
+        }
+    }
+
+    const dx = steerX - zombie.pos.x;
+    const dz = steerZ - zombie.pos.z;
     const distH = Math.hypot(dx, dz);
 
     if (distH > 0.001) {
         zombie.yaw = Math.atan2(-dx, -dz);
     }
 
-    const inAttackRange = (distH <= cfg.attackRange)
+    const inAttackRange = (directDistH <= cfg.attackRange)
                        && (Math.abs(dy) <= cfg.attackHeight);
 
     const beforeX = zombie.pos.x;
@@ -471,9 +502,36 @@ function _applyZombiePhysics(zombie, dt, now, intendedMoveDist, beforeX, beforeZ
             zombie._stuckTime = 0;
         }
 
-        if (zombie._stuckTime > ZOMBIE_STUCK_THRESHOLD
+        // 室内房间多，默认直线追击可能被墙长期挡住。
+        // 持续卡住 1.4 秒后，重新从外围房间出生并沿路线进入中庭。
+        const mapId = (typeof window.getCurrentMapId === 'function')
+            ? window.getCurrentMapId() : null;
+        let relocated = false;
+        if (mapId === 'indoor_complex'
+            && zombie._stuckTime > 1.4
+            && typeof window.findIndoorSurvivalSpawn === 'function') {
+            const spot = window.findIndoorSurvivalSpawn();
+            if (spot) {
+                const groundY = (typeof terrainGroundAt === 'function')
+                    ? terrainGroundAt(spot.x, spot.z) : 0;
+                zombie.pos.set(spot.x, groundY, spot.z);
+                zombie.prevY = groundY;
+                zombie.vy = 0;
+                zombie.onGround = true;
+                zombie._vyBeforeLand = 0;
+                zombie._stuckTime = 0;
+                zombie._nextJumpAt = now + ZOMBIE_JUMP_COOLDOWN;
+                zombie._indoorRoute = spot.route || null;
+                zombie._indoorRouteIndex = 0;
+                relocated = true;
+            }
+        }
+
+        if (!relocated
+            && zombie._stuckTime > ZOMBIE_STUCK_THRESHOLD
             && zombie.onGround
-            && now >= zombie._nextJumpAt) {
+            && now >= zombie._nextJumpAt
+            && (mapId !== 'indoor_complex' || zombie._stuckTime > 2.5)) {
             zombie.vy = cfg.jumpV;
             zombie.onGround = false;
             zombie._nextJumpAt = now + ZOMBIE_JUMP_COOLDOWN;
@@ -720,7 +778,7 @@ function _killZombie(zombie, from) {
         const baseGlobalWave = SurvivalState.mapIndex * SurvivalState.maxWaves + SurvivalState.wave;
         const globalWave = SurvivalState.endlessLoop * (SurvivalState.maps.length * SurvivalState.maxWaves) + baseGlobalWave;
 
-        // 只在每一轮的第 3 波和第 8 波掉落
+        // 全局第 3/8 波对应每张地图的第 3 波
         const isDropWave = (globalWave % 10 === 3) || (globalWave % 10 === 8);
 
         if (isDropWave) {

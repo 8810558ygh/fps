@@ -174,6 +174,14 @@ function handleClientInput(fromId, data) {
     if (!NET.isHost) return;
     if (typeof p2 === 'undefined' || !p2) return;
 
+    // 新客户端每个输入包都会带 clientShots（即使为空）。
+    // 旧客户端不带该字段，继续走原来的房主射线结算，保证版本兼容。
+    p2._clientShotAuthority = Array.isArray(data.clientShots);
+
+    if (Array.isArray(data.clientShots) && data.clientShots.length > 0) {
+        _handleClientShots(data.clientShots);
+    }
+
     // ============================================================
     // ★ 滑索挂载：直接接管 p2.zipline 状态
     // ============================================================
@@ -285,7 +293,8 @@ function handleClientInput(fromId, data) {
                 const proj = spawnSmokeProjectile(
                     new THREE.Vector3(fr.px, fr.py, fr.pz),
                     new THREE.Vector3(fr.vx, fr.vy, fr.vz),
-                    fr.fuseMs, now
+                    fr.fuseMs, now, undefined,
+                    getSmokeTeamForPlayer(p2)
                 );
                 if (typeof sSmokeThrow === 'function') sSmokeThrow();
                 if (typeof NET_broadcast === 'function') {
@@ -295,6 +304,7 @@ function handleClientInput(fromId, data) {
                         px: fr.px, py: fr.py, pz: fr.pz,
                         vx: fr.vx, vy: fr.vy, vz: fr.vz,
                         fuseMs: fr.fuseMs,
+                        team: getSmokeTeamForPlayer(p2),
                     });
                 }
             } else if (fr.type === 'flash') {
@@ -338,4 +348,57 @@ function handleClientInput(fromId, data) {
     }
 
     p2.lastRemoteInputAt = performance.now();
+}
+
+// ============================================================
+// 客户端枪击结算
+//
+// 客户端在本机看到的对手位置/遮挡上做射线检测，只上传“命中了哪个部位”。
+// 房主仍负责伤害、护甲、击杀与比分，但不再使用过期的客户端视角重复判定。
+// ============================================================
+function _handleClientShots(shots) {
+    if (!NET.isHost || !Array.isArray(shots)) return;
+    if (typeof p1 === 'undefined' || typeof p2 === 'undefined' || !p1 || !p2) return;
+    if (gameState !== 'combat' || p1.hp <= 0 || p2.hp <= 0) return;
+
+    const now = performance.now();
+    const cutoff = now - 1000;
+    NET._clientShotTimes = NET._clientShotTimes.filter(t => t >= cutoff);
+
+    // 正常最高射速是奥丁约 15.6 发/秒；留出短时网络合并余量。
+    if (NET._clientShotTimes.length >= 22) return;
+
+    const pending = shots.slice(0, 4);
+    for (let si = 0; si < pending.length; si++) {
+        const shot = pending[si];
+        if (!shot || !shot.weapon || !Array.isArray(shot.hits)) continue;
+
+        const w = WEAPONS[shot.weapon];
+        if (!w) continue;
+
+        if (NET._clientShotTimes.length >= 22) break;
+        NET._clientShotTimes.push(now);
+
+        const maxHits = Math.max(1, w.pellets || 1);
+        const hitCount = Math.min(maxHits, shot.hits.length);
+
+        for (let hi = 0; hi < hitCount; hi++) {
+            if (p1.hp <= 0 || p1.deadUntil > now) break;
+
+            const hit = shot.hits[hi];
+            if (!hit) continue;
+
+            const part = hit.part;
+            if (part !== 'head' && part !== 'body' && part !== 'leg') continue;
+
+            const distance = Number(hit.distance);
+            if (!Number.isFinite(distance) || distance < 0 || distance > 150) continue;
+
+            const rawDmg = _resolveDamage(w, part, distance);
+            const dmg = _applyVulnerabilityBonus(p1, rawDmg, now);
+
+            _addDamage(p2, p1.id, part, dmg);
+            damage(p1, dmg, p2);
+        }
+    }
 }

@@ -87,12 +87,32 @@ function updateP2ShadowState() {
 function interpolateRemotePlayer(p, dt) {
     if (!p || !p._netTargetPos) return;
 
-    const k    = 1 - Math.exp(-18 * dt);
-    const kYaw = 1 - Math.exp(-22 * dt);
+    const k    = 1 - Math.exp(-24 * dt);
+    const kYaw = 1 - Math.exp(-28 * dt);
 
-    p.pos.x += (p._netTargetPos.x - p.pos.x) * k;
-    p.pos.y += (p._netTargetPos.y - p.pos.y) * k;
-    p.pos.z += (p._netTargetPos.z - p.pos.z) * k;
+    // 远端位置只做很短的前瞻，用来抵消插值本身带来的视觉滞后。
+    // 上限 0.28m，避免停步/撞墙时产生明显过冲。
+    let targetX = p._netTargetPos.x;
+    let targetY = p._netTargetPos.y;
+    let targetZ = p._netTargetPos.z;
+    if (!(p.zipline && p.zipline.active) && p._netVelocity) {
+        const forecast = 0.03;
+        let fx = p._netVelocity.x * forecast;
+        let fy = p._netVelocity.y * forecast;
+        let fz = p._netVelocity.z * forecast;
+        const len = Math.hypot(fx, fy, fz);
+        if (len > 0.28) {
+            const s = 0.28 / len;
+            fx *= s; fy *= s; fz *= s;
+        }
+        targetX += fx;
+        targetY += fy;
+        targetZ += fz;
+    }
+
+    p.pos.x += (targetX - p.pos.x) * k;
+    p.pos.y += (targetY - p.pos.y) * k;
+    p.pos.z += (targetZ - p.pos.z) * k;
 
     let dyaw = p._netTargetYaw - p.yaw;
     while (dyaw >  Math.PI) dyaw -= Math.PI * 2;
@@ -205,8 +225,20 @@ function loop() {
             if (gameState === 'prep' && now >= stateEndTime) endPrep(now);
             else if (gameState === 'roundEnd' && now >= stateEndTime) startRound(now);
         } else if (isClient) {
+            const prevPX = p1.pos.x;
+            const prevPY = p1.pos.y;
+            const prevPZ = p1.pos.z;
             collectLocalInput(p1);
             updatePlayer(p1, dt, now);
+
+            if (dt > 0.0001) {
+                if (!p1._netVelocity) p1._netVelocity = new THREE.Vector3();
+                p1._netVelocity.set(
+                    (p1.pos.x - prevPX) / dt,
+                    (p1.pos.y - prevPY) / dt,
+                    (p1.pos.z - prevPZ) / dt
+                );
+            }
 
             if (typeof p2 !== 'undefined' && p2) {
                 interpolateRemotePlayer(p2, dt);

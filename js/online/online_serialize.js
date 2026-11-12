@@ -3,6 +3,7 @@
 
 const HIGH_FREQ_FIELDS = [
     'x', 'y', 'z',
+    'vx', 'vy', 'vz',
     'yaw', 'pitch', 'fov',
     'aiming', 'aimStage',
     'reloadRemain', 'boltRemain', 'equipRemain',
@@ -138,6 +139,23 @@ function _mergeDelta(side, payload) {
 // ============================================================
 function serializePlayer(p, out) {
     const now = performance.now();
+    const prevTime = p._netSerializeTime || now;
+    const dt = (now - prevTime) / 1000;
+
+    if (dt > 0.001 && dt < 0.25 && p._netSerializePos) {
+        out.vx = (p.pos.x - p._netSerializePos.x) / dt;
+        out.vy = (p.pos.y - p._netSerializePos.y) / dt;
+        out.vz = (p.pos.z - p._netSerializePos.z) / dt;
+    } else {
+        out.vx = 0;
+        out.vy = 0;
+        out.vz = 0;
+    }
+
+    p._netSerializeTime = now;
+    if (!p._netSerializePos) p._netSerializePos = new THREE.Vector3();
+    p._netSerializePos.copy(p.pos);
+
     out.x = p.pos.x;
     out.y = p.pos.y;
     out.z = p.pos.z;

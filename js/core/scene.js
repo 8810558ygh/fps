@@ -393,6 +393,9 @@ function loadMap(mapId) {
 
     if (typeof window.refreshMinimap === 'function') window.refreshMinimap();
     if (typeof window.requestShadowUpdate === 'function') window.requestShadowUpdate();
+    if (typeof window.refreshRenderQualityForMap === 'function') {
+        window.refreshRenderQualityForMap();
+    }
 
     return true;
 }
