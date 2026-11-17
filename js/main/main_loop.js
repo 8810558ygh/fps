@@ -82,6 +82,8 @@ function updateP2ShadowState() {
     p2.mesh.traverse(o => { if (o.isMesh) o.castShadow = cast; });
 }
 
+let _lanRemotePhysicsFrame = 0;
+
 // ============================================================
 // ★ 远端玩家插值（固定时间常数 · 帧率无关 · 抗抖动）
 // ============================================================
@@ -332,9 +334,13 @@ function loop() {
                 }
             }
             if (isLan && typeof LAN_foreachRemote === 'function') {
-                LAN_foreachRemote(remote => {
-                    window.PHYSICS.syncPlayerToBody(remote, dt);
-                });
+                // 远端位置只以 30Hz 到达；物理影子体无需每个渲染帧重复同步。
+                _lanRemotePhysicsFrame = (_lanRemotePhysicsFrame + 1) % 2;
+                if (_lanRemotePhysicsFrame === 0) {
+                    LAN_foreachRemote(remote => {
+                        window.PHYSICS.syncPlayerToBody(remote, dt * 2);
+                    });
+                }
             }
         }
 

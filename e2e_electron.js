@@ -89,6 +89,41 @@ async function waitForPageExpression(client, expression, timeoutMs, label) {
   return waitFor(() => client.evaluate(`Boolean(${expression})`), timeoutMs, label);
 }
 
+async function samplePerformance(client, durationMs = 3000) {
+  return client.evaluate(`
+    new Promise(resolve => {
+      const gl = renderer.getContext();
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+      const rendererName = debugInfo
+        ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
+        : gl.getParameter(gl.RENDERER);
+      const startedAt = performance.now();
+      let frames = 0;
+      function sample(now) {
+        frames++;
+        if (now - startedAt < ${durationMs}) {
+          requestAnimationFrame(sample);
+          return;
+        }
+        resolve({
+          fps: Number((frames * 1000 / (now - startedAt)).toFixed(1)),
+          frameMs: Number(((now - startedAt) / frames).toFixed(2)),
+          pixelRatio: renderer.getPixelRatio(),
+          drawingBuffer: [gl.drawingBufferWidth, gl.drawingBufferHeight],
+          cssViewport: [innerWidth, innerHeight],
+          calls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          shadows: renderer.shadowMap.enabled,
+          lanOptimization: SETTINGS.network.lanOptimization,
+          renderer: rendererName,
+          hardwareConcurrency: navigator.hardwareConcurrency
+        });
+      }
+      requestAnimationFrame(sample);
+    })
+  `);
+}
+
 function launch(name, port) {
   const userData = path.join(tempRoot, name);
   const playerData = path.join(tempRoot, `${name}-player-data`);
@@ -237,6 +272,36 @@ async function main() {
     'match stat snapshot'
   );
 
+  await sleep(1500);
+  const performanceSample = await samplePerformance(host);
+
+  await host.evaluate(`
+    LAN.active = false;
+    LAN_foreachRemote(player => { player.baseVisible = false; player.mesh.visible = false; });
+    true;
+  `);
+  const performanceWithoutRemotes = await samplePerformance(host, 2000);
+  await host.evaluate(`
+    LAN_foreachRemote((player, state) => {
+      player.baseVisible = !!state.alive;
+      player.mesh.visible = !!state.alive;
+    });
+    LAN.active = true;
+    true;
+  `);
+
+  await host.evaluate(`
+    SETTINGS.network.lanOptimization = false;
+    SETTINGS_ApplyGraphics(true);
+    true;
+  `);
+  const performanceUnoptimized = await samplePerformance(host, 2000);
+  await host.evaluate(`
+    SETTINGS.network.lanOptimization = true;
+    SETTINGS_ApplyGraphics(true);
+    true;
+  `);
+
   const hostSelfId = await host.evaluate('LAN.selfId');
   const targetId = room.players.find(player => player.id !== hostSelfId).id;
   await waitForPageExpression(host, 'LAN.phase === "round"', 8000, 'round combat start');
@@ -311,6 +376,9 @@ async function main() {
     profileId: savedProfile.playerId,
     dataFolder: dataDirectories.get('host'),
     profileUi,
+    performanceSample,
+    performanceWithoutRemotes,
+    performanceUnoptimized,
     storedMatch,
     matchStarted: true,
     latency: await joiner.evaluate('LANNET.latency'),

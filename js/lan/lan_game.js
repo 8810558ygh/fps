@@ -146,6 +146,7 @@ function _lanRenderLobby(room) {
 
 function lanShowLobby() {
     if (!LANNET.connected) LANNET.connect();
+    if (typeof SETTINGS_PrepareLanMatch === 'function') SETTINGS_PrepareLanMatch();
     const serverHint = _lanEl('lanServerHint');
     if (serverHint) {
         serverHint.textContent = window.electronAPI
@@ -221,6 +222,7 @@ function _lanBindUI() {
     };
 
     on('lanBackBtn', () => {
+        if (typeof SETTINGS_CancelLanPreload === 'function') SETTINGS_CancelLanPreload();
         _lanHideLobby();
         if (_lanEl('lobbyOverlay')) _lanEl('lobbyOverlay').style.display = 'flex';
     });
@@ -268,6 +270,18 @@ function _lanDisposeRemote(player) {
     if (window.PHYSICS && player) {
         try { window.PHYSICS.removePlayerBody(player); } catch {}
     }
+    if (player.mesh) {
+        player.mesh.traverse(object => {
+            if (!object.isMesh) return;
+            if (object.geometry) object.geometry.dispose();
+            const materials = Array.isArray(object.material) ? object.material : [object.material];
+            for (const material of materials) {
+                if (material && material !== player.mat && material !== LAN_REMOTE_WEAPON_MAT) {
+                    material.dispose();
+                }
+            }
+        });
+    }
     if (player.mesh && player.mesh.parent) player.mesh.parent.remove(player.mesh);
     if (player.cam && player.cam.parent) player.cam.parent.remove(player.cam);
     if (player.mat) player.mat.dispose();
@@ -279,36 +293,89 @@ function _lanClearRemotes() {
     LAN.playerStates.clear();
 }
 
-function _lanInstallSimpleWeapon(player) {
-    if (!player || !player.gunHolder) return;
-    while (player.gunHolder.children.length) {
-        player.gunHolder.remove(player.gunHolder.children[0]);
-    }
-    if (player.vm) {
-        while (player.vm.children.length) player.vm.remove(player.vm.children[0]);
-    }
+const LAN_REMOTE_WEAPON_MAT = new THREE.MeshLambertMaterial({ color: 0x202a32 });
 
-    const group = new THREE.Group();
-    group.name = 'lanSimpleWeapon';
-    const dark = new THREE.MeshLambertMaterial({ color: 0x171c22 });
-    const accent = new THREE.MeshLambertMaterial({ color: 0x384552 });
-    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.13, 0.48), dark);
-    receiver.position.z = -0.10;
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.36), accent);
-    barrel.position.set(0, 0.01, -0.48);
-    const magazine = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.10), dark);
-    magazine.position.set(0, -0.13, -0.05);
-    group.add(receiver, barrel, magazine);
-    group.traverse(o => {
-        if (o.isMesh) {
-            o.castShadow = false;
-            o.receiveShadow = false;
+function _lanDisposeDetachedModel(root, preservedMaterials) {
+    if (!root) return;
+    root.traverse(object => {
+        if (!object.isMesh) return;
+        if (object.geometry) object.geometry.dispose();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) {
+            if (material && !preservedMaterials.has(material)) material.dispose();
         }
     });
-    player.gunHolder.add(group);
-    player._lanSimpleWeapon = group;
+}
+
+function _lanInstallSimplePlayerModel(player) {
+    if (!player || !player.mesh) return;
+    const group = player.mesh;
+    const preservedMaterials = new Set([player.mat]);
+    if (typeof DARK_MAT !== 'undefined') preservedMaterials.add(DARK_MAT);
+    const detachedChildren = group.children.slice();
+    for (const child of detachedChildren) {
+        group.remove(child);
+        _lanDisposeDetachedModel(child, preservedMaterials);
+    }
+    if (player.cam && player.cam.parent) player.cam.parent.remove(player.cam);
+
+    const head = new THREE.Mesh(
+        new THREE.BoxGeometry(0.34, 0.34, 0.34),
+        player.mat
+    );
+    head.position.y = 1.68;
+    head.userData.part = 'head';
+
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(0.54, 0.76, 0.34),
+        player.mat
+    );
+    body.position.y = 1.18;
+    body.userData.part = 'body';
+
+    const legs = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.84, 0.28),
+        player.mat
+    );
+    legs.position.y = 0.48;
+    legs.userData.part = 'leg';
+
+    const gunHolder = new THREE.Group();
+    gunHolder.position.set(0.28, 1.30, -0.46);
+    const weapon = new THREE.Mesh(
+        new THREE.BoxGeometry(0.13, 0.13, 0.62),
+        LAN_REMOTE_WEAPON_MAT
+    );
+    weapon.position.z = -0.22;
+    gunHolder.add(weapon);
+
+    group.add(head, body, legs, gunHolder);
+    group.traverse(object => {
+        if (!object.isMesh) return;
+        object.castShadow = false;
+        object.receiveShadow = false;
+    });
+
+    player.head = head;
+    player.body = body;
+    player.legL = legs;
+    player.legR = null;
+    player.visor = null;
+    player.footL = null;
+    player.footR = null;
+    player.armLUp = null;
+    player.armLLow = null;
+    player.armRUp = null;
+    player.armRLow = null;
+    player.handL = null;
+    player.handR = null;
+    player.gunHolder = gunHolder;
+    player.vm = new THREE.Group();
+    player.muzzle = null;
+    player.flashIndicator = null;
+    player.vulnIndicator = null;
+    player._lanSimpleModel = true;
     player.gunHolder.visible = true;
-    if (player.muzzle) player.muzzle.visible = false;
 }
 
 function _lanEnsureRemote(state) {
@@ -327,7 +394,7 @@ function _lanEnsureRemote(state) {
     player.name = state.name;
     player._lanRemote = true;
     player._shadowDisabled = true;
-    _lanInstallSimpleWeapon(player);
+    _lanInstallSimplePlayerModel(player);
     player.mesh.traverse(o => { if (o.isMesh) o.castShadow = false; });
     player._netTargetPos = player.pos.clone();
     player._netTargetYaw = player.yaw;
@@ -547,6 +614,7 @@ function lanStartMatch(mapId) {
     gameState = 'prep';
     running = true;
     matchStart = performance.now();
+    if (typeof SETTINGS_ApplyGraphics === 'function') SETTINGS_ApplyGraphics(true);
     document.body.classList.add('in-game');
     if (typeof setOver === 'function') setOver(false);
     if (typeof enterFullscreenAndLock === 'function') enterFullscreenAndLock();
@@ -591,6 +659,7 @@ function _lanMatchEnd(msg) {
     _lanSaveMatchResult(msg);
     running = false;
     gameState = 'idle';
+    if (typeof SETTINGS_ApplyGraphics === 'function') SETTINGS_ApplyGraphics(true);
     if (document.pointerLockElement) document.exitPointerLock();
     if (typeof setOver === 'function') setOver(true);
     if (_lanEl('lanMatchHud')) _lanEl('lanMatchHud').style.display = 'none';

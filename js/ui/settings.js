@@ -60,6 +60,9 @@
             invertY: false,
             touch: 60,
         },
+        network: {
+            lanOptimization: true,
+        },
         graphics: {
             preset: 'balanced',
             renderScale: 0.90,
@@ -136,13 +139,26 @@
         SETTINGS.graphics.shadows = SETTINGS.graphics.shadowQuality !== 'off';
     }
 
+    let _lanGraphicsPrewarm = false;
+
+    function _isLanPerformanceMode() {
+        if (!SETTINGS.network.lanOptimization) return false;
+        if (_lanGraphicsPrewarm) return true;
+        return (typeof running !== 'undefined' && running
+            && typeof gameMode !== 'undefined' && gameMode === 'lan');
+    }
+
     function getEffectivePixelRatio() {
         const isTouch = window.matchMedia('(pointer: coarse)').matches;
         const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
+        const lanPerformanceMode = _isLanPerformanceMode();
         const isDesert = (typeof getCurrentMapId === 'function' && getCurrentMapId() === 'desert');
-        const baseCap = isTouch ? 1 : ((isOnline || isDesert) ? 1.5 : 2);
+        const baseCap = (isTouch || lanPerformanceMode)
+            ? 1
+            : ((isOnline || isDesert) ? 1.5 : 2);
         const dpr = Math.min(window.devicePixelRatio || 1, baseCap);
-        const scale = _clamp(SETTINGS.graphics.renderScale, 0.5, 1.0);
+        let scale = _clamp(SETTINGS.graphics.renderScale, 0.5, 1.0);
+        if (lanPerformanceMode) scale = Math.min(scale, 0.65);
         return Math.max(0.5, dpr * scale);
     }
 
@@ -288,7 +304,10 @@
             custom: '自定义',
         }[g.preset] || '自定义';
         const effective = getEffectivePixelRatio().toFixed(2);
-        el.textContent = `当前：${presetName} · 3D 分辨率 ${Math.round(g.renderScale * 100)}% · 实际像素比 ${effective}×`;
+        const lanPerformanceMode = _isLanPerformanceMode();
+        el.textContent = lanPerformanceMode
+            ? `联机优化已启用 · 实际像素比 ${effective}× · 阴影关闭 · 普通模式仍使用“${presetName}”`
+            : `当前：${presetName} · 3D 分辨率 ${Math.round(g.renderScale * 100)}% · 实际像素比 ${effective}×`;
 
         document.querySelectorAll('#qualityPresetRow .quality-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.qualityPreset === g.preset);
@@ -300,7 +319,9 @@
 
         _normalizeGraphics();
         const g = SETTINGS.graphics;
-        const shadow = SHADOW_SETTINGS[g.shadowQuality] || SHADOW_SETTINGS.medium;
+        const lanPerformanceMode = _isLanPerformanceMode();
+        const effectiveShadowQuality = lanPerformanceMode ? 'off' : g.shadowQuality;
+        const shadow = SHADOW_SETTINGS[effectiveShadowQuality] || SHADOW_SETTINGS.medium;
 
         // 像素比是最稳妥的全局性能杠杆，直接改变主画面的片元着色开销。
         if (typeof window.refreshRenderQualityForMap === 'function') {
@@ -343,7 +364,8 @@
             console.log(
                 '[settings] 画面设置:',
                 '3D 分辨率', Math.round(g.renderScale * 100) + '%',
-                '阴影', g.shadowQuality,
+                '阴影', effectiveShadowQuality,
+                '联机优化', lanPerformanceMode ? '开启' : '关闭',
                 '雾距', Math.round(g.fogDistance) + 'm',
                 '特效', Math.round(g.effectDensity * 100) + '%',
                 '地图灯光', mapLights
@@ -361,6 +383,16 @@
         }
     }
     window.SETTINGS_ApplyZombie = applyZombieSettings;
+    window.SETTINGS_PrepareLanMatch = function () {
+        _lanGraphicsPrewarm = true;
+        applyGraphics(true);
+        _syncGraphicsUI();
+    };
+    window.SETTINGS_CancelLanPreload = function () {
+        _lanGraphicsPrewarm = false;
+        applyGraphics(true);
+        _syncGraphicsUI();
+    };
 
     // ============================================================
     // 玩家资料与本地战绩
@@ -677,6 +709,15 @@
             });
         });
 
+        const lanOptimizationEl = $('gfxLanOptimization');
+        if (lanOptimizationEl) {
+            lanOptimizationEl.addEventListener('change', () => {
+                SETTINGS.network.lanOptimization = lanOptimizationEl.checked;
+                applyGraphics(true);
+                _syncGraphicsUI();
+            });
+        }
+
         const renderScaleEl = $('gfxRenderScale');
         if (renderScaleEl) {
             renderScaleEl.addEventListener('input', () => {
@@ -754,6 +795,7 @@
         if ($('gfxEffectDensityVal'))   $('gfxEffectDensityVal').textContent = Math.round(g.effectDensity * 100) + '%';
         if ($('gfxZombieMaxAlive'))     $('gfxZombieMaxAlive').value = Math.round(g.zombieMaxAlive);
         if ($('gfxZombieMaxAliveVal'))  $('gfxZombieMaxAliveVal').textContent = Math.round(g.zombieMaxAlive);
+        if ($('gfxLanOptimization'))    $('gfxLanOptimization').checked = !!SETTINGS.network.lanOptimization;
 
         _updateGraphicsHint();
     }

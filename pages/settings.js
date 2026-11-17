@@ -245,6 +245,19 @@ document.write(`
                         </div>
 
                         <div class="settings-section">
+                            <div class="section-title">联机性能</div>
+                            <div class="set-row">
+                                <label>联机性能优化</label>
+                                <input type="checkbox" id="gfxLanOptimization" class="switch" checked>
+                                <span class="set-val">推荐开启</span>
+                            </div>
+                            <div class="quality-hint">
+                                💡 局域网对局时自动使用 65% 渲染并关闭实时阴影，普通模式仍使用上面的画质设置。
+                                性能较弱的电脑建议保持开启。
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
                             <div class="section-title">渲染</div>
 
                             <div class="set-row">

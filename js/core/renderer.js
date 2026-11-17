@@ -12,7 +12,10 @@
         return;
     }
 
-    const r = new THREE.WebGLRenderer({ antialias: true });
+    const r = new THREE.WebGLRenderer({
+        antialias: true,
+        powerPreference: 'high-performance',
+    });
     r.setSize(window.innerWidth, window.innerHeight);
     r.shadowMap.enabled = true;
     r.outputEncoding = THREE.sRGBEncoding;

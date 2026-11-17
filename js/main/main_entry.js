@@ -179,10 +179,10 @@ document.getElementById('againBtn').addEventListener('click', () => {
 // 游戏模式切换
 // ============================================================
 window.GAME_setMode = function (mode) {
-    const wasOnline = (gameMode === 'online');
+    const wasNetworked = (gameMode === 'online' || gameMode === 'lan');
     gameMode = mode;
-    const isOnline = (mode === 'online');
-    if (wasOnline !== isOnline && typeof renderer !== 'undefined' && renderer) {
+    const isNetworked = (mode === 'online' || mode === 'lan');
+    if (wasNetworked !== isNetworked && typeof renderer !== 'undefined' && renderer) {
         renderer.setPixelRatio(getDesiredPixelRatio());
         console.log('[perf] pixelRatio →', renderer.getPixelRatio(), '(mode:', mode + ')');
     }
