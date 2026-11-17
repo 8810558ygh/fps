@@ -17,6 +17,7 @@ const LAN = {
     lastRoundKey: null,
     spectateNetId: null,
     lastDeathNoticeAt: 0,
+    lastSavedMatchId: null,
 };
 
 window.LAN = LAN;
@@ -517,6 +518,7 @@ function lanStartMatch(mapId) {
     LAN.lastRoundKey = null;
     LAN.nextRemoteNumericId = 100;
     LAN.spectateNetId = null;
+    LAN.lastSavedMatchId = null;
 
     _lanHideLobby();
     if (_lanEl('lanEndOverlay')) _lanEl('lanEndOverlay').style.display = 'none';
@@ -551,7 +553,42 @@ function lanStartMatch(mapId) {
     lanNotify('比赛开始 · 双方准备', 1600);
 }
 
+function _lanSaveMatchResult(msg) {
+    if (!msg.matchId || LAN.lastSavedMatchId === msg.matchId) return;
+    LAN.lastSavedMatchId = msg.matchId;
+
+    const players = Array.isArray(msg.players) ? msg.players : [];
+    const self = players.find(player => player.id === LAN.selfId)
+        || LAN.playerStates.get(LAN.selfId);
+    if (!self) return;
+
+    const result = !msg.winnerTeam ? 'draw'
+        : (msg.winnerTeam === self.team ? 'win' : 'loss');
+    const record = {
+        matchId: msg.matchId,
+        playedAt: msg.playedAt,
+        playerId: typeof window.PROFILE_GetId === 'function' ? window.PROFILE_GetId() : LAN.selfName,
+        mapId: msg.mapId || LAN.mapId,
+        team: self.team,
+        result,
+        blueScore: msg.blueScore,
+        redScore: msg.redScore,
+        rounds: msg.rounds,
+        kills: self.kills || 0,
+        deaths: self.deaths || 0,
+        damage: self.damage || 0,
+        durationSeconds: Math.max(0, Math.round((msg.durationMs || 0) / 1000)),
+    };
+
+    if (typeof window.PROFILE_AddMatch === 'function') {
+        window.PROFILE_AddMatch(record).then(result => {
+            if (!result || !result.ok) console.warn('[profile] 战绩保存失败', result && result.message);
+        });
+    }
+}
+
 function _lanMatchEnd(msg) {
+    _lanSaveMatchResult(msg);
     running = false;
     gameState = 'idle';
     if (document.pointerLockElement) document.exitPointerLock();
@@ -835,7 +872,7 @@ function LAN_renderScoreboard() {
                 + (state.id === LAN.selfId ? ' self' : '');
             row.innerHTML = `
                 <span>${_lanNameHtml(state.name)}</span>
-                <span>${state.alive ? `HP ${state.hp}` : '阵亡'}</span>
+                <span>${state.alive ? `HP ${state.hp}` : '阵亡'} · ${state.kills || 0}/${state.deaths || 0}</span>
             `;
             list.appendChild(row);
         }

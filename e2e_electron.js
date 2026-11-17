@@ -11,6 +11,7 @@ const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'heroes-duel-e2e-'));
 const processes = [];
 const sockets = [];
 const clients = [];
+const dataDirectories = new Map();
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -90,11 +91,17 @@ async function waitForPageExpression(client, expression, timeoutMs, label) {
 
 function launch(name, port) {
   const userData = path.join(tempRoot, name);
+  const playerData = path.join(tempRoot, `${name}-player-data`);
+  dataDirectories.set(name, playerData);
   const child = spawn(executable, [
     `--user-data-dir=${userData}`,
     `--remote-debugging-port=${port}`,
   ], {
     cwd: __dirname,
+    env: {
+      ...process.env,
+      HEROES_DUEL_DATA_DIR: playerData,
+    },
     stdio: 'ignore',
     windowsHide: true,
   });
@@ -124,6 +131,37 @@ async function main() {
     waitForPageExpression(host, 'window.LANNET && window.LAN && window.electronAPI', 20000, 'host game scripts'),
     waitForPageExpression(joiner, 'window.LANNET && window.LAN && window.electronAPI', 20000, 'joiner game scripts'),
   ]);
+  await Promise.all([
+    waitForPageExpression(host, 'window.PROFILE && PROFILE.ready', 10000, 'host profile'),
+    waitForPageExpression(joiner, 'window.PROFILE && PROFILE.ready', 10000, 'joiner profile'),
+  ]);
+
+  await host.evaluate(`
+    SETTINGS_Open();
+    document.getElementById('profilePlayerId').value = '测试玩家A';
+    document.getElementById('profileSaveIdBtn').click();
+    true;
+  `);
+  await joiner.evaluate(`
+    SETTINGS_Open();
+    document.getElementById('profilePlayerId').value = '测试玩家B';
+    document.getElementById('profileSaveIdBtn').click();
+    true;
+  `);
+  await Promise.all([
+    waitForPageExpression(host, 'PROFILE_GetId() === "测试玩家A"', 5000, 'host ID save'),
+    waitForPageExpression(joiner, 'PROFILE_GetId() === "测试玩家B"', 5000, 'joiner ID save'),
+  ]);
+  await Promise.all([
+    host.evaluate('SETTINGS_Close(); true'),
+    joiner.evaluate('SETTINGS_Close(); true'),
+  ]);
+
+  const hostProfileFile = path.join(dataDirectories.get('host'), 'profile.json');
+  const savedProfile = JSON.parse(fs.readFileSync(hostProfileFile, 'utf8'));
+  if (savedProfile.playerId !== '测试玩家A') {
+    throw new Error('Profile ID was not persisted to profile.json');
+  }
 
   await Promise.all([
     host.evaluate('lanShowLobby(); true'),
@@ -177,6 +215,9 @@ async function main() {
   if (new Set(room.players.map(player => player.team)).size !== 2) {
     throw new Error('Players were not split across both teams');
   }
+  if (!room.players.some(player => player.name === '测试玩家A')) {
+    throw new Error('Saved player ID was not sent to the room');
+  }
 
   await Promise.all([
     host.evaluate("document.getElementById('lanReadyBtn').click(); true"),
@@ -189,6 +230,77 @@ async function main() {
     waitForPageExpression(host, 'LAN.active && LAN.phase !== "lobby"', 8000, 'host match start'),
     waitForPageExpression(joiner, 'LAN.active && LAN.phase !== "lobby"', 8000, 'joiner match start'),
   ]);
+  await waitForPageExpression(
+    host,
+    'LAN.playerStates.size === 2 && [...LAN.playerStates.values()].every(player => Number.isFinite(player.kills))',
+    5000,
+    'match stat snapshot'
+  );
+
+  const hostSelfId = await host.evaluate('LAN.selfId');
+  const targetId = room.players.find(player => player.id !== hostSelfId).id;
+  await waitForPageExpression(host, 'LAN.phase === "round"', 8000, 'round combat start');
+  await host.evaluate(`
+    LANNET.send({
+      type: 'shot',
+      weapon: 'sniper',
+      hits: [{ targetId: ${JSON.stringify(targetId)}, part: 'body', distance: 1 }],
+      visual: null
+    });
+    true;
+  `);
+  await waitForPageExpression(
+    host,
+    `LAN.playerStates.get(LAN.selfId).kills === 1 && LAN.playerStates.get(${JSON.stringify(targetId)}).deaths === 1`,
+    5000,
+    'server-authoritative kill stats'
+  );
+  const statsPlayers = await host.evaluate(`
+    Array.from(LAN.playerStates.values()).map(player => ({
+      id: player.id,
+      name: player.name,
+      team: player.team,
+      kills: player.kills,
+      deaths: player.deaths,
+      damage: player.damage
+    }))
+  `);
+  const hostTeam = statsPlayers.find(player => player.id === hostSelfId).team;
+  const matchId = `e2e-${Date.now()}`;
+  await host.evaluate(`
+    LAN_handleMessage(${JSON.stringify({
+      type: 'matchEnd',
+      matchId,
+      winnerTeam: hostTeam,
+      blueScore: 10,
+      redScore: 4,
+      mapId: 'battlefield',
+      rounds: 14,
+      playedAt: new Date().toISOString(),
+      durationMs: 90000,
+      players: statsPlayers,
+    })});
+    true;
+  `);
+  const matchesFile = path.join(dataDirectories.get('host'), 'matches.json');
+  const storedMatch = await waitFor(() => {
+    const stored = JSON.parse(fs.readFileSync(matchesFile, 'utf8'));
+    return stored.matches.find(match => match.matchId === matchId);
+  }, 5000, 'match history persistence');
+  await host.evaluate('SETTINGS_Open(); true');
+  await waitForPageExpression(
+    host,
+    'document.getElementById("profileTotalGames").textContent === "1"',
+    5000,
+    'profile summary UI'
+  );
+  const profileUi = await host.evaluate(`({
+    games: document.getElementById('profileTotalGames').textContent,
+    kd: document.getElementById('profileKd').textContent,
+    dataPath: document.getElementById('profileDataPath').textContent,
+    recentRows: document.querySelectorAll('#profileMatchList .profile-match-row').length
+  })`);
+  await host.evaluate('SETTINGS_Close(); true');
 
   const result = {
     code,
@@ -196,6 +308,10 @@ async function main() {
     localJoiner,
     joinerServer: joinConnection.currentUrl,
     room,
+    profileId: savedProfile.playerId,
+    dataFolder: dataDirectories.get('host'),
+    profileUi,
+    storedMatch,
     matchStarted: true,
     latency: await joiner.evaluate('LANNET.latency'),
   };

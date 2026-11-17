@@ -254,12 +254,20 @@ function startMatch(room) {
   const red = teamPlayers(room, 'red').length;
   if (!blue || !red) return;
 
+  for (const id of room.memberIds) {
+    const client = clients.get(id);
+    if (!client) continue;
+    client.matchKills = 0;
+    client.matchDeaths = 0;
+    client.matchDamage = 0;
+  }
   room.phase = 'prep';
   room.round = 1;
   room.blueScore = 0;
   room.redScore = 0;
   room.roundWinner = null;
   room.roundEndsAt = 0;
+  room.matchId = crypto.randomUUID();
   room.matchStartedAt = Date.now();
   broadcastRoom(room, { type: 'matchStart', mapId: room.mapId });
   beginPrep(room);
@@ -310,11 +318,28 @@ function roomTick(room) {
   } else if (room.phase === 'roundEnd' && now >= room.phaseEnd) {
     if (room.blueScore >= MATCH_POINT || room.redScore >= MATCH_POINT) {
       room.phase = 'matchEnd';
+      room.phaseEnd = now;
       broadcastRoom(room, {
         type: 'matchEnd',
+        matchId: room.matchId,
         winnerTeam: room.blueScore > room.redScore ? 'blue' : (room.redScore > room.blueScore ? 'red' : null),
         blueScore: room.blueScore,
         redScore: room.redScore,
+        mapId: room.mapId,
+        rounds: room.round,
+        playedAt: new Date(room.matchStartedAt || now).toISOString(),
+        durationMs: Math.max(0, now - (room.matchStartedAt || now)),
+        players: Array.from(room.memberIds)
+          .map(id => clients.get(id))
+          .filter(Boolean)
+          .map(client => ({
+            id: client.id,
+            name: client.name,
+            team: client.team,
+            kills: client.matchKills || 0,
+            deaths: client.matchDeaths || 0,
+            damage: client.matchDamage || 0,
+          })),
       });
     } else {
       room.round++;
@@ -341,6 +366,9 @@ function roomTick(room) {
       hp: state.hp,
       armor: state.armor,
       spawnSlot: state.spawnSlot,
+      kills: client.matchKills || 0,
+      deaths: client.matchDeaths || 0,
+      damage: client.matchDamage || 0,
     });
   }
 
@@ -384,6 +412,7 @@ function applyDamage(room, attacker, target, weaponKey, part, distance, damageOv
     if (weaponKey === 'odin' && Number(distance) > 30) damage = Math.max(1, damage * 0.82);
   }
   damage = Math.max(0, Math.min(300, damage));
+  attacker.matchDamage = (attacker.matchDamage || 0) + Math.round(damage);
 
   const absorb = Math.min(targetState.armor, damage * 0.66);
   targetState.armor = Math.max(0, targetState.armor - absorb);
@@ -401,6 +430,8 @@ function applyDamage(room, attacker, target, weaponKey, part, distance, damageOv
 
   if (targetState.hp <= 0) {
     targetState.alive = false;
+    attacker.matchKills = (attacker.matchKills || 0) + 1;
+    target.matchDeaths = (target.matchDeaths || 0) + 1;
     broadcastRoom(room, {
       type: 'kill',
       attackerId: attacker.id,
@@ -424,6 +455,9 @@ wss.on('connection', ws => {
     lastShotAt: 0,
     lastStateAt: 0,
     lastBarrelAt: 0,
+    matchKills: 0,
+    matchDeaths: 0,
+    matchDamage: 0,
   };
   clients.set(client.id, client);
   send(ws, { type: 'welcome', id: client.id, serverTime: Date.now() });
@@ -440,6 +474,8 @@ wss.on('connection', ws => {
     if (msg.type === 'hello') {
       client.name = safeText(msg.name, 20) || client.name;
       send(ws, { type: 'hello', id: client.id, name: client.name, serverTime: Date.now() });
+      const currentRoom = client.roomId ? rooms.get(client.roomId) : null;
+      if (currentRoom) broadcastLobby(currentRoom);
       return;
     }
 

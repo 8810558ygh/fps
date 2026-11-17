@@ -362,6 +362,168 @@
     }
     window.SETTINGS_ApplyZombie = applyZombieSettings;
 
+    // ============================================================
+    // 玩家资料与本地战绩
+    // ============================================================
+    function _setProfileStatus(message, isError) {
+        const el = document.getElementById('profileSaveStatus');
+        if (!el) return;
+        el.textContent = message || '';
+        el.classList.toggle('error', !!isError);
+    }
+
+    function _formatMatchTime(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '时间未知';
+        return date.toLocaleString('zh-CN', {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        });
+    }
+
+    function _formatDuration(seconds) {
+        const total = Math.max(0, Number(seconds) || 0);
+        const minutes = Math.floor(total / 60);
+        const remain = Math.floor(total % 60);
+        return minutes > 0 ? `${minutes}分${remain}秒` : `${remain}秒`;
+    }
+
+    function _renderProfileMatches() {
+        const list = document.getElementById('profileMatchList');
+        if (!list || !window.PROFILE) return;
+
+        const matches = window.PROFILE.matches || [];
+        list.replaceChildren();
+        if (matches.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'profile-empty';
+            empty.textContent = window.PROFILE.ready
+                ? '还没有比赛记录，完成一局局域网对战后会显示在这里。'
+                : '正在读取本机战绩…';
+            list.appendChild(empty);
+            return;
+        }
+
+        const mapNames = {
+            battlefield: '战场',
+            desert: '沙漠',
+            indoor_complex: '设备间',
+        };
+        const resultNames = { win: '胜利', loss: '失败', draw: '平局' };
+
+        for (const match of matches.slice(0, 8)) {
+            const row = document.createElement('div');
+            row.className = `profile-match-row ${match.result || 'draw'}`;
+
+            const result = document.createElement('span');
+            result.className = 'profile-match-result';
+            result.textContent = resultNames[match.result] || '平局';
+
+            const detail = document.createElement('div');
+            detail.className = 'profile-match-detail';
+            const title = document.createElement('strong');
+            title.textContent = `${mapNames[match.mapId] || match.mapId || '未知地图'} · ${match.blueScore || 0} : ${match.redScore || 0}`;
+            const meta = document.createElement('small');
+            meta.textContent = `${_formatMatchTime(match.playedAt)} · ${_formatDuration(match.durationSeconds)}`;
+            detail.append(title, meta);
+
+            const score = document.createElement('div');
+            score.className = 'profile-match-score';
+            const kd = document.createElement('strong');
+            kd.textContent = `${match.kills || 0} / ${match.deaths || 0}`;
+            const label = document.createElement('small');
+            label.textContent = `伤害 ${match.damage || 0}`;
+            score.append(kd, label);
+
+            row.append(result, detail, score);
+            list.appendChild(row);
+        }
+    }
+
+    function _syncProfileUI() {
+        if (!window.PROFILE) return;
+        const $ = id => document.getElementById(id);
+        const info = window.PROFILE.info || {};
+        const id = info.id || '';
+
+        if ($('profilePlayerId') && document.activeElement !== $('profilePlayerId')) {
+            $('profilePlayerId').value = id;
+        }
+        if ($('profileAvatar')) {
+            $('profileAvatar').textContent = Array.from(id || '玩')[0] || '玩';
+        }
+        if ($('profileDataPath')) {
+            $('profileDataPath').textContent = info.directory || '正在读取…';
+            $('profileDataPath').title = info.directory || '';
+        }
+        if ($('profileOpenFolderBtn')) {
+            $('profileOpenFolderBtn').disabled = !info.electron;
+            $('profileOpenFolderBtn').textContent = info.electron ? '打开文件夹' : '仅桌面版可用';
+        }
+
+        const summary = window.PROFILE_GetSummary();
+        if ($('profileTotalGames')) $('profileTotalGames').textContent = summary.games;
+        if ($('profileTotalWins')) $('profileTotalWins').textContent = summary.wins;
+        if ($('profileKd')) $('profileKd').textContent = summary.kd;
+        if ($('profileKillsDeaths')) $('profileKillsDeaths').textContent = `${summary.kills} / ${summary.deaths}`;
+        if ($('profileTotalDamage')) $('profileTotalDamage').textContent = summary.damage.toLocaleString('zh-CN');
+
+        _renderProfileMatches();
+    }
+
+    function _bindProfileControls() {
+        const idInput = document.getElementById('profilePlayerId');
+        const saveButton = document.getElementById('profileSaveIdBtn');
+
+        async function savePlayerId() {
+            if (!window.PROFILE || !idInput || !saveButton) return;
+            await window.PROFILE.readyPromise;
+            const value = idInput.value.trim();
+            if (!value) {
+                _setProfileStatus('玩家 ID 不能为空', true);
+                idInput.focus();
+                return;
+            }
+
+            saveButton.disabled = true;
+            saveButton.textContent = '保存中…';
+            const result = await window.PROFILE_SetId(value);
+            saveButton.disabled = false;
+            saveButton.textContent = '保存 ID';
+
+            if (!result || !result.ok) {
+                _setProfileStatus((result && result.message) || '保存失败', true);
+                return;
+            }
+            _setProfileStatus('已保存，联机时会使用新 ID', false);
+            _syncProfileUI();
+            if (typeof toast === 'function') toast(`玩家 ID 已改为：${window.PROFILE_GetId()}`);
+        }
+
+        saveButton?.addEventListener('click', savePlayerId);
+        idInput?.addEventListener('keydown', event => {
+            if (event.key === 'Enter') savePlayerId();
+        });
+        idInput?.addEventListener('input', () => _setProfileStatus('', false));
+
+        document.getElementById('profileRefreshBtn')?.addEventListener('click', async () => {
+            if (window.PROFILE) await window.PROFILE_RefreshMatches();
+            _syncProfileUI();
+            _setProfileStatus('战绩已刷新', false);
+        });
+
+        document.getElementById('profileOpenFolderBtn')?.addEventListener('click', async () => {
+            if (!window.PROFILE) return;
+            const result = await window.PROFILE_OpenDataFolder();
+            if (!result || !result.ok) {
+                _setProfileStatus((result && result.message) || '无法打开资料文件夹', true);
+            }
+        });
+    }
+
     // 遍历场景 + 武器模板，让所有材质重新编译
     function _forceRecompileMaterials() {
         if (typeof scene !== 'undefined' && scene) {
@@ -398,6 +560,7 @@
         if (content) content.scrollTop = 0;
 
         syncUIFromSettings();
+        _syncProfileUI();
     }
 
     function closePanel() {
@@ -435,6 +598,7 @@
     // ============================================================
     function bindControls() {
         const $ = id => document.getElementById(id);
+        _bindProfileControls();
 
         // ---------- 准星 ----------
         function bindCh(key, elId, valId, fmt) {
@@ -633,6 +797,7 @@
         _syncGraphicsUI();
 
         applyCrosshair();
+        _syncProfileUI();
     }
 
     // ============================================================
@@ -684,6 +849,8 @@
 
         bindTabs();
         bindControls();
+        window.addEventListener('profile-ready', _syncProfileUI);
+        window.addEventListener('profile-updated', _syncProfileUI);
         toggleTouchUI();
         syncUIFromSettings();
 

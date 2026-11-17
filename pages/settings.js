@@ -13,15 +13,93 @@ document.write(`
             </div>
 
             <div class="settings-tabs" id="settingsTabs">
-                <button class="stab active" data-tab="crosshair">准星</button>
+                <button class="stab active" data-tab="profile">玩家资料</button>
+                <button class="stab" data-tab="crosshair">准星</button>
                 <button class="stab" data-tab="sensitivity">灵敏度</button>
                 <button class="stab" data-tab="graphics">画面 / 性能</button>
             </div>
 
             <div class="settings-content">
 
+                <!-- ============ 玩家资料页 ============ -->
+                <div class="settings-page" data-page="profile">
+                    <div class="settings-page-inner">
+
+                        <div class="settings-section profile-identity-section">
+                            <div class="section-title">玩家身份</div>
+                            <div class="profile-identity">
+                                <div class="profile-avatar" id="profileAvatar">玩</div>
+                                <div class="profile-identity-copy">
+                                    <label for="profilePlayerId">游戏 ID</label>
+                                    <p>联机大厅和战绩记录中显示的名字。修改后会立即同步到当前房间。</p>
+                                    <div class="profile-id-row">
+                                        <input id="profilePlayerId" class="profile-id-input" type="text"
+                                               maxlength="20" autocomplete="off" spellcheck="false"
+                                               placeholder="输入你的玩家 ID">
+                                        <button id="profileSaveIdBtn" class="profile-save-btn">保存 ID</button>
+                                    </div>
+                                    <div id="profileSaveStatus" class="profile-save-status"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <div class="profile-section-head">
+                                <div class="section-title">生涯战绩</div>
+                                <button id="profileRefreshBtn" class="profile-text-btn">刷新</button>
+                            </div>
+                            <div class="profile-stat-grid">
+                                <div class="profile-stat-card">
+                                    <span>比赛</span>
+                                    <strong id="profileTotalGames">0</strong>
+                                </div>
+                                <div class="profile-stat-card">
+                                    <span>胜场</span>
+                                    <strong id="profileTotalWins">0</strong>
+                                </div>
+                                <div class="profile-stat-card">
+                                    <span>K / D</span>
+                                    <strong id="profileKd">0.00</strong>
+                                </div>
+                                <div class="profile-stat-card">
+                                    <span>击杀 / 死亡</span>
+                                    <strong id="profileKillsDeaths">0 / 0</strong>
+                                </div>
+                                <div class="profile-stat-card">
+                                    <span>总伤害</span>
+                                    <strong id="profileTotalDamage">0</strong>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <div class="profile-section-head">
+                                <div>
+                                    <div class="section-title">最近比赛</div>
+                                    <p class="profile-section-hint">每场比赛结束后自动保存到本机</p>
+                                </div>
+                            </div>
+                            <div id="profileMatchList" class="profile-match-list">
+                                <div class="profile-empty">还没有比赛记录，完成一局局域网对战后会显示在这里。</div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section profile-storage-section">
+                            <div class="section-title">本机资料文件夹</div>
+                            <p class="profile-storage-copy">
+                                ID、最近战绩和个人资料会自动保存到这个文件夹。升级或重新安装游戏不会删除它。
+                            </p>
+                            <div class="profile-path-row">
+                                <code id="profileDataPath">正在读取…</code>
+                                <button id="profileOpenFolderBtn" class="profile-folder-btn">打开文件夹</button>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
                 <!-- ============ 准星页 ============ -->
-                <div class="settings-page" data-page="crosshair">
+                <div class="settings-page" data-page="crosshair" style="display:none;">
                     <div class="settings-page-inner">
 
                         <div class="settings-section">

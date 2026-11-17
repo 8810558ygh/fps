@@ -161,7 +161,9 @@ const LANNET = {
     },
 
     getNickname() {
-        let name = localStorage.getItem('pvp_nick');
+        let name = typeof window.PROFILE_GetId === 'function'
+            ? window.PROFILE_GetId()
+            : localStorage.getItem('pvp_nick');
         if (!name) {
             name = '玩家' + Math.floor(1000 + Math.random() * 9000);
             localStorage.setItem('pvp_nick', name);

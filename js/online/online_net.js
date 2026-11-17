@@ -76,7 +76,9 @@ NET.isClientPlayer = function () {
 // 名字工具
 // ============================================================
 function getMyName() {
-    let n = localStorage.getItem('pvp_nick');
+    let n = typeof window.PROFILE_GetId === 'function'
+        ? window.PROFILE_GetId()
+        : localStorage.getItem('pvp_nick');
     if (!n) {
         const animals = ['猛虎', '狂狮', '猎鹰', '苍狼', '赤蛇', '暴熊', '冰狐', '雷豹', '疾风', '夜枭'];
         const a = animals[Math.floor(Math.random() * animals.length)];
