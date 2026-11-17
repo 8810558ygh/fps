@@ -7,7 +7,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = path.resolve(process.env.HEROES_DUEL_ROOT || path.resolve(__dirname, '..'));
 const PORT = Number(process.env.PORT || 8090);
 const TICK_MS = 33;
 const PREP_MS = 5000;
@@ -49,6 +49,33 @@ const server = http.createServer((req, res) => {
   } catch {
     res.writeHead(400);
     res.end('Bad request');
+    return;
+  }
+
+  if (pathname === '/api/health') {
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(JSON.stringify({ ok: true, service: 'heroes-duel-lan' }));
+    return;
+  }
+
+  if (pathname === '/api/rooms') {
+    const publicRooms = [];
+    for (const room of rooms.values()) {
+      if (room.phase !== 'lobby') continue;
+      publicRooms.push({
+        code: room.code,
+        players: room.memberIds.size,
+        mapId: room.mapId,
+      });
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(JSON.stringify({ rooms: publicRooms }));
     return;
   }
 

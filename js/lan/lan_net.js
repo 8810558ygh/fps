@@ -9,6 +9,8 @@ const LANNET = {
     reconnectTimer: 0,
     pingTimer: 0,
     _lastPingAt: 0,
+    currentUrl: null,
+    _connectWaiters: [],
 
     url() {
         if (location.protocol === 'file:') return null;
@@ -16,14 +18,18 @@ const LANNET = {
         return `${protocol}//${location.host}/lan`;
     },
 
-    connect() {
-        if (this.connected || this.connecting) return;
-        const url = this.url();
+    connect(urlOverride) {
+        const url = urlOverride || this.currentUrl || this.url();
+        if (this.connected && this.currentUrl === url) return Promise.resolve(true);
+        if (this.connecting && this.currentUrl === url) {
+            return new Promise(resolve => this._connectWaiters.push(resolve));
+        }
         if (!url) {
             this.setStatus('请通过 npm start 启动局域网服务器', false);
-            return;
+            return Promise.resolve(false);
         }
 
+        this.currentUrl = url;
         this.connecting = true;
         this.manualClose = false;
         this.setStatus('正在连接局域网服务器…', false);
@@ -33,10 +39,12 @@ const LANNET = {
         } catch {
             this.connecting = false;
             this.scheduleReconnect();
-            return;
+            return Promise.resolve(false);
         }
 
-        this.ws.addEventListener('open', () => {
+        const socket = this.ws;
+        socket.addEventListener('open', () => {
+            if (this.ws !== socket) return;
             this.connected = true;
             this.connecting = false;
             this.setStatus('已连接 · 延迟 -', true);
@@ -45,9 +53,12 @@ const LANNET = {
                 name: this.getNickname(),
             });
             this.startPing();
+            const waiters = this._connectWaiters.splice(0);
+            waiters.forEach(resolve => resolve(true));
         });
 
-        this.ws.addEventListener('message', event => {
+        socket.addEventListener('message', event => {
+            if (this.ws !== socket) return;
             let data;
             try {
                 data = JSON.parse(event.data);
@@ -63,17 +74,51 @@ const LANNET = {
             }
         });
 
-        this.ws.addEventListener('close', () => {
+        socket.addEventListener('close', () => {
+            if (this.ws !== socket) return;
             this.connected = false;
             this.connecting = false;
             this.stopPing();
             this.setStatus('连接已断开', false);
             if (!this.manualClose) this.scheduleReconnect();
+            const waiters = this._connectWaiters.splice(0);
+            waiters.forEach(resolve => resolve(false));
         });
 
-        this.ws.addEventListener('error', () => {
+        socket.addEventListener('error', () => {
+            if (this.ws !== socket) return;
             this.setStatus('无法连接局域网服务器', false);
         });
+        return new Promise(resolve => this._connectWaiters.push(resolve));
+    },
+
+    async connectToRoom(code, timeoutMs = 4000) {
+        if (!window.electronAPI || typeof window.electronAPI.resolveRoom !== 'function') {
+            return true;
+        }
+
+        const startedAt = performance.now();
+        let endpoint = null;
+        while (!endpoint && performance.now() - startedAt < timeoutMs) {
+            endpoint = await window.electronAPI.resolveRoom(code);
+            if (!endpoint) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+        }
+        if (!endpoint || !endpoint.wsUrl) return false;
+        if (this.connected && this.currentUrl === endpoint.wsUrl) return true;
+
+        const oldSocket = this.ws;
+        this.manualClose = true;
+        this.connected = false;
+        this.connecting = false;
+        this.stopPing();
+        this.ws = null;
+        if (oldSocket) {
+            try { oldSocket.close(); } catch {}
+        }
+        this.manualClose = false;
+        return this.connect(endpoint.wsUrl);
     },
 
     disconnect() {
@@ -89,7 +134,7 @@ const LANNET = {
 
     scheduleReconnect() {
         clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = setTimeout(() => this.connect(), 1500);
+        this.reconnectTimer = setTimeout(() => this.connect(this.currentUrl), 1500);
     },
 
     send(message) {

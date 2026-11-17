@@ -2,12 +2,61 @@
   "name": "heroes-duel-lan",
   "version": "1.0.0",
   "private": true,
-  "description": "LAN team deathmatch server for 双雄对决",
+  "description": "双雄对决局域网团队战",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node server/index.js",
-    "lan": "node server/index.js"
+    "lan": "node server/index.js",
+    "electron": "electron .",
+    "dist": "electron-builder --win portable",
+    "dist:installer": "electron-builder --win nsis",
+    "dist:all": "electron-builder --win portable nsis",
+    "test:e2e": "node e2e_electron.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "38.7.2",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.8810558ygh.heroesduel",
+    "productName": "双雄对决",
+    "electronDist": "node_modules/electron/dist",
+    "asar": true,
+    "asarUnpack": [
+      "server/**/*",
+      "node_modules/ws/**/*"
+    ],
+    "files": [
+      "index.html",
+      "style*.css",
+      "js/**/*",
+      "pages/**/*",
+      "vendor/**/*",
+      "electron/**/*",
+      "server/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "portable": {
+      "artifactName": "双雄对决-${version}-便携版.${ext}"
+    },
+    "nsis": {
+      "artifactName": "双雄对决-${version}-安装版.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "双雄对决"
+    }
   }
 }

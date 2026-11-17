@@ -145,6 +145,12 @@ function _lanRenderLobby(room) {
 
 function lanShowLobby() {
     if (!LANNET.connected) LANNET.connect();
+    const serverHint = _lanEl('lanServerHint');
+    if (serverHint) {
+        serverHint.textContent = window.electronAPI
+            ? '房主点击创建房间后分享房间码；其他玩家在同一局域网内输入房间码即可加入。'
+            : '请通过主机启动的局域网地址打开游戏。房间状态与回合由局域网服务器统一管理。';
+    }
     if (_lanEl('lobbyOverlay')) _lanEl('lobbyOverlay').style.display = 'none';
     if (_lanEl('lanLobbyOverlay')) _lanEl('lanLobbyOverlay').style.display = 'flex';
     if (_lanEl('lanEntrySection')) _lanEl('lanEntrySection').style.display = LAN.room ? 'none' : 'flex';
@@ -174,15 +180,25 @@ function _lanCreateRoom() {
     }
 }
 
-function _lanJoinRoom() {
+async function _lanJoinRoom() {
     const input = _lanEl('lanRoomCodeInput');
     const code = input ? input.value.trim().toUpperCase() : '';
     if (!code) {
         _lanSetRoomMessage('请输入房间码');
         return;
     }
+    if (window.electronAPI) {
+        _lanSetRoomMessage('正在局域网中搜索房间…');
+        const resolved = await LANNET.connectToRoom(code);
+        if (!resolved) {
+            _lanSetRoomMessage('没有找到该房间，请确认房主已创建房间且双方在同一局域网');
+            return;
+        }
+    }
     if (!LANNET.send({ type: 'joinRoom', code })) {
         _lanSetRoomMessage('尚未连接局域网服务器');
+    } else {
+        _lanSetRoomMessage('');
     }
 }
 

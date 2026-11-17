@@ -18,8 +18,8 @@ document.write(`
                            autocomplete="off" spellcheck="false">
                     <button id="lanJoinBtn" class="lan-secondary-btn">加入房间</button>
                 </div>
-                <div class="lan-server-hint">
-                    请通过主机启动的局域网地址打开游戏。房间状态与回合由局域网服务器统一管理。
+                <div id="lanServerHint" class="lan-server-hint">
+                    正在准备局域网连接…
                 </div>
             </div>
 
