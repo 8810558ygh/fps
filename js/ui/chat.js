@@ -84,6 +84,10 @@ function initChat() {
                         && typeof NET_sendChat === 'function') {
                         NET_sendChat(text);
                     }
+                    if (typeof gameMode !== 'undefined' && gameMode === 'lan'
+                        && typeof LANNET !== 'undefined') {
+                        LANNET.send({ type: 'chat', text });
+                    }
 
                     // ★ AI 关闭（靶子模式）时不回复
                     if (typeof gameMode !== 'undefined' && gameMode === 'ai' && running && aiEnabled) {
@@ -299,7 +303,9 @@ function closeChat() {
     if (typeof isTouchDevice !== 'undefined' && !isTouchDevice &&
         running && !isOver() && typeof renderer !== 'undefined') {
         if (document.pointerLockElement !== renderer.domElement) {
-            try { renderer.domElement.requestPointerLock(); } catch (err) {}
+            if (typeof window.requestGamePointerLock === 'function') {
+                window.requestGamePointerLock();
+            }
         }
     }
 }

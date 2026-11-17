@@ -129,7 +129,9 @@
             && typeof isTouchDevice !== 'undefined' && !isTouchDevice) {
             if (typeof renderer !== 'undefined' && renderer
                 && typeof running !== 'undefined' && running) {
-                try { renderer.domElement.requestPointerLock(); } catch (e) {}
+                if (typeof window.requestGamePointerLock === 'function') {
+                    window.requestGamePointerLock();
+                }
             }
         }
 

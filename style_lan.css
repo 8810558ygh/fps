@@ -1,0 +1,344 @@
+#lanLobbyOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 66;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    color: #dce8f4;
+    background:
+        radial-gradient(circle at 50% 30%, rgba(38, 94, 144, 0.35), transparent 48%),
+        radial-gradient(ellipse at center, #16263a 0%, #07111c 78%);
+    font-family: "Microsoft YaHei", Arial, sans-serif;
+}
+
+.lan-panel {
+    width: min(980px, 96vw);
+    max-height: 92vh;
+    overflow: auto;
+    border: 1px solid rgba(120, 175, 220, 0.24);
+    border-radius: 18px;
+    background: rgba(7, 17, 28, 0.9);
+    box-shadow: 0 26px 90px rgba(0, 0, 0, 0.6);
+}
+
+.lan-topbar {
+    display: grid;
+    grid-template-columns: 180px 1fr 150px;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lan-title {
+    color: #ffd24a;
+    font-size: 25px;
+    font-weight: 800;
+    letter-spacing: 7px;
+    text-align: center;
+}
+
+.lan-subtitle {
+    margin-top: 6px;
+    color: #7690a8;
+    font-size: 12px;
+    letter-spacing: 2px;
+    text-align: center;
+}
+
+.lan-connection {
+    padding: 7px 10px;
+    border-radius: 7px;
+    color: #ffd24a;
+    background: rgba(255, 210, 74, 0.08);
+    font-size: 12px;
+    text-align: center;
+}
+.lan-connection.online {
+    color: #6ee7b7;
+    background: rgba(110, 231, 183, 0.08);
+}
+
+.lan-entry {
+    display: flex;
+    min-height: 330px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 22px;
+    padding: 40px;
+}
+
+.lan-join-row {
+    display: flex;
+    gap: 10px;
+}
+
+.lan-entry input {
+    width: 240px;
+    padding: 12px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    outline: none;
+    background: #0d1a27;
+    color: #fff;
+    font: 700 17px Consolas, monospace;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+}
+
+.lan-entry input:focus { border-color: rgba(255, 210, 74, 0.65); }
+
+.lan-server-hint {
+    max-width: 620px;
+    color: #7890a6;
+    font-size: 12px;
+    line-height: 1.8;
+    text-align: center;
+}
+
+.lan-primary-btn,
+.lan-secondary-btn,
+.lan-danger-btn,
+.lan-back-btn {
+    padding: 11px 22px;
+    border-radius: 9px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+.lan-primary-btn {
+    color: #08131f;
+    border-color: #ffd24a;
+    background: linear-gradient(180deg, #ffd24a, #e9a72f);
+}
+.lan-secondary-btn,
+.lan-back-btn {
+    color: #cfe0f0;
+    background: rgba(255, 255, 255, 0.06);
+}
+.lan-danger-btn {
+    color: #ff968a;
+    background: rgba(255, 80, 64, 0.07);
+}
+.lan-primary-btn:disabled,
+.lan-secondary-btn:disabled {
+    cursor: not-allowed;
+    filter: grayscale(0.8);
+    opacity: 0.45;
+}
+
+.lan-room { padding: 22px 24px 26px; }
+
+.lan-room-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px 26px;
+    justify-content: space-between;
+    padding: 12px 16px;
+    margin-bottom: 18px;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.035);
+    color: #8ea5b9;
+    font-size: 13px;
+}
+#lanRoomCode { color: #ffd24a; font: 800 18px Consolas, monospace; letter-spacing: 3px; }
+
+.lan-teams {
+    display: grid;
+    grid-template-columns: 1fr 55px 1fr;
+    gap: 12px;
+    align-items: stretch;
+}
+
+.lan-team {
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 13px;
+    padding: 14px;
+}
+.lan-team.blue { background: rgba(58, 123, 213, 0.08); }
+.lan-team.red { background: rgba(213, 74, 58, 0.08); }
+
+.lan-team-title {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    font-weight: 800;
+    letter-spacing: 2px;
+}
+.lan-team.blue .lan-team-title { color: #6db3ff; }
+.lan-team.red .lan-team-title { color: #ff7a6d; }
+
+.lan-player-list { min-height: 220px; }
+.lan-player-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 10px;
+    margin-bottom: 7px;
+    border-radius: 7px;
+    background: rgba(0, 0, 0, 0.2);
+    font-size: 13px;
+}
+.lan-player-row.me { outline: 1px solid rgba(255, 210, 74, 0.5); }
+.lan-player-row .ready-tag { margin-left: auto; color: #6ee7b7; }
+.lan-player-row .owner-tag { color: #ffd24a; font-size: 10px; }
+.lan-empty-slot { color: #52677b; font-size: 12px; padding: 8px; }
+.lan-versus {
+    align-self: center;
+    color: #ffd24a;
+    font-size: 18px;
+    font-weight: 800;
+    text-align: center;
+}
+
+.lan-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.lan-room-message {
+    min-height: 20px;
+    margin-top: 12px;
+    color: #ff8c80;
+    font-size: 12px;
+    text-align: center;
+}
+
+#lanMatchHud {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    z-index: 16;
+    display: grid;
+    grid-template-columns: 150px 150px 150px;
+    gap: 8px;
+    transform: translateX(-50%);
+    pointer-events: none;
+    font-family: "Microsoft YaHei", Arial, sans-serif;
+}
+.lan-score-side,
+.lan-round-box {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    min-height: 54px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.68);
+    box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35);
+}
+.lan-score-side.blue { border-top: 2px solid #5a9cff; }
+.lan-score-side.red { border-top: 2px solid #ff6655; }
+.lan-score-side span { color: #b8cadb; font-size: 12px; }
+.lan-score-side strong { color: #fff; font-size: 23px; line-height: 1; }
+.lan-score-side small { color: #93a7ba; font-size: 10px; }
+.lan-round-box { border-top: 2px solid #ffd24a; }
+#lanRoundTimer { color: #fff; font: 800 17px Consolas, monospace; }
+#lanRoundNumber { color: #90a5b9; font-size: 10px; }
+
+#lanNotice {
+    position: fixed;
+    left: 50%;
+    bottom: 210px;
+    z-index: 18;
+    display: none;
+    padding: 10px 22px;
+    transform: translateX(-50%);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.78);
+    color: #fff;
+    pointer-events: none;
+    font: 700 14px "Microsoft YaHei", Arial, sans-serif;
+}
+
+#lanScoreboard {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    z-index: 19;
+    display: none;
+    width: min(680px, 88vw);
+    padding: 18px;
+    transform: translate(-50%, -50%);
+    border: 1px solid rgba(150, 190, 225, 0.25);
+    border-radius: 13px;
+    background: rgba(5, 13, 22, 0.92);
+    color: #dce8f4;
+    pointer-events: none;
+    font-family: "Microsoft YaHei", Arial, sans-serif;
+}
+.lan-board-head {
+    margin-bottom: 14px;
+    color: #fff;
+    font-size: 22px;
+    font-weight: 800;
+    text-align: center;
+}
+#lanBoardBlueScore { color: #6db3ff; }
+#lanBoardRedScore { color: #ff7568; }
+.lan-board-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+.lan-board-columns h3 { margin: 0 0 9px; font-size: 14px; letter-spacing: 3px; }
+.lan-board-columns > div:first-child h3 { color: #6db3ff; }
+.lan-board-columns > div:last-child h3 { color: #ff7568; }
+.lan-board-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 10px;
+    margin-bottom: 5px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 13px;
+}
+.lan-board-row.dead { color: #718395; }
+.lan-board-row.self { outline: 1px solid rgba(255, 210, 74, 0.45); }
+
+#lanEndOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 69;
+    align-items: center;
+    justify-content: center;
+    background: rgba(3, 9, 15, 0.72);
+    backdrop-filter: blur(5px);
+}
+.lan-end-card {
+    min-width: 360px;
+    padding: 38px;
+    border: 1px solid rgba(255, 210, 74, 0.35);
+    border-radius: 16px;
+    background: #0b1723;
+    text-align: center;
+}
+#lanEndTitle { color: #ffd24a; font-size: 30px; font-weight: 900; letter-spacing: 6px; }
+#lanEndScore { margin: 22px 0; color: #fff; font: 700 36px Consolas, monospace; }
+#lanReturnRoomBtn {
+    padding: 11px 26px;
+    border: 1px solid #ffd24a;
+    border-radius: 8px;
+    background: #ffd24a;
+    color: #08131f;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+@media (max-width: 720px) {
+    .lan-topbar { grid-template-columns: 1fr; }
+    .lan-back-btn { justify-self: start; }
+    .lan-teams { grid-template-columns: 1fr; }
+    .lan-versus { padding: 0; }
+    .lan-player-list { min-height: 100px; }
+    #lanMatchHud { grid-template-columns: 105px 110px 105px; }
+    .lan-score-side, .lan-round-box { min-height: 48px; }
+}

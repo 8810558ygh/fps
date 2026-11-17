@@ -310,6 +310,7 @@
     function _addPointLight(x, z, color, intensity) {
         const light = new THREE.PointLight(color || 0xffc780, intensity || 1.0, 34, 2);
         light.position.set(x, 5.1, z);
+        light.userData.isMapLight = true;
         currentMapGroup.add(light);
     }
 

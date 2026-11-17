@@ -51,6 +51,7 @@ function initExplosionPool() {
 
         const light = new THREE.PointLight(0xffa040, 0, 25);
         light.position.set(0, -1000, 0);
+        light.visible = false;
         scene.add(light);
 
         _explosionPool.push({
@@ -96,7 +97,11 @@ function spawnExplosionVisual(x, y, z) {
     slot.ring.visible = true;
 
     slot.light.position.set(x, y + 0.3, z);
-    slot.light.intensity = 25;
+    const useLight = typeof window.SETTINGS_ShouldUseDynamicLights === 'function'
+        ? window.SETTINGS_ShouldUseDynamicLights()
+        : true;
+    slot.light.visible = useLight;
+    slot.light.intensity = useLight ? 25 : 0;
 }
 window.spawnExplosionVisual = spawnExplosionVisual;
 
@@ -116,6 +121,7 @@ function updateExplosionVisuals(dt, now) {
             b.ring.material.opacity = 0;
             b.light.intensity = 0;
             b.light.position.set(0, -1000, 0);
+            b.light.visible = false;
             continue;
         }
 
@@ -127,7 +133,11 @@ function updateExplosionVisuals(dt, now) {
         b.ring.scale.setScalar(ringScale);
         b.ring.material.opacity = Math.max(0, 0.9 - t * 1.5);
 
-        b.light.intensity = 25 * Math.pow(1 - t, 2);
+        const useLight = typeof window.SETTINGS_ShouldUseDynamicLights === 'function'
+            ? window.SETTINGS_ShouldUseDynamicLights()
+            : true;
+        b.light.visible = useLight;
+        b.light.intensity = useLight ? 25 * Math.pow(1 - t, 2) : 0;
     }
 }
 window.updateExplosionVisuals = updateExplosionVisuals;
@@ -218,6 +228,13 @@ function explodeBarrel(barrel, from) {
         emitWorldSound('explosion', ex, ey, ez, false);
     } else if (typeof sExplosion === 'function') {
         sExplosion();
+    }
+
+    if (typeof gameMode !== 'undefined' && gameMode === 'lan') {
+        if (typeof LAN_broadcastBarrel === 'function') {
+            LAN_broadcastBarrel(ex, ey, ez);
+        }
+        return;
     }
 
     // ============================================================

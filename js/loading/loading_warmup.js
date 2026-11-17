@@ -18,6 +18,13 @@
         medkit: '医疗包',
     };
 
+    function forceGpuSync() {
+        try {
+            const gl = renderer && renderer.getContext ? renderer.getContext() : null;
+            if (gl && typeof gl.finish === 'function') gl.finish();
+        } catch (e) {}
+    }
+
     // ============================================================
     // 预热相机
     // ============================================================
@@ -200,6 +207,7 @@
                 ok++;
             } catch (e) { fail++; }
         });
+        forceGpuSync();
         console.log('[loading_warmup] 纹理上传完成: ok =', ok, ', fail =', fail);
     }
 
@@ -241,6 +249,7 @@
                 renderer.shadowMap.autoUpdate = false;
                 renderer.shadowMap.needsUpdate = true;
                 renderer.render(scene, p1.cam);
+                forceGpuSync();
                 renderer.shadowMap.autoUpdate = prevAuto;
                 renderer.shadowMap.needsUpdate = true;
             } catch (e) {}
@@ -263,10 +272,48 @@
                 renderer.shadowMap.autoUpdate = false;
                 renderer.shadowMap.needsUpdate = true;
                 renderer.render(scene, p1.cam);
+                forceGpuSync();
                 renderer.shadowMap.autoUpdate = prevAuto;
                 renderer.shadowMap.needsUpdate = true;
             } catch (e) {}
         });
+        warmupSpawnViews();
+    }
+
+    // 从玩家真实出生点朝四个方向各渲染一帧。这样可以覆盖俯视预热容易漏掉的
+    // 阴影深度材质、视锥内物体、武器视角与地图雾化组合。
+    function warmupSpawnViews() {
+        if (typeof p1 === 'undefined' || !p1 || !p1.cam || !p1.spawn) return;
+        const cam = p1.cam;
+        const savedPos = cam.position.clone();
+        const savedRot = cam.rotation.clone();
+
+        try {
+            const y = (typeof terrainGroundAt === 'function')
+                ? terrainGroundAt(p1.spawn.x, p1.spawn.z)
+                : 0;
+            cam.position.set(p1.spawn.x, y + (p1.eyeH || EYE_STAND), p1.spawn.z);
+
+            const prevAuto = renderer.shadowMap.autoUpdate;
+            renderer.shadowMap.autoUpdate = false;
+            renderer.shadowMap.needsUpdate = renderer.shadowMap.enabled;
+
+            for (let i = 0; i < 4; i++) {
+                cam.rotation.set(0, p1.spawn.yaw + i * Math.PI * 0.5, 0, 'YXZ');
+                cam.updateMatrixWorld(true);
+                renderer.render(scene, cam);
+                forceGpuSync();
+            }
+
+            renderer.shadowMap.autoUpdate = prevAuto;
+            renderer.shadowMap.needsUpdate = true;
+        } catch (e) {
+            console.warn('[loading_warmup] 出生视角预热失败:', e);
+        } finally {
+            cam.position.copy(savedPos);
+            cam.rotation.copy(savedRot);
+            cam.updateMatrixWorld(true);
+        }
     }
 
     // ============================================================
@@ -557,7 +604,10 @@
                 scene.updateMatrixWorld(true);
 
                 try { renderer.compile(scene, p1.cam); } catch (e) {}
-                try { renderer.render(scene, p1.cam); } catch (e) {}
+                try {
+                    renderer.render(scene, p1.cam);
+                    forceGpuSync();
+                } catch (e) {}
 
                 // 恢复原状态
                 for (const r of restoreList) {
@@ -565,6 +615,11 @@
                     r.g.visible = r.visible;
                 }
             });
+
+            if (window.PlayerZombie && typeof window.PlayerZombie.warmup === 'function') {
+                window.PlayerZombie.warmup();
+                forceGpuSync();
+            }
 
             console.log('[loading_warmup] 僵尸池预热完成');
         } catch (e) {
@@ -608,6 +663,19 @@
                     void el.offsetWidth;
                 }
             }
+
+            // DOM 飘字第一次创建和投影也会触发样式计算，提前走一次完整更新。
+            if (typeof window.spawnDamageNumber === 'function'
+                && typeof p1 !== 'undefined' && p1 && p1.cam) {
+                const target = new THREE.Vector3(0, 1, -6).applyMatrix4(p1.cam.matrixWorld);
+                window.spawnDamageNumber(target, 128, true);
+                if (typeof window.updateDamageNumbers === 'function') {
+                    window.updateDamageNumbers();
+                }
+                if (typeof window.clearDamageNumbers === 'function') {
+                    window.clearDamageNumbers();
+                }
+            }
             console.log('[loading_warmup] HUD DOM 预热完成');
         } catch (e) {
             console.warn('[loading_warmup] HUD DOM 预热失败:', e);
@@ -631,6 +699,7 @@
             try {
                 renderer.compile(scene, p1.cam);
                 renderer.render(scene, p1.cam);
+                forceGpuSync();
             } catch (e) {}
             scene.remove(finalGroup);
         });
@@ -639,8 +708,10 @@
             renderer.shadowMap.autoUpdate = false;
             renderer.shadowMap.needsUpdate = true;
             renderer.render(scene, p1.cam);
+            forceGpuSync();
             renderer.shadowMap.autoUpdate = prevAuto;
         } catch (e) {}
+        warmupSpawnViews();
         console.log('[loading_warmup] 最终场景渲染完成');
     }
 
@@ -651,6 +722,8 @@
         ALL_WEAPON_TYPES,
         WEAPON_NAMES,
         withWarmupCamera,
+        forceGpuSync,
+        warmupSpawnViews,
 
         warmupAudioDeep,
         forceUploadAllTextures,

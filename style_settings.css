@@ -250,6 +250,77 @@
     font-size: 14px;
 }
 
+/* ---------- 性能预设 ---------- */
+.quality-preset-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+}
+.quality-btn {
+    min-height: 86px;
+    padding: 14px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    background: rgba(255, 255, 255, 0.035);
+    color: #cfe0f0;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.quality-btn span {
+    display: block;
+    margin-bottom: 7px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+.quality-btn small {
+    display: block;
+    color: #7c92a8;
+    font-size: 11px;
+    line-height: 1.5;
+}
+.quality-btn:hover {
+    border-color: rgba(255, 210, 74, 0.45);
+    transform: translateY(-1px);
+}
+.quality-btn.active {
+    color: #ffd24a;
+    border-color: rgba(255, 210, 74, 0.75);
+    background: rgba(255, 210, 74, 0.09);
+    box-shadow: inset 0 0 20px rgba(255, 210, 74, 0.04);
+}
+.quality-btn.active small { color: #b8c8d6; }
+.quality-hint {
+    margin-top: 14px;
+    padding: 10px 14px;
+    background: rgba(255, 210, 74, 0.06);
+    border-left: 3px solid rgba(255, 210, 74, 0.6);
+    border-radius: 6px;
+    color: #9fb2c8;
+    font-size: 12px;
+    line-height: 1.7;
+    letter-spacing: 0.3px;
+}
+
+/* ---------- 下拉框 ---------- */
+.select-control {
+    width: 100%;
+    height: 38px;
+    padding: 0 12px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    background: #111d2a;
+    color: #cfe0f0;
+    outline: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+}
+.select-control:focus {
+    border-color: rgba(255, 210, 74, 0.65);
+}
+
 /* ---------- 滑块 ---------- */
 .set-row input[type=range] {
     -webkit-appearance: none;
@@ -408,6 +479,12 @@
         padding: 10px 0;
     }
     .set-val { font-size: 12px; }
+    .quality-preset-row { gap: 8px; }
+    .quality-btn { min-height: 72px; padding: 10px 6px; }
+    .quality-btn span { font-size: 13px; letter-spacing: 0; }
+    .quality-btn small { font-size: 10px; }
+    .quality-hint { padding: 9px 11px; font-size: 11px; }
+    .select-control { height: 34px; font-size: 12px; }
 
     .ch-preview-box { height: 150px; }
     .swatch { width: 24px; height: 24px; border-radius: 6px; }

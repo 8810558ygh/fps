@@ -17,6 +17,9 @@ window.renderer = renderer;
 const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
 
 function getDesiredPixelRatio() {
+    if (typeof window.SETTINGS_GetPixelRatio === 'function') {
+        return window.SETTINGS_GetPixelRatio();
+    }
     if (isTouchDevice) return 1;
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
     const isDesert = (typeof getCurrentMapId === 'function' && getCurrentMapId() === 'desert');
@@ -42,10 +45,19 @@ document.body.appendChild(renderer.domElement);
 // ★ B3：阴影节流更新
 // ============================================================
 function getShadowUpdateInterval() {
+    const quality = window.SETTINGS && window.SETTINGS.graphics
+        ? window.SETTINGS.graphics.shadowQuality
+        : 'medium';
+    const base = {
+        off: 10,
+        low: 8,
+        medium: 4,
+        high: 3,
+    }[quality] || 4;
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
     const isDesert = (typeof getCurrentMapId === 'function' && getCurrentMapId() === 'desert');
-    if (isDesert) return 8;
-    return isOnline ? 6 : 3;
+    if (isDesert) return Math.max(base, 8);
+    return isOnline ? Math.max(base, 6) : base;
 }
 let _shadowFrameCounter = 0;
 

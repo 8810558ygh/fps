@@ -143,6 +143,7 @@ function collideWorld(p) {
 
 function collidePlayers() {
     if (gameMode === 'online') return;
+    if (gameMode === 'lan') return;
     if (gameMode === 'survival') return;   // ★ 生存模式跳过（p2 隐藏了，僵尸与玩家不互推）
     const dx = p2.pos.x - p1.pos.x, dz = p2.pos.z - p1.pos.z;
     const d2 = dx * dx + dz * dz;

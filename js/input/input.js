@@ -240,7 +240,9 @@ window.addEventListener('keydown', e => {
                         panel.style.display = 'none';
                         if (typeof isTouchDevice !== 'undefined' && !isTouchDevice) {
                             if (document.pointerLockElement !== renderer.domElement) {
-                                renderer.domElement.requestPointerLock();
+                                if (typeof window.requestGamePointerLock === 'function') {
+                                    window.requestGamePointerLock();
+                                }
                             }
                         }
                     } else {

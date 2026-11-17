@@ -8,6 +8,37 @@
 
     const STORAGE_KEY = 'pvp_settings_v1';
 
+    const GRAPHICS_PRESETS = {
+        performance: {
+            renderScale: 0.65,
+            shadowQuality: 'off',
+            fogDistance: 85,
+            effectDensity: 0.45,
+            zombieMaxAlive: 10,
+        },
+        balanced: {
+            renderScale: 0.90,
+            shadowQuality: 'medium',
+            fogDistance: 120,
+            effectDensity: 0.75,
+            zombieMaxAlive: 16,
+        },
+        quality: {
+            renderScale: 1.00,
+            shadowQuality: 'high',
+            fogDistance: 150,
+            effectDensity: 1.00,
+            zombieMaxAlive: 20,
+        },
+    };
+
+    const SHADOW_SETTINGS = {
+        off:    { enabled: false, size: 512,  type: THREE.BasicShadowMap, updateFrames: 10 },
+        low:    { enabled: true,  size: 512,  type: THREE.BasicShadowMap, updateFrames: 8 },
+        medium: { enabled: true,  size: 1024, type: THREE.PCFShadowMap,  updateFrames: 4 },
+        high:   { enabled: true,  size: 2048, type: THREE.PCFSoftShadowMap, updateFrames: 3 },
+    };
+
     // ============================================================
     // 默认配置
     // ============================================================
@@ -30,8 +61,13 @@
             touch: 60,
         },
         graphics: {
-            shadows: true,
-            zombieMaxAlive: 20,      // ★ 只保留这一项（池容量固定 50）
+            preset: 'balanced',
+            renderScale: 0.90,
+            shadowQuality: 'medium',
+            fogDistance: 120,
+            effectDensity: 0.75,
+            zombieMaxAlive: 16,      // 池容量固定 50，此项只控制同屏数量
+            shadows: true,           // 兼容旧代码的派生字段
         },
     };
 
@@ -71,6 +107,53 @@
         window.SETTINGS_RT.touchSens = s.touch / 10000;
     }
 
+    function _clamp(v, min, max) {
+        return Math.max(min, Math.min(max, Number(v)));
+    }
+
+    function _normalizeGraphics() {
+        const g = SETTINGS.graphics;
+        g.renderScale = _clamp(g.renderScale, 0.5, 1.0);
+        g.fogDistance = _clamp(g.fogDistance, 70, 150);
+        g.effectDensity = _clamp(g.effectDensity, 0.2, 1.0);
+        g.zombieMaxAlive = _clamp(g.zombieMaxAlive, 5, 45);
+        if (!SHADOW_SETTINGS[g.shadowQuality]) g.shadowQuality = 'medium';
+        if (!GRAPHICS_PRESETS[g.preset] && g.preset !== 'custom') g.preset = 'custom';
+        g.shadows = g.shadowQuality !== 'off';
+    }
+
+    function _applyPresetValues(name) {
+        const preset = GRAPHICS_PRESETS[name];
+        if (!preset) return false;
+        SETTINGS.graphics.preset = name;
+        Object.assign(SETTINGS.graphics, preset);
+        SETTINGS.graphics.shadows = SETTINGS.graphics.shadowQuality !== 'off';
+        return true;
+    }
+
+    function _markCustom() {
+        SETTINGS.graphics.preset = 'custom';
+        SETTINGS.graphics.shadows = SETTINGS.graphics.shadowQuality !== 'off';
+    }
+
+    function getEffectivePixelRatio() {
+        const isTouch = window.matchMedia('(pointer: coarse)').matches;
+        const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
+        const isDesert = (typeof getCurrentMapId === 'function' && getCurrentMapId() === 'desert');
+        const baseCap = isTouch ? 1 : ((isOnline || isDesert) ? 1.5 : 2);
+        const dpr = Math.min(window.devicePixelRatio || 1, baseCap);
+        const scale = _clamp(SETTINGS.graphics.renderScale, 0.5, 1.0);
+        return Math.max(0.5, dpr * scale);
+    }
+
+    window.SETTINGS_GetPixelRatio = getEffectivePixelRatio;
+    window.SETTINGS_GetEffectDensity = function () {
+        return _clamp(SETTINGS.graphics.effectDensity, 0.2, 1.0);
+    };
+    window.SETTINGS_ShouldUseDynamicLights = function () {
+        return SETTINGS.graphics.effectDensity >= 0.65;
+    };
+
     // ============================================================
     // 持久化
     // ============================================================
@@ -85,12 +168,24 @@
     function load() {
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
-            if (!raw) return;
+            if (!raw) return false;
             const parsed = JSON.parse(raw);
             mergeDefaults(SETTINGS, parsed);
+
+            // 旧版本只有 shadows 开关，迁移为新的阴影质量字段。
+            if (parsed && parsed.graphics
+                && parsed.graphics.shadowQuality === undefined
+                && parsed.graphics.shadows !== undefined) {
+                SETTINGS.graphics.shadowQuality = parsed.graphics.shadows ? 'high' : 'off';
+                SETTINGS.graphics.preset = 'custom';
+            }
+
+            _normalizeGraphics();
             refreshRuntime();
+            return true;
         } catch (e) {
             console.warn('[settings] 读取失败，使用默认值', e);
+            return false;
         }
     }
 
@@ -125,28 +220,135 @@
     }
 
     // ============================================================
-    // 画面应用（阴影开关）
+    // 画面应用
     // ============================================================
-    let _lastShadowsApplied = null;
+    let _lastShadowEnabled = null;
+    let _lastShadowType = null;
+
+    window.PERF_CaptureMapAtmosphere = function () {
+        if (typeof scene === 'undefined' || !scene || !scene.fog) return;
+        const fog = scene.fog;
+        if (fog.isFogExp2) {
+            scene.userData.perfFogBase = {
+                type: 'exp2',
+                density: fog.density,
+            };
+        } else if (fog.isFog) {
+            scene.userData.perfFogBase = {
+                type: 'linear',
+                near: fog.near,
+                far: fog.far,
+            };
+        }
+        window.PERF_ApplyMapAtmosphere();
+    };
+
+    window.PERF_ApplyMapAtmosphere = function () {
+        if (typeof scene === 'undefined' || !scene || !scene.fog) return;
+        const base = scene.userData.perfFogBase;
+        if (!base) return;
+
+        const distance = _clamp(SETTINGS.graphics.fogDistance, 70, 150);
+        if (base.type === 'exp2') {
+            // 以 120m 作为调校基准；雾距越短，密度越高。
+            scene.fog.density = base.density * (120 / distance);
+        } else if (base.type === 'linear') {
+            const far = Math.min(base.far, distance);
+            scene.fog.far = far;
+            scene.fog.near = Math.min(base.near, far * 0.55);
+        }
+    };
+
+    function _applyMapLightDensity() {
+        if (typeof scene === 'undefined' || !scene) return 0;
+        const lights = [];
+        scene.traverse(o => {
+            if (o.isPointLight && o.userData && o.userData.isMapLight) lights.push(o);
+        });
+
+        const density = window.SETTINGS_GetEffectDensity();
+        const wanted = lights.length > 0
+            ? Math.max(1, Math.round(lights.length * density))
+            : 0;
+        for (let i = 0; i < lights.length; i++) {
+            lights[i].visible = i < wanted;
+        }
+        return wanted;
+    }
+
+    function _updateGraphicsHint() {
+        const g = SETTINGS.graphics;
+        const el = document.getElementById('gfxQualityHint');
+        if (!el) return;
+
+        const presetName = {
+            performance: '性能优先',
+            balanced: '均衡',
+            quality: '画质优先',
+            custom: '自定义',
+        }[g.preset] || '自定义';
+        const effective = getEffectivePixelRatio().toFixed(2);
+        el.textContent = `当前：${presetName} · 3D 分辨率 ${Math.round(g.renderScale * 100)}% · 实际像素比 ${effective}×`;
+
+        document.querySelectorAll('#qualityPresetRow .quality-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.qualityPreset === g.preset);
+        });
+    }
 
     function applyGraphics(force) {
         if (typeof renderer === 'undefined' || !renderer) return;
 
-        const want = !!SETTINGS.graphics.shadows;
+        _normalizeGraphics();
+        const g = SETTINGS.graphics;
+        const shadow = SHADOW_SETTINGS[g.shadowQuality] || SHADOW_SETTINGS.medium;
 
-        if (!force && _lastShadowsApplied === want) return;
-
-        const prev = renderer.shadowMap.enabled;
-        _lastShadowsApplied = want;
-
-        renderer.shadowMap.enabled = want;
-
-        if (prev !== want) {
-            _forceRecompileMaterials();
-            if (want) renderer.shadowMap.needsUpdate = true;
+        // 像素比是最稳妥的全局性能杠杆，直接改变主画面的片元着色开销。
+        if (typeof window.refreshRenderQualityForMap === 'function') {
+            window.refreshRenderQualityForMap();
+        } else {
+            renderer.setPixelRatio(getEffectivePixelRatio());
         }
 
-        console.log('[settings] 阴影:', want ? '开' : '关');
+        const shadowStateChanged = (
+            _lastShadowEnabled !== shadow.enabled
+            || _lastShadowType !== shadow.type
+        );
+        _lastShadowEnabled = shadow.enabled;
+        _lastShadowType = shadow.type;
+
+        renderer.shadowMap.enabled = shadow.enabled;
+        renderer.shadowMap.type = shadow.type;
+        if (typeof sun !== 'undefined' && sun) {
+            sun.castShadow = shadow.enabled;
+            if (sun.shadow.mapSize.x !== shadow.size || sun.shadow.mapSize.y !== shadow.size) {
+                sun.shadow.mapSize.set(shadow.size, shadow.size);
+                if (sun.shadow.map) {
+                    sun.shadow.map.dispose();
+                    sun.shadow.map = null;
+                }
+            }
+        }
+
+        if (shadowStateChanged) {
+            _forceRecompileMaterials();
+        }
+        if (shadow.enabled && typeof window.requestShadowUpdate === 'function') {
+            window.requestShadowUpdate();
+        }
+
+        window.PERF_ApplyMapAtmosphere();
+        const mapLights = _applyMapLightDensity();
+
+        if (force || shadowStateChanged) {
+            console.log(
+                '[settings] 画面设置:',
+                '3D 分辨率', Math.round(g.renderScale * 100) + '%',
+                '阴影', g.shadowQuality,
+                '雾距', Math.round(g.fogDistance) + 'm',
+                '特效', Math.round(g.effectDensity * 100) + '%',
+                '地图灯光', mapLights
+            );
+        }
     }
 
     // ============================================================
@@ -301,25 +503,95 @@
         });
 
         // ---------- 画面 ----------
-        $('gfxShadows')?.addEventListener('change', e => {
-            SETTINGS.graphics.shadows = e.target.checked;
-            const val = $('gfxShadowsVal');
-            if (val) val.textContent = e.target.checked ? '开' : '关';
-            applyGraphics(true);
+        document.querySelectorAll('#qualityPresetRow .quality-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const name = btn.dataset.qualityPreset;
+                if (!_applyPresetValues(name)) return;
+                applyGraphics(true);
+                applyZombieSettings();
+                _syncGraphicsUI();
+            });
         });
 
-        // ★ 同屏僵尸上限（池容量固定 50，无需联动）
+        const renderScaleEl = $('gfxRenderScale');
+        if (renderScaleEl) {
+            renderScaleEl.addEventListener('input', () => {
+                SETTINGS.graphics.renderScale = parseInt(renderScaleEl.value, 10) / 100;
+                _markCustom();
+                applyGraphics();
+                _syncGraphicsUI();
+            });
+        }
+
+        const shadowQualityEl = $('gfxShadowQuality');
+        if (shadowQualityEl) {
+            shadowQualityEl.addEventListener('change', () => {
+                SETTINGS.graphics.shadowQuality = shadowQualityEl.value;
+                _markCustom();
+                applyGraphics(true);
+                _syncGraphicsUI();
+            });
+        }
+
+        const fogDistanceEl = $('gfxFogDistance');
+        if (fogDistanceEl) {
+            fogDistanceEl.addEventListener('input', () => {
+                SETTINGS.graphics.fogDistance = parseInt(fogDistanceEl.value, 10);
+                _markCustom();
+                applyGraphics();
+                _syncGraphicsUI();
+            });
+        }
+
+        const effectDensityEl = $('gfxEffectDensity');
+        if (effectDensityEl) {
+            effectDensityEl.addEventListener('input', () => {
+                SETTINGS.graphics.effectDensity = parseInt(effectDensityEl.value, 10) / 100;
+                _markCustom();
+                applyGraphics();
+                _syncGraphicsUI();
+            });
+        }
+
+        // 同屏僵尸上限（池容量固定 50）
         const gfxZombieMaxAlive    = $('gfxZombieMaxAlive');
-        const gfxZombieMaxAliveVal = $('gfxZombieMaxAliveVal');
 
         if (gfxZombieMaxAlive) {
             gfxZombieMaxAlive.addEventListener('input', () => {
                 const v = parseInt(gfxZombieMaxAlive.value, 10);
                 SETTINGS.graphics.zombieMaxAlive = v;
-                if (gfxZombieMaxAliveVal) gfxZombieMaxAliveVal.textContent = v;
+                _markCustom();
                 applyZombieSettings();
+                _syncGraphicsUI();
             });
         }
+    }
+
+    // ============================================================
+    // 画面控件刷新
+    // ============================================================
+    function _syncGraphicsUI() {
+        const $ = id => document.getElementById(id);
+        const g = SETTINGS.graphics;
+        const shadowLabels = {
+            off: '关闭',
+            low: '低',
+            medium: '中',
+            high: '高',
+        };
+
+        if ($('gfxRenderScale'))        $('gfxRenderScale').value = Math.round(g.renderScale * 100);
+        if ($('gfxRenderScaleVal'))     $('gfxRenderScaleVal').textContent = Math.round(g.renderScale * 100) + '%';
+        if ($('gfxShadowQuality'))      $('gfxShadowQuality').value = g.shadowQuality;
+        if ($('gfxShadowQualityVal'))   $('gfxShadowQualityVal').textContent = shadowLabels[g.shadowQuality] || '中';
+        if ($('gfxFogDistance'))        $('gfxFogDistance').value = Math.round(g.fogDistance);
+        if ($('gfxFogDistanceVal'))     $('gfxFogDistanceVal').textContent = Math.round(g.fogDistance) + ' m';
+        if ($('gfxEffectDensity'))      $('gfxEffectDensity').value = Math.round(g.effectDensity * 100);
+        if ($('gfxEffectDensityVal'))   $('gfxEffectDensityVal').textContent = Math.round(g.effectDensity * 100) + '%';
+        if ($('gfxZombieMaxAlive'))     $('gfxZombieMaxAlive').value = Math.round(g.zombieMaxAlive);
+        if ($('gfxZombieMaxAliveVal'))  $('gfxZombieMaxAliveVal').textContent = Math.round(g.zombieMaxAlive);
+
+        _updateGraphicsHint();
     }
 
     // ============================================================
@@ -358,13 +630,7 @@
         if ($('sensVertVal'))  $('sensVertVal').textContent  = s.vertMul.toFixed(2) + '×';
         if ($('sensTouchVal')) $('sensTouchVal').textContent = s.touch;
 
-        // 画面
-        if ($('gfxShadows'))    $('gfxShadows').checked = !!g.shadows;
-        if ($('gfxShadowsVal')) $('gfxShadowsVal').textContent = g.shadows ? '开' : '关';
-
-        // ★ 同屏僵尸上限
-        if ($('gfxZombieMaxAlive'))    $('gfxZombieMaxAlive').value    = g.zombieMaxAlive;
-        if ($('gfxZombieMaxAliveVal')) $('gfxZombieMaxAliveVal').textContent = g.zombieMaxAlive;
+        _syncGraphicsUI();
 
         applyCrosshair();
     }
@@ -382,7 +648,11 @@
     // 初始化
     // ============================================================
     function init() {
-        load();
+        const hadSavedSettings = load();
+        if (!hadSavedSettings && window.matchMedia('(pointer: coarse)').matches) {
+            _applyPresetValues('performance');
+        }
+        _normalizeGraphics();
         refreshRuntime();
         applyCrosshair();
 
@@ -438,6 +708,13 @@
     window.SETTINGS_Close = closePanel;
     window.SETTINGS_Save  = save;
     window.SETTINGS_ApplyGraphics = applyGraphics;
+    window.PERF_ReapplyMapQuality = function () {
+        if (typeof window.PERF_CaptureMapAtmosphere === 'function') {
+            window.PERF_CaptureMapAtmosphere();
+        }
+        _applyMapLightDensity();
+        _syncGraphicsUI();
+    };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

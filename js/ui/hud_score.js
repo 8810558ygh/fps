@@ -29,6 +29,10 @@ function showScorePanel() {
 
     // ★ 生存模式：没有战绩，直接禁用
     if (typeof gameMode !== 'undefined' && gameMode === 'survival') return;
+    if (typeof gameMode !== 'undefined' && gameMode === 'lan') {
+        if (typeof LAN_showScoreboard === 'function') LAN_showScoreboard();
+        return;
+    }
 
     _scorePanelVisible = true;
     _scorePanelEl.classList.add('visible');
@@ -39,6 +43,10 @@ function hideScorePanel() {
     if (!_scorePanelVisible) return;
     _scorePanelVisible = false;
     if (_scorePanelEl) _scorePanelEl.classList.remove('visible');
+    if (typeof gameMode !== 'undefined' && gameMode === 'lan'
+        && typeof LAN_hideScoreboard === 'function') {
+        LAN_hideScoreboard();
+    }
 }
 
 function _getScoreboardData() {

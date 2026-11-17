@@ -270,7 +270,9 @@
             && typeof isTouchDevice !== 'undefined' && !isTouchDevice
             && typeof renderer !== 'undefined' && renderer
             && typeof running !== 'undefined' && running) {
-            try { renderer.domElement.requestPointerLock(); } catch (e) {}
+            if (typeof window.requestGamePointerLock === 'function') {
+                window.requestGamePointerLock();
+            }
         }
 
         console.log('[stats] 面板关闭');

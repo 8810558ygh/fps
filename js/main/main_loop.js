@@ -73,7 +73,8 @@ function updateFpsCounter(now) {
 function updateP2ShadowState() {
     if (typeof p2 === 'undefined' || !p2 || !p2.mesh) return;
 
-    const shouldDisable = (typeof gameMode !== 'undefined' && gameMode === 'online');
+    const shouldDisable = (typeof gameMode !== 'undefined'
+        && (gameMode === 'online' || gameMode === 'lan'));
     if (!!p2._shadowDisabled === shouldDisable) return;
 
     p2._shadowDisabled = shouldDisable;
@@ -157,7 +158,16 @@ function render() {
     updateP2ShadowState();
 
     p1.mesh.visible = false;
-    p2.mesh.visible = p2.baseVisible;
+    if (gameMode === 'lan') {
+        p2.mesh.visible = false;
+        if (typeof LAN_foreachRemote === 'function') {
+            LAN_foreachRemote(remote => {
+                remote.mesh.visible = !!remote.baseVisible;
+            });
+        }
+    } else {
+        p2.mesh.visible = p2.baseVisible;
+    }
     p1.vm.visible = p1.baseVisible && !(p1.aiming && p1.weapon.scope);
     if (p2.vm) p2.vm.visible = false;
 
@@ -209,12 +219,47 @@ function loop() {
 
     if (typeof desertGrassTime !== 'undefined') desertGrassTime.value = now / 1000;
 
-    const isHost      = (gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost);
+    const isLan       = (gameMode === 'lan');
+    const isHost      = !isLan && ((gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost));
     const isClient    = NET.isClientPlayer();
     const isSpectator = NET.isSpectator();
 
     if (running) {
-        if (isHost) {
+        if (isLan) {
+            const prevPX = p1.pos.x;
+            const prevPY = p1.pos.y;
+            const prevPZ = p1.pos.z;
+            if (p1.deadUntil !== Infinity) {
+                collectLocalInput(p1);
+                if (gameState === 'prep') {
+                    p1.input.forward = 0;
+                    p1.input.right = 0;
+                    p1.input.jump = false;
+                    p1.input.fire = false;
+                }
+                updatePlayer(p1, dt, now);
+                if (dt > 0.0001) {
+                    if (!p1._netVelocity) p1._netVelocity = new THREE.Vector3();
+                    p1._netVelocity.set(
+                        (p1.pos.x - prevPX) / dt,
+                        (p1.pos.y - prevPY) / dt,
+                        (p1.pos.z - prevPZ) / dt
+                    );
+                }
+            }
+
+            if (typeof LAN_foreachRemote === 'function') {
+                LAN_foreachRemote(remote => {
+                    interpolateRemotePlayer(remote, dt);
+                    updateFootsteps(remote, dt, now, true);
+                    if (typeof updateThirdPersonWeapon === 'function') {
+                        updateThirdPersonWeapon(remote, dt, now);
+                    }
+                });
+            }
+
+            if (typeof LAN_mainTick === 'function') LAN_mainTick(dt, now);
+        } else if (isHost) {
             collectLocalInput(p1);
             updatePlayer(p1, dt, now);
 
@@ -286,6 +331,11 @@ function loop() {
                     window.PHYSICS.syncPlayerToBody(p2, dt);
                 }
             }
+            if (isLan && typeof LAN_foreachRemote === 'function') {
+                LAN_foreachRemote(remote => {
+                    window.PHYSICS.syncPlayerToBody(remote, dt);
+                });
+            }
         }
 
         if (!isSpectator) {
@@ -293,6 +343,8 @@ function loop() {
                 updateFootsteps(p1, dt, now);
                 if (gameMode === 'ai' || (gameMode === 'online' && NET.isHost)) updateFootsteps(p2, dt, now);
             } else if (isClient) {
+                updateFootsteps(p1, dt, now);
+            } else if (isLan && p1.deadUntil !== Infinity) {
                 updateFootsteps(p1, dt, now);
             }
             if (typeof updateXrayVisibility === 'function') updateXrayVisibility();

@@ -322,6 +322,15 @@ function loadMap(mapId) {
 
     def.build(currentMapGroup);
 
+    // 将同材质静态网格合批，显著减少 draw call。碰撞体已在 build 阶段独立记录。
+    if (typeof window.batchStaticMapMeshes === 'function') {
+        try {
+            window.batchStaticMapMeshes(currentMapGroup);
+        } catch (e) {
+            console.warn('[scene] 静态合批跳过:', e);
+        }
+    }
+
     _notifyShotTargetsDirty();
 
     if (window.groundMesh) {
@@ -336,6 +345,10 @@ function loadMap(mapId) {
         } else if (a.fog !== undefined) {
             scene.fog = new THREE.Fog(a.fog, a.fogNear || 50, a.fogFar || 120);
         }
+    }
+
+    if (typeof window.PERF_CaptureMapAtmosphere === 'function') {
+        window.PERF_CaptureMapAtmosphere();
     }
 
     window.currentMapSpawns = def.spawns || {
@@ -392,6 +405,9 @@ function loadMap(mapId) {
     }
 
     if (typeof window.refreshMinimap === 'function') window.refreshMinimap();
+    if (typeof window.PERF_ReapplyMapQuality === 'function') {
+        window.PERF_ReapplyMapQuality();
+    }
     if (typeof window.requestShadowUpdate === 'function') window.requestShadowUpdate();
     if (typeof window.refreshRenderQualityForMap === 'function') {
         window.refreshRenderQualityForMap();

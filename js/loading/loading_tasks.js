@@ -24,6 +24,16 @@
         const WEAPON_NAMES = W.WEAPON_NAMES;
         const tasks = [];
 
+        tasks.push({
+            name: '应用画质与性能设置',
+            weight: 1,
+            fn: () => {
+                if (typeof window.SETTINGS_ApplyGraphics === 'function') {
+                    window.SETTINGS_ApplyGraphics(true);
+                }
+            },
+        });
+
         // ---- 音频 ----
         tasks.push({ name: '初始化音频系统', weight: 3, fn: () => W.warmupAudioDeep() });
 
@@ -152,7 +162,12 @@
         tasks.push({
             name: '编译地图着色器',
             weight: 4,
-            fn: () => W.warmupMapOnly(),
+            fn: () => {
+                if (typeof window.SETTINGS_ApplyGraphics === 'function') {
+                    window.SETTINGS_ApplyGraphics(true);
+                }
+                W.warmupMapOnly();
+            },
         });
 
         return tasks;

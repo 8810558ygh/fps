@@ -42,6 +42,9 @@ const SMOKE_SHELL_COLORS = {
 };
 
 function getSmokeTeamForPlayer(p) {
+    if (typeof gameMode !== 'undefined' && gameMode === 'lan') {
+        return p && p.team === 'red' ? 'red' : 'blue';
+    }
     if (typeof gameMode !== 'undefined'
         && gameMode === 'online'
         && typeof NET !== 'undefined'
@@ -386,6 +389,15 @@ function throwSmoke(p, now, fuseMs) {
 
     const team = getSmokeTeamForPlayer(p);
     const proj = spawnSmokeProjectile(origin, vel, effectiveFuseMs, now, undefined, team);
+
+    if (gameMode === 'lan' && typeof LAN_broadcastFx === 'function') {
+        LAN_broadcastFx('smoke', {
+            id: proj ? proj.id : null,
+            px: origin.x, py: origin.y, pz: origin.z,
+            vx: vel.x, vy: vel.y, vz: vel.z,
+            fuseMs: effectiveFuseMs, team,
+        });
+    }
 
     if (typeof emitWorldSound === 'function') {
         emitWorldSound('smokeThrow', p.pos.x, p.pos.y + p.eyeH, p.pos.z, p.id === 1);

@@ -31,6 +31,7 @@ document.write(`
         <div class="lobby-buttons">
             <button class="btn lobby-btn lobby-btn-ai" id="lobbyAiBtn">人 机 对 战</button>
             <button class="btn lobby-btn lobby-btn-survival" id="lobbySurvivalBtn">生 存 模 式</button>
+            <button class="btn lobby-btn lobby-btn-online" id="lobbyLanBtn">局 域 网 多 人</button>
             <button class="btn lobby-btn lobby-btn-online" id="lobbyOnlineBtn">联 机 对 战</button>
         </div>
         <div class="lobby-footer">Three.js · 程序化音效与纹理</div>

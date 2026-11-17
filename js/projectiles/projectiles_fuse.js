@@ -145,6 +145,13 @@ function dropFuseInPlace(p) {
             ? getSmokeTeamForPlayer(p) : 'blue';
         const proj = spawnSmokeProjectile(origin, vel, remainMs, now, undefined, team);
         if (typeof sSmokeThrow === 'function') sSmokeThrow();
+        if (gameMode === 'lan' && typeof LAN_broadcastFx === 'function') {
+            LAN_broadcastFx('smoke', {
+                id: proj ? proj.id : null,
+                px: origin.x, py: origin.y, pz: origin.z,
+                vx: 0, vy: 0, vz: 0, fuseMs: remainMs, team,
+            });
+        }
         if (gameMode === 'online'
             && typeof NET !== 'undefined'
             && NET.isHost
@@ -161,6 +168,13 @@ function dropFuseInPlace(p) {
     } else if (type === 'flash') {
         const proj = spawnFlashProjectile(origin, vel, remainMs, now);
         if (typeof sFlashThrow === 'function') sFlashThrow();
+        if (gameMode === 'lan' && typeof LAN_broadcastFx === 'function') {
+            LAN_broadcastFx('flash', {
+                id: proj ? proj.id : null,
+                px: origin.x, py: origin.y, pz: origin.z,
+                vx: 0, vy: 0, vz: 0, fuseMs: remainMs,
+            });
+        }
         if (gameMode === 'online'
             && typeof NET !== 'undefined'
             && NET.isHost
@@ -198,6 +212,13 @@ function detonateInHand(p, type, now) {
             ? getSmokeTeamForPlayer(p) : 'blue';
         const proj = spawnSmokeProjectile(origin, vel, 0, now, undefined, team);
         if (typeof sSmokeThrow === 'function') sSmokeThrow();
+        if (gameMode === 'lan' && typeof LAN_broadcastFx === 'function') {
+            LAN_broadcastFx('smoke', {
+                id: proj ? proj.id : null,
+                px: origin.x, py: origin.y, pz: origin.z,
+                vx: 0, vy: 0, vz: 0, fuseMs: 0, team,
+            });
+        }
         if (gameMode === 'online'
             && typeof NET !== 'undefined'
             && NET.isHost
@@ -214,6 +235,13 @@ function detonateInHand(p, type, now) {
     } else if (type === 'flash') {
         const proj = spawnFlashProjectile(origin, vel, 0, now);
         if (typeof sFlashThrow === 'function') sFlashThrow();
+        if (gameMode === 'lan' && typeof LAN_broadcastFx === 'function') {
+            LAN_broadcastFx('flash', {
+                id: proj ? proj.id : null,
+                px: origin.x, py: origin.y, pz: origin.z,
+                vx: 0, vy: 0, vz: 0, fuseMs: 0,
+            });
+        }
         if (gameMode === 'online'
             && typeof NET !== 'undefined'
             && NET.isHost

@@ -188,7 +188,9 @@ function handleRoundEvent(data) {
             if (typeof isChatOpen === 'function' && isChatOpen()) return;
             if (NET.role === 'spectator') return;
             if (document.pointerLockElement !== renderer.domElement) {
-                renderer.domElement.requestPointerLock();
+                if (typeof window.requestGamePointerLock === 'function') {
+                    window.requestGamePointerLock();
+                }
             }
         }
     }

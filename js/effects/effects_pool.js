@@ -6,7 +6,12 @@
 // ============================================================
 let _fxFrameStamp = -1;
 let _fxSparkCount = 0;
-const FX_SPARK_PER_FRAME = 3;
+
+function _getFxDensity() {
+    return typeof window.SETTINGS_GetEffectDensity === 'function'
+        ? window.SETTINGS_GetEffectDensity()
+        : 1;
+}
 
 function _tickFxBudget() {
     const stamp = Math.floor(performance.now() / 16.0);
@@ -126,12 +131,15 @@ function _releaseSpark(s) {
 
 function spawnSparks(point, color) {
     _tickFxBudget();
-    if (_fxSparkCount >= FX_SPARK_PER_FRAME) return;
+    const density = _getFxDensity();
+    const budget = Math.max(1, Math.round(3 * density));
+    if (_fxSparkCount >= budget) return;
     _fxSparkCount++;
 
     const mat = _getSparkMat(color);
+    const sparkCount = Math.max(1, Math.round(6 * density));
 
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < sparkCount; i++) {
         const s = _acquireSpark();
         if (!s) {
             _sparkPoolStarved++;

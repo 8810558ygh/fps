@@ -123,6 +123,9 @@ function updateHUD(now) {
     const p = p1;
     const h = H[1];
     if (!h) return;
+    if (gameMode !== 'lan') {
+        _setStyle(_timerEl, 'display', 'block', 'timerDisplay');
+    }
 
     const hpVal = Math.max(0, Math.ceil(p.hp));
     if (hpVal !== _hudState.hp) {
@@ -297,6 +300,9 @@ function updateHUD(now) {
         _setStyle(_timerEl, 'color', '#ffd24a', 'timerColor');
         _setStyle(_timerEl, 'background', 'rgba(0, 0, 0, 0.45)', 'timerBg');
 
+    } else if (gameMode === 'lan') {
+        // 局域网回合由服务器统一管理，本地不执行单机计时判定。
+        _setStyle(_timerEl, 'display', 'none', 'timerDisplay');
     } else {
         const left = Math.max(0, MATCH_MS - (now - matchStart));
         const mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);

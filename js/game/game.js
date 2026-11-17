@@ -206,7 +206,9 @@ function endPrep(now) {
         if (document.pointerLockElement !== renderer.domElement && running) {
             if (typeof isChatOpen === 'function' && isChatOpen()) return;
             if (typeof NET !== 'undefined' && NET.role === 'spectator') return;
-            renderer.domElement.requestPointerLock();
+            if (typeof window.requestGamePointerLock === 'function') {
+                window.requestGamePointerLock();
+            }
         }
     }
     if (gameMode === 'online' && typeof NET !== 'undefined' && NET.isHost) {

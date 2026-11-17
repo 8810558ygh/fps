@@ -41,6 +41,11 @@ function tryFire(p, now) {
         window.spawnShellCasing(p, now);
     }
 
+    if (gameMode === 'lan') {
+        if (typeof LAN_tryFire === 'function') LAN_tryFire(p, now, w);
+        return;
+    }
+
     if (gameMode === 'online' && typeof NET !== 'undefined' && !NET.isHost) {
         p.cam.getWorldPosition(_rcOrigin);
         _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);

@@ -10,6 +10,17 @@ async function lockLandscape() {
 }
 
 let _lastLockAttempt = 0;
+let _pointerLockRetryCount = 0;
+
+function requestGamePointerLock() {
+    if (!renderer || !renderer.domElement) return;
+    try {
+        const req = renderer.domElement.requestPointerLock();
+        if (req && typeof req.catch === 'function') req.catch(() => {});
+    } catch (e) {}
+}
+window.requestGamePointerLock = requestGamePointerLock;
+
 async function tryLockOnInteract() {
     if (!isTouchDevice) return;
     const now = Date.now();
@@ -35,7 +46,13 @@ renderer.domElement.addEventListener('click', () => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     if (NET.isSpectator()) return;
     if (running && document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
-        renderer.domElement.requestPointerLock();
+        requestGamePointerLock();
+    }
+});
+
+document.addEventListener('pointerlockchange', () => {
+    if (document.pointerLockElement === renderer.domElement) {
+        _pointerLockRetryCount = 0;
     }
 });
 
@@ -74,6 +91,7 @@ function enterFullscreenAndLock() {
         return;
     }
     if (NET.isSpectator()) return;
+    _pointerLockRetryCount = 0;
     if (!document.fullscreenElement && !document.webkitFullscreenElement) {
         const el = document.documentElement;
         if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
@@ -84,7 +102,12 @@ function enterFullscreenAndLock() {
         if (typeof isChatOpen === 'function' && isChatOpen()) return;
         if (NET.isSpectator()) return;
         if (document.pointerLockElement !== renderer.domElement) {
-            renderer.domElement.requestPointerLock();
+            if (_pointerLockRetryCount >= 3) {
+                console.warn('[input] 鼠标锁定被浏览器拒绝，点击游戏画面可再次尝试');
+                return;
+            }
+            _pointerLockRetryCount++;
+            requestGamePointerLock();
             setTimeout(() => {
                 if (document.pointerLockElement !== renderer.domElement) tryLock();
             }, 500);
@@ -99,7 +122,7 @@ document.addEventListener('fullscreenchange', () => {
     if (running && document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
         if (typeof isChatOpen === 'function' && isChatOpen()) return;
         if (NET.isSpectator()) return;
-        renderer.domElement.requestPointerLock();
+        requestGamePointerLock();
     }
 });
 document.addEventListener('webkitfullscreenchange', () => {
@@ -107,7 +130,7 @@ document.addEventListener('webkitfullscreenchange', () => {
     if (running && document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
         if (typeof isChatOpen === 'function' && isChatOpen()) return;
         if (NET.isSpectator()) return;
-        renderer.domElement.requestPointerLock();
+        requestGamePointerLock();
     }
 });
 
@@ -145,7 +168,7 @@ document.getElementById('weaponPanel').addEventListener('click', function(e) {
         document.getElementById('weaponPanel').style.display = 'none';
         if (document.pointerLockElement !== renderer.domElement && !isTouchDevice) {
             if (typeof isChatOpen === 'function' && isChatOpen()) return;
-            renderer.domElement.requestPointerLock();
+            requestGamePointerLock();
         }
     }
 });

@@ -214,7 +214,7 @@ window.getPlayerHitMeshes = getPlayerHitMeshes;
 // ============================================================
 // makePlayer
 // ============================================================
-function makePlayer(id, color, spawn, weaponKey) {
+function makePlayer(id, color, spawn, weaponKey, lightweight) {
     const mat = new THREE.MeshLambertMaterial({ color, transparent: true });
     const g = new THREE.Group();
 
@@ -424,7 +424,7 @@ function makePlayer(id, color, spawn, weaponKey) {
         window.PHYSICS.createPlayerBody(p);
     }
 
-    setWeapon(p, weaponKey || 'rifle');
+    if (!lightweight) setWeapon(p, weaponKey || 'rifle');
     p.equipEnd = 0;
     return p;
 }

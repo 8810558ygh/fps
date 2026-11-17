@@ -36,6 +36,7 @@ function initFlashBurstPool() {
 
         const light = new THREE.PointLight(0xffffff, 0, 40);
         light.position.set(0, -1000, 0);
+        light.visible = false;
         scene.add(light);
 
         _flashBurstPool.push({
@@ -75,13 +76,18 @@ function updateFlashBursts(dt, now) {
             b.shell.material.opacity = 0;
             b.light.intensity = 0;
             b.light.position.set(0, -1000, 0);
+            b.light.visible = false;
             continue;
         }
 
         const scale = 1 + t * 8;
         b.shell.scale.setScalar(scale);
         b.shell.material.opacity = 1 - t;
-        b.light.intensity = 12 * (1 - t);
+        const useLight = typeof window.SETTINGS_ShouldUseDynamicLights === 'function'
+            ? window.SETTINGS_ShouldUseDynamicLights()
+            : true;
+        b.light.visible = useLight;
+        b.light.intensity = useLight ? 12 * (1 - t) : 0;
     }
 }
 
@@ -155,7 +161,11 @@ function spawnFlashBurst(pos) {
     slot.shell.visible = true;
 
     slot.light.position.copy(pos);
-    slot.light.intensity = 12;
+    const useLight = typeof window.SETTINGS_ShouldUseDynamicLights === 'function'
+        ? window.SETTINGS_ShouldUseDynamicLights()
+        : true;
+    slot.light.visible = useLight;
+    slot.light.intensity = useLight ? 12 : 0;
 }
 
 // ============================================================
@@ -426,6 +436,15 @@ function throwFlash(p, now, fuseMs) {
     vel.y += FLASH.throwUpBias * FLASH.throwSpeed;
 
     const proj = spawnFlashProjectile(origin, vel, effectiveFuseMs, now);
+
+    if (gameMode === 'lan' && typeof LAN_broadcastFx === 'function') {
+        LAN_broadcastFx('flash', {
+            id: proj ? proj.id : null,
+            px: origin.x, py: origin.y, pz: origin.z,
+            vx: vel.x, vy: vel.y, vz: vel.z,
+            fuseMs: effectiveFuseMs,
+        });
+    }
 
     if (typeof emitWorldSound === 'function') {
         emitWorldSound('flashThrow', p.pos.x, p.pos.y + p.eyeH, p.pos.z, p.id === 1);

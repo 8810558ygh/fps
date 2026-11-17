@@ -160,6 +160,11 @@ document.getElementById('lobbyOnlineBtn').addEventListener('click', () => {
     }
 });
 
+document.getElementById('lobbyLanBtn').addEventListener('click', () => {
+    audio();
+    if (typeof lanShowLobby === 'function') lanShowLobby();
+});
+
 document.getElementById('againBtn').addEventListener('click', () => {
     audio();
     if (gameMode === 'online') {

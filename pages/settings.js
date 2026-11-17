@@ -15,7 +15,7 @@ document.write(`
             <div class="settings-tabs" id="settingsTabs">
                 <button class="stab active" data-tab="crosshair">准星</button>
                 <button class="stab" data-tab="sensitivity">灵敏度</button>
-                <button class="stab" data-tab="graphics">画面</button>
+                <button class="stab" data-tab="graphics">画面 / 性能</button>
             </div>
 
             <div class="settings-content">
@@ -144,34 +144,70 @@ document.write(`
                     <div class="settings-page-inner">
 
                         <div class="settings-section">
-                            <div class="section-title">画质</div>
+                            <div class="section-title">性能预设</div>
+
+                            <div class="quality-preset-row" id="qualityPresetRow">
+                                <button class="quality-btn" data-quality-preset="performance">
+                                    <span>性能优先</span>
+                                    <small>低分辨率 · 无阴影</small>
+                                </button>
+                                <button class="quality-btn active" data-quality-preset="balanced">
+                                    <span>均衡</span>
+                                    <small>推荐大多数设备</small>
+                                </button>
+                                <button class="quality-btn" data-quality-preset="quality">
+                                    <span>画质优先</span>
+                                    <small>完整阴影与特效</small>
+                                </button>
+                            </div>
+
+                            <div class="quality-hint" id="gfxQualityHint">
+                                当前：均衡 · 3D 分辨率 90%
+                            </div>
+                        </div>
+
+                        <div class="settings-section">
+                            <div class="section-title">渲染</div>
 
                             <div class="set-row">
-                                <label>阴影</label>
-                                <input type="checkbox" id="gfxShadows" class="switch" checked>
-                                <span class="set-val" id="gfxShadowsVal">开</span>
+                                <label>3D 分辨率</label>
+                                <input type="range" id="gfxRenderScale" min="50" max="100" step="5" value="90">
+                                <span class="set-val" id="gfxRenderScaleVal">90%</span>
+                            </div>
+
+                            <div class="set-row">
+                                <label>阴影质量</label>
+                                <select id="gfxShadowQuality" class="select-control">
+                                    <option value="off">关闭</option>
+                                    <option value="low">低</option>
+                                    <option value="medium" selected>中</option>
+                                    <option value="high">高</option>
+                                </select>
+                                <span class="set-val" id="gfxShadowQualityVal">中</span>
+                            </div>
+
+                            <div class="set-row">
+                                <label>远景雾距</label>
+                                <input type="range" id="gfxFogDistance" min="70" max="150" step="5" value="120">
+                                <span class="set-val" id="gfxFogDistanceVal">120 m</span>
+                            </div>
+
+                            <div class="set-row">
+                                <label>特效密度</label>
+                                <input type="range" id="gfxEffectDensity" min="20" max="100" step="5" value="75">
+                                <span class="set-val" id="gfxEffectDensityVal">75%</span>
                             </div>
 
                             <!-- 同屏僵尸上限 -->
                             <div class="set-row">
                                 <label>同屏僵尸上限</label>
-                                <input type="range" id="gfxZombieMaxAlive" min="5" max="45" step="1" value="20">
-                                <span class="set-val" id="gfxZombieMaxAliveVal">20</span>
+                                <input type="range" id="gfxZombieMaxAlive" min="5" max="45" step="1" value="16">
+                                <span class="set-val" id="gfxZombieMaxAliveVal">16</span>
                             </div>
 
-                            <div style="
-                                margin-top: 10px;
-                                padding: 10px 14px;
-                                background: rgba(255, 210, 74, 0.06);
-                                border-left: 3px solid rgba(255, 210, 74, 0.6);
-                                border-radius: 6px;
-                                font-size: 12px;
-                                color: #9fb2c8;
-                                line-height: 1.7;
-                                letter-spacing: 0.5px;
-                            ">
-                                💡 关闭阴影可显著提升低端设备的帧率。<br>
-                                关闭后场景中所有物体将不再投射或接收阴影。
+                            <div class="quality-hint">
+                                💡 “3D 分辨率”对帧率影响最大。设置会在下一局加载时用于完整预热，
+                                已进入游戏时也可以立即生效。
                             </div>
 
                         </div>
