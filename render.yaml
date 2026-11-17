@@ -3,6 +3,7 @@ services:
     name: heroes-duel-lan
     runtime: node
     plan: free
+    region: singapore
     buildCommand: npm install --omit=dev
     startCommand: npm start
     healthCheckPath: /
