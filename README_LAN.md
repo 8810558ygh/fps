@@ -69,3 +69,11 @@ Start Command: npm start
 
 部署成功后，所有玩家只访问云服务提供的网址。进入大厅后直接创建或加入房间，
 不需要输入服务器地址。免费实例可能会休眠，若需要随时立即建房，应选择不会休眠的实例。
+
+Koyeb 可直接识别项目根目录的 `Dockerfile`：
+
+```text
+Builder: Dockerfile
+Service port: 8090
+Health check path: /
+```
