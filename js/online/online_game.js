@@ -176,6 +176,9 @@ function enterOnlineGame() {
     }
 
     if (typeof window.GAME_setMode === 'function') window.GAME_setMode('online');
+    if (typeof window.SETTINGS_PreparePerformanceMode === 'function') {
+        window.SETTINGS_PreparePerformanceMode();
+    }
     if (typeof resetMatch === 'function') {
         if (typeof p2 !== 'undefined' && p2) p2.gunHolder.visible = true;
         resetMatch();

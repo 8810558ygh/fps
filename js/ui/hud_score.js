@@ -1,38 +1,30 @@
-// ===== js/hud_score.js – TAB 战绩面板 + AI 开关 + TAB 键绑定 =====
-// 从 hud.js 拆出，不改变任何对外接口
+// ===== js/ui/hud_score.js – TAB 战绩面板 + AI 开关 + TAB 键绑定 =====
 
 // ============================================================
-// ★ TAB 战绩面板 DOM 缓存
+// TAB 战绩面板
 // ============================================================
-const _scorePanelEl  = document.getElementById('scorePanel');
-const _spBlueNameEl  = document.getElementById('spBlueName');
-const _spRedNameEl   = document.getElementById('spRedName');
+const _scorePanelEl = document.getElementById('scorePanel');
+const _spBlueNameEl = document.getElementById('spBlueName');
+const _spRedNameEl = document.getElementById('spRedName');
 const _spBlueScoreEl = document.getElementById('spBlueScore');
-const _spRedScoreEl  = document.getElementById('spRedScore');
+const _spRedScoreEl = document.getElementById('spRedScore');
+const _spPlayerRowsEl = document.getElementById('spPlayerRows');
 
 let _scorePanelVisible = false;
 
 const _spCache = {
-    blueName: '',
-    redName: '',
     blueScore: -1,
     redScore: -1,
     blueLeading: null,
     redLeading: null,
+    rowsKey: '',
 };
 
 function showScorePanel() {
-    if (_scorePanelVisible) return;
-    if (!_scorePanelEl) return;
+    if (_scorePanelVisible || !_scorePanelEl) return;
     if (typeof running === 'undefined' || !running) return;
     if (typeof isOver === 'function' && isOver()) return;
-
-    // ★ 生存模式：没有战绩，直接禁用
     if (typeof gameMode !== 'undefined' && gameMode === 'survival') return;
-    if (typeof gameMode !== 'undefined' && gameMode === 'lan') {
-        if (typeof LAN_showScoreboard === 'function') LAN_showScoreboard();
-        return;
-    }
 
     _scorePanelVisible = true;
     _scorePanelEl.classList.add('visible');
@@ -43,80 +35,136 @@ function hideScorePanel() {
     if (!_scorePanelVisible) return;
     _scorePanelVisible = false;
     if (_scorePanelEl) _scorePanelEl.classList.remove('visible');
-    if (typeof gameMode !== 'undefined' && gameMode === 'lan'
-        && typeof LAN_hideScoreboard === 'function') {
-        LAN_hideScoreboard();
-    }
+}
+
+function _finishScoreboardData(blueScore, redScore, rows) {
+    rows.sort((a, b) => (
+        (b.kills - a.kills)
+        || (a.deaths - b.deaths)
+        || a.name.localeCompare(b.name, 'zh-CN')
+    ));
+    return {
+        blueScore: Number(blueScore) || 0,
+        redScore: Number(redScore) || 0,
+        blueName: '蓝队',
+        redName: '红队',
+        rows,
+    };
 }
 
 function _getScoreboardData() {
-    const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online'
-                      && typeof NET !== 'undefined' && NET.roomId);
+    if (typeof gameMode !== 'undefined' && gameMode === 'lan') {
+        const blueScore = Number(LAN.blueScore) || 0;
+        const redScore = Number(LAN.redScore) || 0;
+        let rows = Array.from(LAN.playerStates.values()).map(state => ({
+            id: state.id,
+            name: state.name || '玩家',
+            team: state.team === 'red' ? 'red' : 'blue',
+            kills: Number(state.kills) || 0,
+            deaths: Number(state.deaths) || 0,
+            alive: state.alive !== false,
+            self: state.id === LAN.selfId,
+        }));
 
-    let blueScore = 0, redScore = 0;
-    let blueName  = '蓝方', redName = '红方';
-
-    if (isOnline) {
-        if (NET.role === 'spectator') {
-            const p1IsBlue = (NET.spectatorTarget === 'blue');
-            blueScore = p1IsBlue ? p1.score : p2.score;
-            redScore  = p1IsBlue ? p2.score : p1.score;
-            blueName  = '蓝方';
-            redName   = '红方';
-        } else {
-            const mySeat = NET.mySeat;
-            const myName = (typeof NET.getMyName === 'function') ? NET.getMyName() : '你';
-            const opName = (typeof NET.getOpponentName === 'function') ? NET.getOpponentName() : '对手';
-            if (mySeat === 'blue') {
-                blueScore = p1.score;
-                redScore  = p2.score;
-                blueName  = myName;
-                redName   = opName;
-            } else {
-                blueScore = p2.score;
-                redScore  = p1.score;
-                blueName  = opName;
-                redName   = myName;
-            }
+        if (rows.length === 0 && LAN.room && Array.isArray(LAN.room.players)) {
+            rows = LAN.room.players.map(player => ({
+                id: player.id,
+                name: player.name || '玩家',
+                team: player.team === 'red' ? 'red' : 'blue',
+                kills: 0,
+                deaths: 0,
+                alive: true,
+                self: player.id === LAN.selfId,
+            }));
         }
-    } else {
-        blueScore = p1.score;
-        redScore  = p2.score;
-        if (typeof gameMode !== 'undefined' && gameMode === 'ai') {
-            blueName = '你';
-            redName  = (typeof aiEnabled !== 'undefined' && !aiEnabled) ? '靶子' : 'AI';
-        } else {
-            blueName = '蓝方';
-            redName  = '红方';
-        }
+        return _finishScoreboardData(blueScore, redScore, rows);
     }
 
-    return { blueScore, redScore, blueName, redName };
+    const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online'
+        && typeof NET !== 'undefined' && NET.roomId);
+
+    if (isOnline) {
+        const p1IsBlue = NET.role === 'spectator'
+            ? NET.spectatorTarget === 'blue'
+            : NET.mySeat !== 'red';
+        const blueScore = p1IsBlue ? (p1.score || 0) : (p2.score || 0);
+        const redScore = p1IsBlue ? (p2.score || 0) : (p1.score || 0);
+        const blueId = NET.seats?.blue;
+        const redId = NET.seats?.red;
+        const blueMember = NET.members?.get(blueId);
+        const redMember = NET.members?.get(redId);
+
+        return _finishScoreboardData(blueScore, redScore, [
+            {
+                id: blueId || 'blue',
+                name: blueMember?.name || '蓝方玩家',
+                team: 'blue',
+                kills: blueScore,
+                deaths: redScore,
+                alive: true,
+                self: NET.role !== 'spectator' && NET.mySeat === 'blue',
+            },
+            {
+                id: redId || 'red',
+                name: redMember?.name || '红方玩家',
+                team: 'red',
+                kills: redScore,
+                deaths: blueScore,
+                alive: true,
+                self: NET.role !== 'spectator' && NET.mySeat === 'red',
+            },
+        ]);
+    }
+
+    const blueScore = p1.score || 0;
+    const redScore = p2.score || 0;
+    const selfName = typeof window.PROFILE_GetId === 'function'
+        ? window.PROFILE_GetId()
+        : '你';
+    const opponentName = (typeof gameMode !== 'undefined' && gameMode === 'ai')
+        ? ((typeof aiEnabled !== 'undefined' && !aiEnabled) ? '靶子' : 'AI')
+        : '红方玩家';
+
+    return _finishScoreboardData(blueScore, redScore, [
+        {
+            id: 'p1',
+            name: selfName,
+            team: 'blue',
+            kills: blueScore,
+            deaths: redScore,
+            alive: p1.deadUntil !== Infinity,
+            self: true,
+        },
+        {
+            id: 'p2',
+            name: opponentName,
+            team: 'red',
+            kills: redScore,
+            deaths: blueScore,
+            alive: p2.deadUntil !== Infinity,
+            self: false,
+        },
+    ]);
 }
 
 function _updateScorePanelContent() {
     if (!_scorePanelEl) return;
-    const d = _getScoreboardData();
+    const data = _getScoreboardData();
 
-    if (_spCache.blueName !== d.blueName) {
-        if (_spBlueNameEl) _spBlueNameEl.textContent = d.blueName;
-        _spCache.blueName = d.blueName;
+    if (_spBlueNameEl) _spBlueNameEl.textContent = data.blueName;
+    if (_spRedNameEl) _spRedNameEl.textContent = data.redName;
+
+    if (_spCache.blueScore !== data.blueScore) {
+        if (_spBlueScoreEl) _spBlueScoreEl.textContent = data.blueScore;
+        _spCache.blueScore = data.blueScore;
     }
-    if (_spCache.redName !== d.redName) {
-        if (_spRedNameEl) _spRedNameEl.textContent = d.redName;
-        _spCache.redName = d.redName;
-    }
-    if (_spCache.blueScore !== d.blueScore) {
-        if (_spBlueScoreEl) _spBlueScoreEl.textContent = d.blueScore;
-        _spCache.blueScore = d.blueScore;
-    }
-    if (_spCache.redScore !== d.redScore) {
-        if (_spRedScoreEl) _spRedScoreEl.textContent = d.redScore;
-        _spCache.redScore = d.redScore;
+    if (_spCache.redScore !== data.redScore) {
+        if (_spRedScoreEl) _spRedScoreEl.textContent = data.redScore;
+        _spCache.redScore = data.redScore;
     }
 
-    const blueLead = d.blueScore > d.redScore;
-    const redLead  = d.redScore > d.blueScore;
+    const blueLead = data.blueScore > data.redScore;
+    const redLead = data.redScore > data.blueScore;
     if (_spCache.blueLeading !== blueLead) {
         if (_spBlueScoreEl) _spBlueScoreEl.classList.toggle('leading', blueLead);
         _spCache.blueLeading = blueLead;
@@ -125,15 +173,56 @@ function _updateScorePanelContent() {
         if (_spRedScoreEl) _spRedScoreEl.classList.toggle('leading', redLead);
         _spCache.redLeading = redLead;
     }
+
+    const rowsKey = data.rows.map(row => (
+        `${row.id}|${row.name}|${row.team}|${row.kills}|${row.deaths}|${row.alive}|${row.self}`
+    )).join(';');
+    if (rowsKey === _spCache.rowsKey || !_spPlayerRowsEl) return;
+    _spCache.rowsKey = rowsKey;
+    _spPlayerRowsEl.replaceChildren();
+
+    for (const player of data.rows) {
+        const row = document.createElement('div');
+        row.className = 'sp-player-row'
+            + (player.self ? ' self' : '')
+            + (player.alive ? '' : ' dead');
+
+        const name = document.createElement('span');
+        name.className = 'sp-player-name';
+        const team = document.createElement('i');
+        team.className = `sp-team-mark ${player.team}`;
+        team.textContent = player.team === 'red' ? '红' : '蓝';
+        const nameText = document.createElement('span');
+        nameText.textContent = player.name;
+        name.append(team, nameText);
+
+        const kills = document.createElement('strong');
+        kills.className = 'sp-kills';
+        kills.textContent = player.kills;
+
+        const deaths = document.createElement('strong');
+        deaths.className = 'sp-deaths';
+        deaths.textContent = player.deaths;
+
+        row.append(name, kills, deaths);
+        _spPlayerRowsEl.appendChild(row);
+    }
 }
 
 function _tickScorePanel() {
-    if (!_scorePanelVisible) return;
-    if (!_scorePanelEl) return;
-    if (typeof running === 'undefined' || !running) { hideScorePanel(); return; }
-    if (typeof isOver === 'function' && isOver()) { hideScorePanel(); return; }
-    // ★ 生存模式：强制关闭
-    if (typeof gameMode !== 'undefined' && gameMode === 'survival') { hideScorePanel(); return; }
+    if (!_scorePanelVisible || !_scorePanelEl) return;
+    if (typeof running === 'undefined' || !running) {
+        hideScorePanel();
+        return;
+    }
+    if (typeof isOver === 'function' && isOver()) {
+        hideScorePanel();
+        return;
+    }
+    if (typeof gameMode !== 'undefined' && gameMode === 'survival') {
+        hideScorePanel();
+        return;
+    }
     _updateScorePanelContent();
 }
 
@@ -141,9 +230,9 @@ window.showScorePanel = showScorePanel;
 window.hideScorePanel = hideScorePanel;
 
 // ============================================================
-// ★ AI 操纵开关（人机对战）
+// AI 操纵开关（人机对战）
 // ============================================================
-const _aiToggleEl      = document.getElementById('aiToggle');
+const _aiToggleEl = document.getElementById('aiToggle');
 const _aiToggleStateEl = document.getElementById('aiToggleState');
 
 function toggleAiEnabled() {
@@ -155,18 +244,18 @@ function toggleAiEnabled() {
 
     if (!aiEnabled && typeof p2 !== 'undefined' && p2 && p2.input) {
         p2.input.forward = 0;
-        p2.input.right   = 0;
-        p2.input.jump    = false;
-        p2.input.crouch  = false;
-        p2.input.fire    = false;
-        p2.input.aim     = false;
+        p2.input.right = 0;
+        p2.input.jump = false;
+        p2.input.crouch = false;
+        p2.input.fire = false;
+        p2.input.aim = false;
     }
 
     if (typeof audio === 'function') audio();
     if (aiEnabled) {
         if (typeof sPickup === 'function') sPickup(1);
-    } else {
-        if (typeof sEmpty === 'function') sEmpty(1);
+    } else if (typeof sEmpty === 'function') {
+        sEmpty(1);
     }
 
     _updateAiToggleUI();
@@ -177,21 +266,16 @@ window.toggleAiEnabled = toggleAiEnabled;
 function _updateAiToggleUI() {
     if (!_aiToggleEl) return;
 
-    const shouldShow =
-        (typeof gameMode !== 'undefined' && gameMode === 'ai') &&
-        typeof running !== 'undefined' && running &&
-        !(typeof isOver === 'function' && isOver());
+    const shouldShow = (typeof gameMode !== 'undefined' && gameMode === 'ai')
+        && typeof running !== 'undefined' && running
+        && !(typeof isOver === 'function' && isOver());
 
     if (!shouldShow) {
-        if (_aiToggleEl.style.display !== 'none') {
-            _aiToggleEl.style.display = 'none';
-        }
+        if (_aiToggleEl.style.display !== 'none') _aiToggleEl.style.display = 'none';
         return;
     }
 
-    if (_aiToggleEl.style.display !== 'flex') {
-        _aiToggleEl.style.display = 'flex';
-    }
+    if (_aiToggleEl.style.display !== 'flex') _aiToggleEl.style.display = 'flex';
 
     if (aiEnabled) {
         _aiToggleEl.classList.add('on');
@@ -205,28 +289,28 @@ function _updateAiToggleUI() {
 }
 
 if (_aiToggleEl) {
-    const _handler = (e) => {
-        e.stopPropagation();
-        e.preventDefault();
+    const handler = (event) => {
+        event.stopPropagation();
+        event.preventDefault();
         toggleAiEnabled();
     };
-    _aiToggleEl.addEventListener('click', _handler);
-    _aiToggleEl.addEventListener('touchstart', _handler, { passive: false });
+    _aiToggleEl.addEventListener('click', handler);
+    _aiToggleEl.addEventListener('touchstart', handler, { passive: false });
 }
 
 // ============================================================
-// ★ TAB 键绑定
+// TAB 键绑定
 // ============================================================
-window.addEventListener('keydown', (e) => {
-    if (e.code !== 'Tab') return;
+window.addEventListener('keydown', (event) => {
+    if (event.code !== 'Tab') return;
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
-    e.preventDefault();
+    event.preventDefault();
     showScorePanel();
 }, false);
 
-window.addEventListener('keyup', (e) => {
-    if (e.code !== 'Tab') return;
-    e.preventDefault();
+window.addEventListener('keyup', (event) => {
+    if (event.code !== 'Tab') return;
+    event.preventDefault();
     hideScorePanel();
 }, false);
 

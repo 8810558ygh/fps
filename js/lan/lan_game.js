@@ -18,6 +18,10 @@ const LAN = {
     spectateNetId: null,
     lastDeathNoticeAt: 0,
     lastSavedMatchId: null,
+    roundReportCache: null,
+    roundReportVisible: false,
+    localInfo: null,
+    inviteUrl: '',
 };
 
 window.LAN = LAN;
@@ -81,6 +85,75 @@ function _lanPrepareHitMeshes(player) {
     player.team = player === p1 ? LAN.playerStates.get(LAN.selfId)?.team : player.team;
 }
 
+async function _lanUpdateRoomInvite(room, isOwner) {
+    const panel = _lanEl('lanShareInvite');
+    const input = _lanEl('lanInviteUrl');
+    const alternate = _lanEl('lanAlternateUrls');
+    const copyButton = _lanEl('lanCopyInviteBtn');
+    if (!panel || !input) return;
+
+    if (!isOwner) {
+        LAN.inviteUrl = '';
+        panel.style.display = 'none';
+        return;
+    }
+
+    let urls = [];
+    try {
+        if (window.electronAPI && typeof window.electronAPI.getLocalInfo === 'function') {
+            if (!LAN.localInfo) LAN.localInfo = await window.electronAPI.getLocalInfo();
+            urls = (LAN.localInfo?.httpUrls || [])
+                .map(item => item.url)
+                .filter(Boolean);
+        } else if (/^https?:$/.test(location.protocol)
+            && !['127.0.0.1', 'localhost'].includes(location.hostname)) {
+            urls = [location.origin];
+        }
+    } catch (error) {
+        console.warn('[lan] 获取局域网地址失败', error);
+    }
+
+    urls = [...new Set(urls)];
+    panel.style.display = 'block';
+    if (urls.length === 0) {
+        LAN.inviteUrl = '';
+        input.value = '未检测到可用的局域网地址';
+        if (copyButton) copyButton.disabled = true;
+        if (alternate) alternate.textContent = '请确认电脑已连接 Wi-Fi 或网线';
+        return;
+    }
+
+    LAN.inviteUrl = `${urls[0]}/?lanRoom=${encodeURIComponent(room.code)}`;
+    input.value = LAN.inviteUrl;
+    if (copyButton) copyButton.disabled = false;
+    if (alternate) {
+        alternate.textContent = urls.length > 1
+            ? `备用地址：${urls.slice(1).map(url => `${url}/?lanRoom=${encodeURIComponent(room.code)}`).join('  ·  ')}`
+            : '朋友需要和房主连接到同一个局域网';
+    }
+}
+
+async function _lanCopyInviteUrl() {
+    const input = _lanEl('lanInviteUrl');
+    if (!input || !LAN.inviteUrl) {
+        lanNotify('当前没有可复制的局域网网址');
+        return;
+    }
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(LAN.inviteUrl);
+        } else {
+            input.select();
+            document.execCommand('copy');
+        }
+        lanNotify('邀请网址已复制，发给同一局域网内的朋友');
+    } catch {
+        input.select();
+        document.execCommand('copy');
+        lanNotify('邀请网址已选中，请按 Ctrl+C 复制');
+    }
+}
+
 function _lanRenderLobby(room) {
     LAN.room = room;
     if (!room) return;
@@ -103,6 +176,7 @@ function _lanRenderLobby(room) {
     if (ownerEl) ownerEl.textContent = `房主：${owner ? owner.name : '-'}`;
     const pingEl = _lanEl('lanRoomPing');
     if (pingEl) pingEl.textContent = `延迟：${LANNET.latency || '-'}ms`;
+    _lanUpdateRoomInvite(room, isOwner);
 
     for (const team of ['blue', 'red']) {
         const list = _lanEl(team === 'blue' ? 'lanBlueList' : 'lanRedList');
@@ -175,6 +249,19 @@ function _lanSetRoomMessage(text) {
     if (el) el.textContent = text || '';
 }
 
+function _lanShowRoundReport(report) {
+    if (!report || typeof window.showLANRoundReport !== 'function') return;
+    LAN.roundReportCache = report;
+    LAN.roundReportVisible = true;
+    window.showLANRoundReport(report);
+}
+
+function _lanHideRoundReport(clearCache = false) {
+    LAN.roundReportVisible = false;
+    if (clearCache) LAN.roundReportCache = null;
+    if (typeof window.closeCombatReport === 'function') window.closeCombatReport();
+}
+
 function _lanCreateRoom() {
     const mapId = typeof getCurrentMapId === 'function' ? getCurrentMapId() : 'battlefield';
     if (!LANNET.send({ type: 'createRoom', mapId })) {
@@ -228,6 +315,7 @@ function _lanBindUI() {
     });
     on('lanCreateBtn', _lanCreateRoom);
     on('lanJoinBtn', _lanJoinRoom);
+    on('lanCopyInviteBtn', _lanCopyInviteUrl);
     on('lanSwitchBlue', () => LANNET.send({ type: 'switchTeam', team: 'blue' }));
     on('lanSwitchRed', () => LANNET.send({ type: 'switchTeam', team: 'red' }));
     on('lanReadyBtn', () => {
@@ -377,6 +465,7 @@ function _lanInstallSimplePlayerModel(player) {
     player._lanSimpleModel = true;
     player.gunHolder.visible = true;
 }
+window.LAN_installSimplePlayerModel = _lanInstallSimplePlayerModel;
 
 function _lanEnsureRemote(state) {
     let player = LAN.models.get(state.id);
@@ -586,6 +675,7 @@ function lanStartMatch(mapId) {
     LAN.nextRemoteNumericId = 100;
     LAN.spectateNetId = null;
     LAN.lastSavedMatchId = null;
+    _lanHideRoundReport(true);
 
     _lanHideLobby();
     if (_lanEl('lanEndOverlay')) _lanEl('lanEndOverlay').style.display = 'none';
@@ -657,6 +747,7 @@ function _lanSaveMatchResult(msg) {
 
 function _lanMatchEnd(msg) {
     _lanSaveMatchResult(msg);
+    _lanHideRoundReport(true);
     running = false;
     gameState = 'idle';
     if (typeof SETTINGS_ApplyGraphics === 'function') SETTINGS_ApplyGraphics(true);
@@ -800,8 +891,23 @@ window.LAN_handleMessage = function (msg) {
         LAN.round = msg.round;
         LAN.blueScore = msg.blueScore ?? LAN.blueScore;
         LAN.redScore = msg.redScore ?? LAN.redScore;
-        if (msg.phase === 'prep') lanNotify('新回合准备', 1200);
-        if (msg.phase === 'round') lanNotify('开始交战', 900);
+        if (msg.phase === 'prep') {
+            lanNotify('新回合准备', 1200);
+            if (LAN.roundReportCache) _lanShowRoundReport(LAN.roundReportCache);
+        }
+        if (msg.phase === 'round') {
+            lanNotify('开始交战', 900);
+            _lanHideRoundReport(true);
+        }
+        return;
+    }
+    if (msg.type === 'roundReport') {
+        LAN.roundReportCache = msg.report;
+        if (msg.trigger === 'death'
+            || LAN.roundReportVisible
+            || LAN.phase === 'prep') {
+            _lanShowRoundReport(msg.report);
+        }
         return;
     }
     if (msg.type === 'roundEnd') {
@@ -969,8 +1075,38 @@ function LAN_prepareLocalHitRefs() {
     }
 }
 
+async function _lanHandleInviteQuery() {
+    const params = new URLSearchParams(location.search);
+    const code = String(params.get('lanRoom') || '').trim().toUpperCase();
+    if (!code) return;
+
+    const input = _lanEl('lanRoomCodeInput');
+    if (input) input.value = code;
+    const connected = await LANNET.connect();
+    lanShowLobby();
+    if (!connected) {
+        _lanSetRoomMessage('无法连接房主服务器，请确认双方在同一局域网');
+        return;
+    }
+    await _lanJoinRoom();
+}
+
+function _lanScheduleInviteQuery() {
+    if (!new URLSearchParams(location.search).get('lanRoom')) return;
+    setTimeout(() => {
+        _lanHandleInviteQuery().catch(error => {
+            console.warn('[lan] 邀请网址自动加入失败', error);
+            _lanSetRoomMessage('邀请网址自动加入失败，请手动输入房间码');
+        });
+    }, 100);
+}
+
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _lanBindUI);
+    document.addEventListener('DOMContentLoaded', () => {
+        _lanBindUI();
+        _lanScheduleInviteQuery();
+    });
 } else {
     _lanBindUI();
+    _lanScheduleInviteQuery();
 }

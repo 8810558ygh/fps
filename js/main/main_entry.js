@@ -8,6 +8,9 @@ function exitToLobby() {
 
     running = false;
     gameState = 'idle';
+    if (typeof SETTINGS_CancelPerformanceMode === 'function') {
+        SETTINGS_CancelPerformanceMode();
+    }
     if (typeof setOver === 'function') setOver(true);
 
     if (typeof gameMode !== 'undefined' && gameMode === 'survival'
@@ -45,6 +48,9 @@ function returnToOnlineRoom(isRemote) {
 
     running = false;
     gameState = 'idle';
+    if (typeof SETTINGS_CancelPerformanceMode === 'function') {
+        SETTINGS_CancelPerformanceMode();
+    }
     if (typeof setOver === 'function') setOver(true);
 
     if (document.pointerLockElement) document.exitPointerLock();
@@ -106,8 +112,16 @@ function enterGame(mode) {
         window.loadMap('battlefield');
     }
     window.GAME_setMode(mode);
+    if (typeof SETTINGS_PreparePerformanceMode === 'function') {
+        SETTINGS_PreparePerformanceMode();
+    }
 
     if (mode === 'ai') aiEnabled = true;
+    if (mode === 'ai'
+        && typeof window.LAN_installSimplePlayerModel === 'function'
+        && !p2._lanSimpleModel) {
+        window.LAN_installSimplePlayerModel(p2);
+    }
 
     p2.gunHolder.visible = (mode === 'ai' || mode === 'online');
     document.getElementById('lobbyOverlay').style.display = 'none';
@@ -128,6 +142,9 @@ function enterSurvival() {
     if (typeof window.SETTINGS_Close === 'function') window.SETTINGS_Close();
 
     window.GAME_setMode('survival');
+    if (typeof SETTINGS_PreparePerformanceMode === 'function') {
+        SETTINGS_PreparePerformanceMode();
+    }
 
     document.getElementById('lobbyOverlay').style.display = 'none';
 

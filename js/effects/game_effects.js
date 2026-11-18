@@ -42,6 +42,9 @@ function muzzleWorld(p, out) {
             return mp.getWorldPosition(out);
         }
     }
+    if (p && p._lanSimpleModel && p.gunHolder) {
+        return p.gunHolder.getWorldPosition(out);
+    }
     return out.set(0.28, -0.2, -1.25).applyMatrix4(p.cam.matrixWorld);
 }
 window.muzzleWorld = muzzleWorld;

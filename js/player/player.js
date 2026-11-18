@@ -24,6 +24,7 @@ function setWeapon(p, key) {
             }
         }
     }
+    const simpleVisual = !!p._lanSimpleModel;
 
     // 保存当前枪的弹药
     if (!p.weaponAmmo) p.weaponAmmo = {};
@@ -35,10 +36,12 @@ function setWeapon(p, key) {
     if (key === 'knife') {
         p.weaponKey = 'knife'; p.weapon = MELEE;
         p.isMelee = true; p.isSmoke = false; p.isFlash = false; p.isMedkit = false;
-        while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
-        p.gunHolder.add(makeWeaponModel('knife', p.mat));
-        while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
-        p.vm.add(makeViewmodel('knife', p.mat));
+        if (!simpleVisual) {
+            while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
+            p.gunHolder.add(makeWeaponModel('knife', p.mat));
+            while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
+            p.vm.add(makeViewmodel('knife', p.mat));
+        }
         p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
@@ -54,10 +57,12 @@ function setWeapon(p, key) {
     if (key === 'smoke') {
         p.weaponKey = 'smoke'; p.weapon = SMOKE;
         p.isMelee = false; p.isSmoke = true; p.isFlash = false; p.isMedkit = false;
-        while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
-        p.gunHolder.add(makeWeaponModel('smoke', p.mat));
-        while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
-        p.vm.add(makeViewmodel('smoke', p.mat));
+        if (!simpleVisual) {
+            while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
+            p.gunHolder.add(makeWeaponModel('smoke', p.mat));
+            while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
+            p.vm.add(makeViewmodel('smoke', p.mat));
+        }
         p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
@@ -71,10 +76,12 @@ function setWeapon(p, key) {
     if (key === 'flash') {
         p.weaponKey = 'flash'; p.weapon = FLASH;
         p.isMelee = false; p.isSmoke = false; p.isFlash = true; p.isMedkit = false;
-        while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
-        p.gunHolder.add(makeWeaponModel('flash', p.mat));
-        while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
-        p.vm.add(makeViewmodel('flash', p.mat));
+        if (!simpleVisual) {
+            while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
+            p.gunHolder.add(makeWeaponModel('flash', p.mat));
+            while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
+            p.vm.add(makeViewmodel('flash', p.mat));
+        }
         p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
@@ -89,10 +96,12 @@ function setWeapon(p, key) {
     if (key === 'medkit') {
         p.weaponKey = 'medkit'; p.weapon = MEDKIT;
         p.isMelee = false; p.isSmoke = false; p.isFlash = false; p.isMedkit = true;
-        while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
-        p.gunHolder.add(makeWeaponModel('medkit', p.mat));
-        while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
-        p.vm.add(makeViewmodel('medkit', p.mat));
+        if (!simpleVisual) {
+            while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
+            p.gunHolder.add(makeWeaponModel('medkit', p.mat));
+            while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
+            p.vm.add(makeViewmodel('medkit', p.mat));
+        }
         p.reloadEnd = 0;
         p.aiming = false; p.aimStage = 0; p.boltEnd = 0;
         if (p.input) p.input.aim = false;
@@ -109,10 +118,12 @@ function setWeapon(p, key) {
 
     p.weaponKey = key; p.primaryWeaponKey = key; p.weapon = w;
     p.isMelee = false; p.isSmoke = false; p.isFlash = false; p.isMedkit = false;
-    while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
-    p.gunHolder.add(makeWeaponModel(key, p.mat));
-    while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
-    p.vm.add(makeViewmodel(key, p.mat));
+    if (!simpleVisual) {
+        while (p.gunHolder.children.length) p.gunHolder.remove(p.gunHolder.children[0]);
+        p.gunHolder.add(makeWeaponModel(key, p.mat));
+        while (p.vm.children.length) p.vm.remove(p.vm.children[0]);
+        p.vm.add(makeViewmodel(key, p.mat));
+    }
 
     if (!p.weaponAmmo[key]) {
         p.weaponAmmo[key] = { ammo: w.mag, reserve: w.startReserve };
@@ -207,7 +218,7 @@ function getPlayerHitMeshes(p) {
         p.legL, p.legR, p.footL, p.footR,
         p.armLUp, p.armLLow, p.armRUp, p.armRLow,
         p.handL, p.handR
-    ];
+    ].filter(Boolean);
 }
 window.getPlayerHitMeshes = getPlayerHitMeshes;
 

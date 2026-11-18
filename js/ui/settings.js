@@ -60,8 +60,8 @@
             invertY: false,
             touch: 60,
         },
-        network: {
-            lanOptimization: true,
+        performance: {
+            autoOptimization: true,
         },
         graphics: {
             preset: 'balanced',
@@ -139,35 +139,39 @@
         SETTINGS.graphics.shadows = SETTINGS.graphics.shadowQuality !== 'off';
     }
 
-    let _lanGraphicsPrewarm = false;
+    let _gameGraphicsPrewarm = false;
 
-    function _isLanPerformanceMode() {
-        if (!SETTINGS.network.lanOptimization) return false;
-        if (_lanGraphicsPrewarm) return true;
+    function _isAutoPerformanceMode() {
+        if (!SETTINGS.performance.autoOptimization) return false;
+        if (_gameGraphicsPrewarm) return true;
         return (typeof running !== 'undefined' && running
-            && typeof gameMode !== 'undefined' && gameMode === 'lan');
+            && typeof gameMode !== 'undefined'
+            && ['ai', 'online', 'lan', 'survival'].includes(gameMode));
     }
 
     function getEffectivePixelRatio() {
         const isTouch = window.matchMedia('(pointer: coarse)').matches;
         const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
-        const lanPerformanceMode = _isLanPerformanceMode();
+        const autoPerformanceMode = _isAutoPerformanceMode();
         const isDesert = (typeof getCurrentMapId === 'function' && getCurrentMapId() === 'desert');
-        const baseCap = (isTouch || lanPerformanceMode)
+        const baseCap = (isTouch || autoPerformanceMode)
             ? 1
             : ((isOnline || isDesert) ? 1.5 : 2);
         const dpr = Math.min(window.devicePixelRatio || 1, baseCap);
         let scale = _clamp(SETTINGS.graphics.renderScale, 0.5, 1.0);
-        if (lanPerformanceMode) scale = Math.min(scale, 0.65);
+        if (autoPerformanceMode) {
+            scale = Math.min(scale, 0.65);
+        }
         return Math.max(0.5, dpr * scale);
     }
 
     window.SETTINGS_GetPixelRatio = getEffectivePixelRatio;
     window.SETTINGS_GetEffectDensity = function () {
-        return _clamp(SETTINGS.graphics.effectDensity, 0.2, 1.0);
+        const density = _clamp(SETTINGS.graphics.effectDensity, 0.2, 1.0);
+        return _isAutoPerformanceMode() ? Math.min(density, 0.55) : density;
     };
     window.SETTINGS_ShouldUseDynamicLights = function () {
-        return SETTINGS.graphics.effectDensity >= 0.65;
+        return SETTINGS.graphics.effectDensity >= 0.65 && !_isAutoPerformanceMode();
     };
 
     // ============================================================
@@ -187,6 +191,11 @@
             if (!raw) return false;
             const parsed = JSON.parse(raw);
             mergeDefaults(SETTINGS, parsed);
+            if (parsed
+                && parsed.performance?.autoOptimization === undefined
+                && parsed.network?.lanOptimization !== undefined) {
+                SETTINGS.performance.autoOptimization = !!parsed.network.lanOptimization;
+            }
 
             // 旧版本只有 shadows 开关，迁移为新的阴影质量字段。
             if (parsed && parsed.graphics
@@ -304,9 +313,9 @@
             custom: '自定义',
         }[g.preset] || '自定义';
         const effective = getEffectivePixelRatio().toFixed(2);
-        const lanPerformanceMode = _isLanPerformanceMode();
-        el.textContent = lanPerformanceMode
-            ? `联机优化已启用 · 实际像素比 ${effective}× · 阴影关闭 · 普通模式仍使用“${presetName}”`
+        const autoPerformanceMode = _isAutoPerformanceMode();
+        el.textContent = autoPerformanceMode
+            ? `自动优化已启用 · 实际像素比 ${effective}× · 阴影关闭 · 基础画质“${presetName}”`
             : `当前：${presetName} · 3D 分辨率 ${Math.round(g.renderScale * 100)}% · 实际像素比 ${effective}×`;
 
         document.querySelectorAll('#qualityPresetRow .quality-btn').forEach(btn => {
@@ -319,8 +328,8 @@
 
         _normalizeGraphics();
         const g = SETTINGS.graphics;
-        const lanPerformanceMode = _isLanPerformanceMode();
-        const effectiveShadowQuality = lanPerformanceMode ? 'off' : g.shadowQuality;
+        const autoPerformanceMode = _isAutoPerformanceMode();
+        const effectiveShadowQuality = autoPerformanceMode ? 'off' : g.shadowQuality;
         const shadow = SHADOW_SETTINGS[effectiveShadowQuality] || SHADOW_SETTINGS.medium;
 
         // 像素比是最稳妥的全局性能杠杆，直接改变主画面的片元着色开销。
@@ -365,7 +374,7 @@
                 '[settings] 画面设置:',
                 '3D 分辨率', Math.round(g.renderScale * 100) + '%',
                 '阴影', effectiveShadowQuality,
-                '联机优化', lanPerformanceMode ? '开启' : '关闭',
+                '自动优化', autoPerformanceMode ? '开启' : '关闭',
                 '雾距', Math.round(g.fogDistance) + 'm',
                 '特效', Math.round(g.effectDensity * 100) + '%',
                 '地图灯光', mapLights
@@ -383,16 +392,18 @@
         }
     }
     window.SETTINGS_ApplyZombie = applyZombieSettings;
-    window.SETTINGS_PrepareLanMatch = function () {
-        _lanGraphicsPrewarm = true;
+    window.SETTINGS_PreparePerformanceMode = function () {
+        _gameGraphicsPrewarm = true;
         applyGraphics(true);
         _syncGraphicsUI();
     };
-    window.SETTINGS_CancelLanPreload = function () {
-        _lanGraphicsPrewarm = false;
+    window.SETTINGS_CancelPerformanceMode = function () {
+        _gameGraphicsPrewarm = false;
         applyGraphics(true);
         _syncGraphicsUI();
     };
+    window.SETTINGS_PrepareLanMatch = window.SETTINGS_PreparePerformanceMode;
+    window.SETTINGS_CancelLanPreload = window.SETTINGS_CancelPerformanceMode;
 
     // ============================================================
     // 玩家资料与本地战绩
@@ -712,7 +723,7 @@
         const lanOptimizationEl = $('gfxLanOptimization');
         if (lanOptimizationEl) {
             lanOptimizationEl.addEventListener('change', () => {
-                SETTINGS.network.lanOptimization = lanOptimizationEl.checked;
+                SETTINGS.performance.autoOptimization = lanOptimizationEl.checked;
                 applyGraphics(true);
                 _syncGraphicsUI();
             });
@@ -795,7 +806,7 @@
         if ($('gfxEffectDensityVal'))   $('gfxEffectDensityVal').textContent = Math.round(g.effectDensity * 100) + '%';
         if ($('gfxZombieMaxAlive'))     $('gfxZombieMaxAlive').value = Math.round(g.zombieMaxAlive);
         if ($('gfxZombieMaxAliveVal'))  $('gfxZombieMaxAliveVal').textContent = Math.round(g.zombieMaxAlive);
-        if ($('gfxLanOptimization'))    $('gfxLanOptimization').checked = !!SETTINGS.network.lanOptimization;
+        if ($('gfxLanOptimization'))    $('gfxLanOptimization').checked = !!SETTINGS.performance.autoOptimization;
 
         _updateGraphicsHint();
     }

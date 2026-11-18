@@ -6,7 +6,14 @@ const os = require('os');
 const path = require('path');
 const WebSocket = require('ws');
 
-const executable = path.join(__dirname, 'dist', 'win-unpacked', '双雄对决.exe');
+const packagedMode = process.env.HEROES_DUEL_E2E_PACKAGED === '1';
+const packagedDirectory = process.env.HEROES_DUEL_E2E_PACKAGED_DIR
+  ? path.resolve(process.env.HEROES_DUEL_E2E_PACKAGED_DIR)
+  : path.join(__dirname, 'dist', 'win-unpacked');
+const executable = packagedMode
+  ? path.join(packagedDirectory, '双雄对决.exe')
+  : require('electron');
+const edgeExecutable = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'heroes-duel-e2e-'));
 const processes = [];
 const sockets = [];
@@ -114,7 +121,7 @@ async function samplePerformance(client, durationMs = 3000) {
           calls: renderer.info.render.calls,
           triangles: renderer.info.render.triangles,
           shadows: renderer.shadowMap.enabled,
-          lanOptimization: SETTINGS.network.lanOptimization,
+          autoOptimization: SETTINGS.performance.autoOptimization,
           renderer: rendererName,
           hardwareConcurrency: navigator.hardwareConcurrency
         });
@@ -126,17 +133,39 @@ async function samplePerformance(client, durationMs = 3000) {
 
 function launch(name, port) {
   const userData = path.join(tempRoot, name);
-  const playerData = path.join(tempRoot, `${name}-player-data`);
+  const portableDirectory = path.join(tempRoot, `${name}-portable`);
+  const playerData = path.join(portableDirectory, '双雄对决资料');
   dataDirectories.set(name, playerData);
-  const child = spawn(executable, [
+  const launchArguments = [
+    ...(packagedMode ? [] : [__dirname]),
     `--user-data-dir=${userData}`,
     `--remote-debugging-port=${port}`,
-  ], {
+  ];
+  const child = spawn(executable, launchArguments, {
     cwd: __dirname,
     env: {
       ...process.env,
-      HEROES_DUEL_DATA_DIR: playerData,
+      PORTABLE_EXECUTABLE_DIR: portableDirectory,
+      HEROES_DUEL_DISABLE_MIGRATION: '1',
     },
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  processes.push(child);
+  return child;
+}
+
+function launchBrowser(name, port, url) {
+  const userData = path.join(tempRoot, `${name}-browser`);
+  const child = spawn(edgeExecutable, [
+    '--headless=new',
+    '--disable-gpu',
+    '--no-first-run',
+    `--user-data-dir=${userData}`,
+    `--remote-debugging-port=${port}`,
+    url,
+  ], {
+    cwd: __dirname,
     stdio: 'ignore',
     windowsHide: true,
   });
@@ -170,6 +199,45 @@ async function main() {
     waitForPageExpression(host, 'window.PROFILE && PROFILE.ready', 10000, 'host profile'),
     waitForPageExpression(joiner, 'window.PROFILE && PROFILE.ready', 10000, 'joiner profile'),
   ]);
+  await host.evaluate("enterGame('ai'); true");
+  await waitForPageExpression(host, 'running && gameMode === "ai"', 10000, 'AI match start');
+  const aiSimpleModelApplied = await host.evaluate('!!p2._lanSimpleModel');
+  if (!aiSimpleModelApplied) {
+    throw new Error('AI opponent did not switch to the optimized model');
+  }
+  await sleep(1500);
+  const aiPerformanceBase = await samplePerformance(host, 2500);
+  const aiScoreboardUi = await host.evaluate(`
+    (() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        code: 'Tab',
+        bubbles: true,
+        cancelable: true
+      }));
+      const result = {
+        visible: document.getElementById('scorePanel').classList.contains('visible'),
+        rows: Array.from(document.querySelectorAll('#spPlayerRows .sp-player-row')).map(row => ({
+          name: row.querySelector('.sp-player-name')?.textContent || '',
+          kills: row.querySelector('.sp-kills')?.textContent || '',
+          deaths: row.querySelector('.sp-deaths')?.textContent || ''
+        })),
+        containsHealth: document.getElementById('scorePanel').textContent.includes('HP')
+      };
+      window.dispatchEvent(new KeyboardEvent('keyup', {
+        code: 'Tab',
+        bubbles: true,
+        cancelable: true
+      }));
+      return result;
+    })()
+  `);
+  if (!aiScoreboardUi.visible || aiScoreboardUi.rows.length !== 2 || aiScoreboardUi.containsHealth) {
+    throw new Error('AI TAB scoreboard is not using the unified K/D layout');
+  }
+  await host.evaluate("setWeapon(p2, 'shotgun'); true");
+  await sleep(500);
+  const aiPerformanceAfterWeaponSwitch = await samplePerformance(host, 2500);
+  await host.evaluate('exitToLobby(); true');
 
   await host.evaluate(`
     SETTINGS_Open();
@@ -214,6 +282,35 @@ async function main() {
   await host.evaluate("document.getElementById('lanCreateBtn').click(); true");
   await waitForPageExpression(host, 'LAN.room && LAN.room.players.length === 1', 10000, 'room creation');
   const code = await host.evaluate('LAN.room.code');
+  await waitForPageExpression(
+    host,
+    'document.getElementById("lanShareInvite").style.display !== "none" && document.getElementById("lanInviteUrl").value.includes("lanRoom=")',
+    5000,
+    'LAN invite URL'
+  );
+  const inviteUrl = await host.evaluate("document.getElementById('lanInviteUrl').value");
+  if (!inviteUrl.startsWith('http://') || !inviteUrl.includes(code)) {
+    throw new Error(`LAN invite URL is invalid: ${inviteUrl}`);
+  }
+  launchBrowser('browser-guest', 9333, inviteUrl);
+  const browserTarget = await pageTarget(9333);
+  const browserGuest = new CdpClient(browserTarget.webSocketDebuggerUrl);
+  await browserGuest.open();
+  await browserGuest.call('Runtime.enable');
+  await waitForPageExpression(
+    browserGuest,
+    'window.LAN && window.LANNET && !window.electronAPI',
+    20000,
+    'browser guest scripts'
+  );
+  await waitForPageExpression(
+    browserGuest,
+    `LAN.room && LAN.room.code === ${JSON.stringify(code)} && LAN.room.players.length === 2`,
+    10000,
+    'browser guest auto join'
+  );
+  await browserGuest.call('Browser.close');
+  await waitForPageExpression(host, 'LAN.room && LAN.room.players.length === 1', 8000, 'browser guest leave');
 
   await joiner.evaluate(`
     document.getElementById('lanRoomCodeInput').value = ${JSON.stringify(code)};
@@ -291,13 +388,13 @@ async function main() {
   `);
 
   await host.evaluate(`
-    SETTINGS.network.lanOptimization = false;
+    SETTINGS.performance.autoOptimization = false;
     SETTINGS_ApplyGraphics(true);
     true;
   `);
   const performanceUnoptimized = await samplePerformance(host, 2000);
   await host.evaluate(`
-    SETTINGS.network.lanOptimization = true;
+    SETTINGS.performance.autoOptimization = true;
     SETTINGS_ApplyGraphics(true);
     true;
   `);
@@ -320,6 +417,68 @@ async function main() {
     5000,
     'server-authoritative kill stats'
   );
+  await waitForPageExpression(joiner, '!!LAN.roundReportCache && LAN.phase === "roundEnd"', 4000, 'death report');
+  const deathReportUi = await joiner.evaluate(`({
+    visible: !!document.getElementById('roundReport'),
+    text: document.getElementById('roundReport')?.textContent || '',
+    cachedInteractions: LAN.roundReportCache?.interactions?.length || 0,
+    hasPartRows: ['头 部', '身 体', '腿 部'].every(label =>
+      (document.getElementById('roundReport')?.textContent || '').includes(label)),
+    hasSummaryTerms: ['总输出', '总承受', '回合状态', '击杀', '阵亡'].some(label =>
+      (document.getElementById('roundReport')?.textContent || '').includes(label))
+  })`);
+  if (!deathReportUi.visible
+      || !deathReportUi.text.includes('伤害报告')
+      || !deathReportUi.text.includes('150')
+      || !deathReportUi.hasPartRows
+      || deathReportUi.hasSummaryTerms) {
+    throw new Error('Death round report did not include the fatal interaction');
+  }
+  await waitForPageExpression(host, 'LAN.phase === "prep"', 5000, 'next preparation');
+  const survivorReportUi = await host.evaluate(`({
+    visible: !!document.getElementById('roundReport'),
+    text: document.getElementById('roundReport')?.textContent || '',
+    cachedInteractions: LAN.roundReportCache?.interactions?.length || 0,
+    hasPartRows: ['头 部', '身 体', '腿 部'].every(label =>
+      (document.getElementById('roundReport')?.textContent || '').includes(label)),
+    hasSummaryTerms: ['总输出', '总承受', '回合状态', '击杀', '阵亡'].some(label =>
+      (document.getElementById('roundReport')?.textContent || '').includes(label))
+  })`);
+  if (!survivorReportUi.visible
+      || !survivorReportUi.text.includes('伤害报告')
+      || !survivorReportUi.text.includes('150')
+      || !survivorReportUi.hasPartRows
+      || survivorReportUi.hasSummaryTerms) {
+    throw new Error('Survivor round report was not shown during preparation');
+  }
+  await host.evaluate(`
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'Tab',
+      bubbles: true,
+      cancelable: true
+    }));
+    true;
+  `);
+  const scoreboardUi = await host.evaluate(`({
+    rows: Array.from(document.querySelectorAll('#spPlayerRows .sp-player-row')).map(row => ({
+      name: row.querySelector('.sp-player-name')?.textContent || '',
+      kills: row.querySelector('.sp-kills')?.textContent || '',
+      deaths: row.querySelector('.sp-deaths')?.textContent || ''
+    })),
+    containsHealth: document.getElementById('scorePanel').textContent.includes('HP')
+  })`);
+  if (scoreboardUi.rows.length !== 2 || scoreboardUi.containsHealth) {
+    throw new Error('TAB scoreboard rows are incomplete or still contain health');
+  }
+  await host.evaluate(`
+    window.dispatchEvent(new KeyboardEvent('keyup', {
+      code: 'Tab',
+      bubbles: true,
+      cancelable: true
+    }));
+    true;
+  `);
+
   const statsPlayers = await host.evaluate(`
     Array.from(LAN.playerStates.values()).map(player => ({
       id: player.id,
@@ -369,6 +528,7 @@ async function main() {
 
   const result = {
     code,
+    inviteUrl,
     localHost,
     localJoiner,
     joinerServer: joinConnection.currentUrl,
@@ -376,6 +536,13 @@ async function main() {
     profileId: savedProfile.playerId,
     dataFolder: dataDirectories.get('host'),
     profileUi,
+    aiScoreboardUi,
+    aiSimpleModelApplied,
+    aiPerformanceBase,
+    aiPerformanceAfterWeaponSwitch,
+    deathReportUi,
+    survivorReportUi,
+    scoreboardUi,
     performanceSample,
     performanceWithoutRemotes,
     performanceUnoptimized,

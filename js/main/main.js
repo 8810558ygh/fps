@@ -57,7 +57,9 @@ function getShadowUpdateInterval() {
     const isLan = (typeof gameMode !== 'undefined' && gameMode === 'lan');
     const isOnline = (typeof gameMode !== 'undefined' && gameMode === 'online');
     const isDesert = (typeof getCurrentMapId === 'function' && getCurrentMapId() === 'desert');
-    if (isLan && window.SETTINGS?.network?.lanOptimization) return 30;
+    const autoPerformance = window.SETTINGS?.performance?.autoOptimization
+        && ['ai', 'online', 'lan', 'survival'].includes(gameMode);
+    if (autoPerformance) return 30;
     if (isDesert) return Math.max(base, 8);
     return (isOnline || isLan) ? Math.max(base, 6) : base;
 }

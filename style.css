@@ -754,7 +754,8 @@ body.online-mode #opponentInfo {
     left: 50%;
     transform: translate(-50%, -50%) scale(0.96);
     z-index: 18;
-    min-width: 360px;
+    width: min(560px, 92vw);
+    min-width: 420px;
     padding: 22px 34px 16px;
     background: rgba(13, 19, 30, 0.94);
     border: 1px solid rgba(255, 210, 74, 0.45);
@@ -795,47 +796,40 @@ body.online-mode #opponentInfo {
         rgba(255, 210, 74, 0) 100%);
     margin-bottom: 14px;
 }
-#scorePanel .sp-row {
-    display: grid;
-    grid-template-columns: 80px 1fr 1fr;
-    gap: 12px;
+#scorePanel .sp-scoreline {
+    display: flex;
     align-items: center;
-    padding: 8px 0;
+    justify-content: center;
+    gap: 18px;
+    margin-bottom: 16px;
 }
-#scorePanel .sp-header {
-    padding-bottom: 12px;
-    margin-bottom: 6px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+#scorePanel .sp-score-side {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 105px;
 }
-#scorePanel .sp-label {
-    font-size: 13px;
-    color: #9fb2c8;
-    letter-spacing: 2px;
+#scorePanel .sp-score-side.blue {
+    justify-content: flex-end;
+    color: #6db3ff;
 }
-#scorePanel .sp-team {
-    text-align: center;
-    font-size: 15px;
+#scorePanel .sp-score-side.red {
+    justify-content: flex-start;
+    color: #ff7a6d;
+}
+#scorePanel .sp-score-side span {
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 1px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
-#scorePanel .sp-team.sp-blue-label { color: #6db3ff; }
-#scorePanel .sp-team.sp-red-label  { color: #ff7a6d; }
-
-#scorePanel .sp-val {
-    text-align: center;
-    font-size: 28px;
-    font-weight: 800;
-    font-family: Consolas, "Courier New", monospace;
-    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
-    letter-spacing: 2px;
+#scorePanel .sp-score-side strong {
     position: relative;
+    color: #fff;
+    font: 800 27px/1 Consolas, "Courier New", monospace;
 }
-#scorePanel .sp-val.sp-blue-val { color: #6db3ff; }
-#scorePanel .sp-val.sp-red-val  { color: #ff7a6d; }
-#scorePanel .sp-val.leading::after {
+#scorePanel .sp-score-side.blue strong { color: #6db3ff; }
+#scorePanel .sp-score-side.red strong { color: #ff7a6d; }
+#scorePanel .sp-score-side strong.leading::after {
     content: '★';
     position: absolute;
     top: -10px;
@@ -844,6 +838,87 @@ body.online-mode #opponentInfo {
     color: #ffd24a;
     text-shadow: 0 0 6px rgba(255, 210, 74, 0.9);
 }
+#scorePanel .sp-score-separator {
+    color: rgba(255, 255, 255, 0.45);
+    font: 700 20px/1 Consolas, monospace;
+}
+
+#scorePanel .sp-table-head,
+#scorePanel .sp-player-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) 70px 70px;
+    align-items: center;
+    gap: 12px;
+}
+#scorePanel .sp-table-head {
+    padding: 7px 11px 9px;
+    color: #8498aa;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+    font-size: 10px;
+    letter-spacing: 2px;
+}
+#scorePanel .sp-table-head span:not(:first-child) {
+    text-align: center;
+}
+#scorePanel .sp-player-rows {
+    display: grid;
+    gap: 5px;
+    padding-top: 7px;
+}
+#scorePanel .sp-player-row {
+    min-height: 38px;
+    padding: 6px 11px;
+    border: 1px solid rgba(255, 255, 255, 0.055);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.035);
+}
+#scorePanel .sp-player-row.self {
+    border-color: rgba(255, 210, 74, 0.4);
+    background: rgba(255, 210, 74, 0.045);
+}
+#scorePanel .sp-player-row.dead {
+    opacity: 0.52;
+}
+#scorePanel .sp-player-name {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    overflow: hidden;
+    color: #e8f1f8;
+    font-size: 13px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#scorePanel .sp-team-mark {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 5px;
+    font-size: 9px;
+    font-style: normal;
+    font-weight: 700;
+}
+#scorePanel .sp-team-mark.blue {
+    color: #8bc5ff;
+    border: 1px solid rgba(109, 179, 255, 0.35);
+    background: rgba(109, 179, 255, 0.09);
+}
+#scorePanel .sp-team-mark.red {
+    color: #ff9d94;
+    border: 1px solid rgba(255, 122, 109, 0.35);
+    background: rgba(255, 122, 109, 0.09);
+}
+#scorePanel .sp-kills,
+#scorePanel .sp-deaths {
+    text-align: center;
+    font: 700 16px/1 Consolas, "Courier New", monospace;
+}
+#scorePanel .sp-kills { color: #6ee7b7; }
+#scorePanel .sp-deaths { color: #ff9d94; }
 
 #scorePanel .sp-hint {
     margin-top: 12px;
@@ -857,14 +932,23 @@ body.online-mode #opponentInfo {
 
 @media (pointer: coarse) {
     #scorePanel {
-        min-width: 280px;
+        width: min(94vw, 360px);
+        min-width: 0;
         padding: 18px 22px 14px;
     }
     #scorePanel .sp-title { font-size: 18px; letter-spacing: 6px; margin-bottom: 10px; }
-    #scorePanel .sp-val { font-size: 22px; }
-    #scorePanel .sp-row { grid-template-columns: 60px 1fr 1fr; gap: 8px; }
-    #scorePanel .sp-label { font-size: 12px; letter-spacing: 1px; }
-    #scorePanel .sp-team { font-size: 13px; }
+    #scorePanel .sp-scoreline { gap: 9px; margin-bottom: 11px; }
+    #scorePanel .sp-score-side { min-width: 78px; gap: 6px; }
+    #scorePanel .sp-score-side strong { font-size: 22px; }
+    #scorePanel .sp-score-side span { font-size: 10px; }
+    #scorePanel .sp-table-head,
+    #scorePanel .sp-player-row {
+        grid-template-columns: minmax(100px, 1fr) 44px 44px;
+        gap: 7px;
+    }
+    #scorePanel .sp-player-name { font-size: 12px; }
+    #scorePanel .sp-kills,
+    #scorePanel .sp-deaths { font-size: 14px; }
 }
 
 /* ============================================================

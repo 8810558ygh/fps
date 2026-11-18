@@ -5,6 +5,7 @@ const path = require('path');
 const net = require('net');
 const dgram = require('dgram');
 const http = require('http');
+const os = require('os');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -53,18 +54,47 @@ function defaultPlayerId() {
   return `玩家${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
+function executableDataDirectory() {
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    return path.resolve(process.env.PORTABLE_EXECUTABLE_DIR, '双雄对决资料');
+  }
+  if (app.isPackaged) {
+    return path.join(path.dirname(process.execPath), '双雄对决资料');
+  }
+  return path.join(path.resolve(__dirname, '..'), '双雄对决资料');
+}
+
+function migrateLegacyPlayerData(targetDirectory) {
+  const legacyDirectory = path.join(app.getPath('documents'), '双雄对决');
+  if (path.resolve(legacyDirectory) === path.resolve(targetDirectory)) return;
+
+  for (const fileName of ['profile.json', 'matches.json']) {
+    const source = path.join(legacyDirectory, fileName);
+    const target = path.join(targetDirectory, fileName);
+    if (!fs.existsSync(source) || fs.existsSync(target)) continue;
+    try {
+      fs.copyFileSync(source, target);
+    } catch (error) {
+      console.warn(`[profile] failed to migrate ${fileName}:`, error.message);
+    }
+  }
+}
+
 function initializePlayerData() {
   const preferredDirectory = process.env.HEROES_DUEL_DATA_DIR
     ? path.resolve(process.env.HEROES_DUEL_DATA_DIR)
-    : path.join(app.getPath('documents'), '双雄对决');
+    : executableDataDirectory();
 
   try {
     fs.mkdirSync(preferredDirectory, { recursive: true });
     playerDataDirectory = preferredDirectory;
   } catch (error) {
-    console.warn('[profile] documents directory unavailable:', error.message);
-    playerDataDirectory = path.join(app.getPath('userData'), 'player-data');
-    fs.mkdirSync(playerDataDirectory, { recursive: true });
+    throw new Error(`无法在游戏目录创建资料文件夹：${preferredDirectory}`);
+  }
+
+  if (!process.env.HEROES_DUEL_DATA_DIR
+      && process.env.HEROES_DUEL_DISABLE_MIGRATION !== '1') {
+    migrateLegacyPlayerData(playerDataDirectory);
   }
 
   const profilePath = path.join(playerDataDirectory, 'profile.json');
@@ -103,19 +133,19 @@ function initializePlayerData() {
   };
   writeJsonAtomic(matchesPath, matchHistoryRecord);
 
-  if (!fs.existsSync(readmePath)) {
-    fs.writeFileSync(readmePath, [
-      '《双雄对决》玩家资料文件夹',
-      '',
-      'profile.json：玩家 ID 等个人资料。',
-      'matches.json：最近的局域网比赛战绩，最多保留 500 场。',
-      '',
-      '游戏内可在“设置 → 玩家资料”修改 ID 并查看战绩。',
-      '升级或重新安装游戏不会自动删除这个文件夹。',
-      '关闭游戏后再手动编辑 JSON 文件，避免写入冲突。',
-      '',
-    ].join('\r\n'), 'utf8');
-  }
+  fs.writeFileSync(readmePath, [
+    '《双雄对决》玩家资料文件夹',
+    '',
+    'profile.json：玩家 ID 等个人资料。',
+    'matches.json：最近的局域网比赛战绩，最多保留 500 场。',
+    '',
+    '这个文件夹位于游戏 EXE 同目录，方便移动和备份。',
+    '移动游戏时请连“双雄对决资料”文件夹一起移动。',
+    '卸载游戏前请先备份这个文件夹，避免被安装程序删除。',
+    '游戏内可在“设置 → 玩家资料”修改 ID 并查看战绩。',
+    '关闭游戏后再手动编辑 JSON 文件，避免写入冲突。',
+    '',
+  ].join('\r\n'), 'utf8');
 
   return { createdProfile };
 }
@@ -256,11 +286,34 @@ async function startEmbeddedServer() {
   await waitForHealth(serverPort);
 }
 
+function lanHttpUrls() {
+  const virtualAdapter = /vEthernet|VirtualBox|VMware|Hyper-V|Loopback|TAP|Tailscale|ZeroTier|GameViewer/i;
+  const addresses = [];
+  for (const [name, entries] of Object.entries(os.networkInterfaces())) {
+    for (const entry of entries || []) {
+      if (entry.family !== 'IPv4' || entry.internal || entry.address.startsWith('169.254.')) continue;
+      let priority = 3;
+      if (entry.address.startsWith('192.168.')) priority = 0;
+      else if (entry.address.startsWith('10.')) priority = 1;
+      else if (/^172\.(1[6-9]|2\d|3[01])\./.test(entry.address)) priority = 2;
+      if (virtualAdapter.test(name)) priority += 10;
+      addresses.push({
+        name,
+        address: entry.address,
+        url: `http://${entry.address}:${serverPort}`,
+        priority,
+      });
+    }
+  }
+  return addresses.sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name));
+}
+
 function localEndpoint() {
   return {
     httpUrl: `http://127.0.0.1:${serverPort}`,
     wsUrl: `ws://127.0.0.1:${serverPort}/lan`,
     local: true,
+    httpUrls: lanHttpUrls(),
   };
 }
 

@@ -148,6 +148,64 @@
 }
 #lanRoomCode { color: #ffd24a; font: 800 18px Consolas, monospace; letter-spacing: 3px; }
 
+.lan-share-invite {
+    margin-bottom: 18px;
+    padding: 14px 16px;
+    border: 1px solid rgba(255, 210, 74, 0.2);
+    border-radius: 10px;
+    background: rgba(255, 210, 74, 0.045);
+}
+
+.lan-share-copy {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.lan-share-copy strong {
+    color: #ffd24a;
+    font-size: 13px;
+    letter-spacing: 1px;
+}
+
+.lan-share-copy small {
+    color: #7890a6;
+    font-size: 10px;
+}
+
+.lan-share-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 108px;
+    gap: 9px;
+}
+
+.lan-share-row input {
+    width: 100%;
+    padding: 10px 12px;
+    color: #dce8f4;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    outline: none;
+    background: rgba(0, 0, 0, 0.22);
+    font: 600 12px Consolas, monospace;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.lan-share-row button {
+    padding: 0 12px;
+    font-size: 11px;
+}
+
+.lan-share-alternate {
+    margin-top: 7px;
+    color: #71879b;
+    font-size: 10px;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+}
+
 .lan-teams {
     display: grid;
     grid-template-columns: 1fr 55px 1fr;
@@ -339,6 +397,9 @@
     .lan-teams { grid-template-columns: 1fr; }
     .lan-versus { padding: 0; }
     .lan-player-list { min-height: 100px; }
+    .lan-share-copy { align-items: flex-start; flex-direction: column; gap: 4px; }
+    .lan-share-row { grid-template-columns: 1fr; }
+    .lan-share-row button { min-height: 38px; }
     #lanMatchHud { grid-template-columns: 105px 110px 105px; }
     .lan-score-side, .lan-round-box { min-height: 48px; }
 }

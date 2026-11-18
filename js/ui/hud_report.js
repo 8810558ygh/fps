@@ -216,5 +216,100 @@ function closeCombatReport() {
     if (reportTimeout) { clearTimeout(reportTimeout); reportTimeout = null; }
 }
 
+// ============================================================
+// 局域网多玩家回合交互报告
+// ============================================================
+function showLANRoundReport(data) {
+    if (!data) return;
+    const report = createReportContainer();
+    report.style.minWidth = '520px';
+    report.style.maxHeight = 'calc(100vh - 40px)';
+    report.style.overflowY = 'auto';
+
+    const title = document.createElement('div');
+    title.style.cssText = `
+        padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.08);
+        color: #cfe0f0; text-align: center; font-size: 15px; font-weight: 700;
+        letter-spacing: 2px;
+    `;
+    title.textContent = `第 ${data.round || 0} 回合 · 伤害报告`;
+    report.appendChild(title);
+
+    const list = document.createElement('div');
+    list.style.cssText = 'display:grid; gap:10px;';
+    if (!Array.isArray(data.interactions) || data.interactions.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding:20px; color:#74899b; text-align:center; font-size:12px;';
+        empty.textContent = '本回合没有与其他玩家产生伤害交互';
+        list.appendChild(empty);
+    } else {
+        for (const interaction of data.interactions) {
+            const section = document.createElement('div');
+            section.style.cssText = `
+                padding:10px 12px 11px; border:1px solid rgba(255,255,255,0.06);
+                border-radius:8px; background:rgba(255,255,255,0.02);
+            `;
+
+            const name = document.createElement('strong');
+            name.style.cssText = `
+                display:block; margin-bottom:7px; overflow:hidden; text-overflow:ellipsis;
+                white-space:nowrap; font-size:13px; color:${interaction.team === 'red' ? '#ff9d94' : '#8bc5ff'};
+            `;
+            name.textContent = interaction.name || '玩家';
+            section.appendChild(name);
+
+            const header = document.createElement('div');
+            header.style.cssText = `
+                display:grid; grid-template-columns:1fr 60px 1fr; gap:8px;
+                padding-bottom:6px; border-bottom:1px solid rgba(255,255,255,0.07);
+                text-align:center; font-size:10px; letter-spacing:1px;
+            `;
+            header.innerHTML = `
+                <span style="color:#6db3ff;">输出</span>
+                <span style="color:rgba(255,255,255,0.35);">部位</span>
+                <span style="color:#ff7a6d;">承受</span>
+            `;
+            section.appendChild(header);
+
+            const parts = [
+                ['头 部', interaction.outgoing?.head || 0, interaction.incoming?.head || 0],
+                ['身 体', interaction.outgoing?.body || 0, interaction.incoming?.body || 0],
+                ['腿 部', interaction.outgoing?.leg || 0, interaction.incoming?.leg || 0],
+            ];
+            if ((interaction.outgoing?.barrel || 0) > 0
+                || (interaction.incoming?.barrel || 0) > 0) {
+                parts.push([
+                    '油 桶',
+                    interaction.outgoing?.barrel || 0,
+                    interaction.incoming?.barrel || 0,
+                ]);
+            }
+            for (const [label, outgoing, incoming] of parts) {
+                const row = document.createElement('div');
+                row.style.cssText = `
+                    display:grid; grid-template-columns:1fr 60px 1fr; gap:8px;
+                    padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.035);
+                    text-align:center; font:700 14px Consolas,monospace;
+                `;
+                row.innerHTML = `
+                    <span style="color:${outgoing > 0 ? '#6db3ff' : 'rgba(255,255,255,0.2)'};">${Math.round(outgoing)}</span>
+                    <span style="color:rgba(255,255,255,0.55); font:500 11px 'Microsoft YaHei',sans-serif;">${label}</span>
+                    <span style="color:${incoming > 0 ? '#ff7a6d' : 'rgba(255,255,255,0.2)'};">${Math.round(incoming)}</span>
+                `;
+                section.appendChild(row);
+            }
+            list.appendChild(section);
+        }
+    }
+    report.appendChild(list);
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'padding-top:8px; border-top:1px solid rgba(255,255,255,0.06); color:rgba(255,255,255,0.34); text-align:center; font-size:10px;';
+    footer.textContent = '点击可关闭 · 下一回合准备结束时自动关闭';
+    report.appendChild(footer);
+    report.addEventListener('click', closeCombatReport);
+}
+
 window.showRoundReport = showRoundReport;
+window.showLANRoundReport = showLANRoundReport;
 window.closeCombatReport = closeCombatReport;

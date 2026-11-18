@@ -87,7 +87,8 @@ document.write(`
                         <div class="settings-section profile-storage-section">
                             <div class="section-title">本机资料文件夹</div>
                             <p class="profile-storage-copy">
-                                ID、最近战绩和个人资料会自动保存到这个文件夹。升级或重新安装游戏不会删除它。
+                                ID、最近战绩和个人资料保存在游戏 EXE 同目录。移动游戏时请一并移动，
+                                卸载前建议先备份这个文件夹。
                             </p>
                             <div class="profile-path-row">
                                 <code id="profileDataPath">正在读取…</code>
@@ -245,15 +246,15 @@ document.write(`
                         </div>
 
                         <div class="settings-section">
-                            <div class="section-title">联机性能</div>
+                            <div class="section-title">自动性能</div>
                             <div class="set-row">
-                                <label>联机性能优化</label>
+                                <label>自动性能优化</label>
                                 <input type="checkbox" id="gfxLanOptimization" class="switch" checked>
                                 <span class="set-val">推荐开启</span>
                             </div>
                             <div class="quality-hint">
-                                💡 局域网对局时自动使用 65% 渲染并关闭实时阴影，普通模式仍使用上面的画质设置。
-                                性能较弱的电脑建议保持开启。
+                                💡 所有对战模式自动降低 3D 分辨率、关闭实时阴影并减少特效密度。
+                                人机、联机、局域网和生存模式都生效，性能较弱的电脑建议保持开启。
                             </div>
                         </div>
 

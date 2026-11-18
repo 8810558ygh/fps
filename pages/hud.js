@@ -7,16 +7,23 @@ document.write(`
     <div id="scorePanel">
         <div class="sp-title">战 绩</div>
         <div class="sp-divider"></div>
-        <div class="sp-row sp-header">
-            <span class="sp-label"></span>
-            <span class="sp-team sp-blue-label" id="spBlueName">蓝方</span>
-            <span class="sp-team sp-red-label"  id="spRedName">红方</span>
+        <div class="sp-scoreline">
+            <div class="sp-score-side blue">
+                <span id="spBlueName">蓝队</span>
+                <strong id="spBlueScore">0</strong>
+            </div>
+            <span class="sp-score-separator">:</span>
+            <div class="sp-score-side red">
+                <strong id="spRedScore">0</strong>
+                <span id="spRedName">红队</span>
+            </div>
         </div>
-        <div class="sp-row">
-            <span class="sp-label">比分</span>
-            <span class="sp-val sp-blue-val" id="spBlueScore">0</span>
-            <span class="sp-val sp-red-val"  id="spRedScore">0</span>
+        <div class="sp-table-head">
+            <span>玩家</span>
+            <span>击杀</span>
+            <span>死亡</span>
         </div>
+        <div id="spPlayerRows" class="sp-player-rows"></div>
         <div class="sp-hint">按住 TAB 显示 · 松开关闭</div>
     </div>
 

@@ -31,6 +31,18 @@ document.write(`
                     <div id="lanRoomPing">延迟：-</div>
                 </div>
 
+                <div id="lanShareInvite" class="lan-share-invite" style="display:none;">
+                    <div class="lan-share-copy">
+                        <strong>局域网邀请网址</strong>
+                        <small>同一个局域网内的玩家打开这个网址，会自动加入当前房间。</small>
+                    </div>
+                    <div class="lan-share-row">
+                        <input id="lanInviteUrl" type="text" readonly>
+                        <button id="lanCopyInviteBtn" class="lan-primary-btn" type="button">复制网址</button>
+                    </div>
+                    <div id="lanAlternateUrls" class="lan-share-alternate"></div>
+                </div>
+
                 <div class="lan-teams">
                     <div class="lan-team blue">
                         <div class="lan-team-title">

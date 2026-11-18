@@ -113,6 +113,101 @@ function safeText(value, max = 20) {
     .slice(0, max);
 }
 
+function emptyDamageStats() {
+  return { head: 0, body: 0, leg: 0, barrel: 0, total: 0 };
+}
+
+function createRoundStats() {
+  return {
+    outgoing: new Map(),
+    incoming: new Map(),
+    kills: [],
+    deaths: [],
+  };
+}
+
+function ensureRoundStats(client) {
+  if (!client.roundStats) client.roundStats = createRoundStats();
+  return client.roundStats;
+}
+
+function addDamageToInteraction(map, playerId, damageType, amount) {
+  let stats = map.get(playerId);
+  if (!stats) {
+    stats = emptyDamageStats();
+    map.set(playerId, stats);
+  }
+  const type = ['head', 'body', 'leg', 'barrel'].includes(damageType)
+    ? damageType
+    : 'body';
+  const value = Math.max(0, Math.round(amount));
+  stats[type] += value;
+  stats.total += value;
+}
+
+function recordDamageInteraction(attacker, target, part, amount, weaponKey) {
+  if (!attacker || !target || attacker.id === target.id) return;
+  const damageType = weaponKey === 'barrel'
+    ? 'barrel'
+    : (['head', 'body', 'leg'].includes(part) ? part : 'body');
+  addDamageToInteraction(ensureRoundStats(attacker).outgoing, target.id, damageType, amount);
+  addDamageToInteraction(ensureRoundStats(target).incoming, attacker.id, damageType, amount);
+}
+
+function recordKillInteraction(attacker, target) {
+  if (!attacker || !target) return;
+  const attackerStats = ensureRoundStats(attacker);
+  const targetStats = ensureRoundStats(target);
+  attackerStats.kills.push(target.id);
+  targetStats.deaths.push(attacker.id);
+}
+
+function buildRoundReport(room, client) {
+  const stats = ensureRoundStats(client);
+  const interactionIds = new Set([
+    ...stats.outgoing.keys(),
+    ...stats.incoming.keys(),
+    ...stats.kills,
+    ...stats.deaths,
+  ]);
+  const interactions = [];
+
+  for (const otherId of interactionIds) {
+    if (otherId === client.id) continue;
+    const other = clients.get(otherId);
+    if (!other) continue;
+    const outgoing = stats.outgoing.get(otherId) || emptyDamageStats();
+    const incoming = stats.incoming.get(otherId) || emptyDamageStats();
+    interactions.push({
+      playerId: otherId,
+      name: other.name,
+      team: other.team,
+      outgoing,
+      incoming,
+      killed: stats.kills.includes(otherId),
+      killedBy: stats.deaths.includes(otherId),
+    });
+  }
+
+  interactions.sort((a, b) => (
+    (b.outgoing.total + b.incoming.total) - (a.outgoing.total + a.incoming.total)
+  ));
+  return {
+    round: room.round,
+    playerId: client.id,
+    playerName: client.name,
+    team: client.team,
+    interactions,
+  };
+}
+
+function sendRoundReport(room, client, trigger) {
+  if (!client || !client.ws) return null;
+  const report = buildRoundReport(room, client);
+  send(client.ws, { type: 'roundReport', trigger, report });
+  return report;
+}
+
 function send(ws, message) {
   if (!ws || ws.readyState !== ws.OPEN) return;
   try {
@@ -216,6 +311,7 @@ function resetRound(room) {
   for (const id of room.memberIds) {
     const client = clients.get(id);
     if (!client) continue;
+    client.roundStats = createRoundStats();
     const slot = client.team === 'blue' ? blueSlot++ : redSlot++;
     room.states.set(id, {
       x: 0,
@@ -289,6 +385,9 @@ function endRound(room, winnerTeam) {
     redScore: room.redScore,
     phaseMs: ROUND_END_MS,
   });
+  for (const id of room.memberIds) {
+    sendRoundReport(room, clients.get(id), 'roundEnd');
+  }
 }
 
 function checkElimination(room) {
@@ -413,6 +512,7 @@ function applyDamage(room, attacker, target, weaponKey, part, distance, damageOv
   }
   damage = Math.max(0, Math.min(300, damage));
   attacker.matchDamage = (attacker.matchDamage || 0) + Math.round(damage);
+  recordDamageInteraction(attacker, target, part, damage, weaponKey);
 
   const absorb = Math.min(targetState.armor, damage * 0.66);
   targetState.armor = Math.max(0, targetState.armor - absorb);
@@ -432,11 +532,13 @@ function applyDamage(room, attacker, target, weaponKey, part, distance, damageOv
     targetState.alive = false;
     attacker.matchKills = (attacker.matchKills || 0) + 1;
     target.matchDeaths = (target.matchDeaths || 0) + 1;
+    recordKillInteraction(attacker, target);
     broadcastRoom(room, {
       type: 'kill',
       attackerId: attacker.id,
       targetId: target.id,
     });
+    sendRoundReport(room, target, 'death');
     checkElimination(room);
   }
 }
@@ -458,6 +560,7 @@ wss.on('connection', ws => {
     matchKills: 0,
     matchDeaths: 0,
     matchDamage: 0,
+    roundStats: createRoundStats(),
   };
   clients.set(client.id, client);
   send(ws, { type: 'welcome', id: client.id, serverTime: Date.now() });
