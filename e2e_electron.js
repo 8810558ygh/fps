@@ -86,7 +86,11 @@ class CdpClient {
       returnByValue: true,
     });
     if (result.exceptionDetails) {
-      throw new Error(result.exceptionDetails.text || 'Evaluation failed');
+      throw new Error(
+        result.exceptionDetails.exception?.description
+        || result.exceptionDetails.text
+        || 'Evaluation failed'
+      );
     }
     return result.result.value;
   }
@@ -201,9 +205,38 @@ async function main() {
   ]);
   await host.evaluate("enterGame('ai'); true");
   await waitForPageExpression(host, 'running && gameMode === "ai"', 10000, 'AI match start');
-  const aiSimpleModelApplied = await host.evaluate('!!p2._lanSimpleModel');
-  if (!aiSimpleModelApplied) {
-    throw new Error('AI opponent did not switch to the optimized model');
+  const aiSimpleWeaponApplied = await host.evaluate('!!p2._lanSimpleWeapon');
+  const aiCharacterPartCount = await host.evaluate('getPlayerHitMeshes(p2).length');
+  if (!aiSimpleWeaponApplied || aiCharacterPartCount !== 13) {
+    throw new Error('AI opponent character model was simplified or weapon was not optimized');
+  }
+  const meleeConeTargetCount = await host.evaluate(`
+    (() => {
+      const savedPosition = p1.cam.position.clone();
+      const savedQuaternion = p1.cam.quaternion.clone();
+      p1.cam.position.set(0, 1.6, 0);
+      p1.cam.quaternion.set(0, 0, 0, 1);
+      p1.cam.updateMatrixWorld(true);
+      const makeTarget = (x, z) => ({
+        team: 'red',
+        baseVisible: true,
+        hp: 100,
+        height: 1.84,
+        pos: new THREE.Vector3(x, 0, z)
+      });
+      const count = findMeleeTargetsInCone(
+        p1,
+        [makeTarget(-0.5, -1.5), makeTarget(0.5, -1.5), makeTarget(0, 1.5)],
+        []
+      ).length;
+      p1.cam.position.copy(savedPosition);
+      p1.cam.quaternion.copy(savedQuaternion);
+      p1.cam.updateMatrixWorld(true);
+      return count;
+    })()
+  `);
+  if (meleeConeTargetCount !== 2) {
+    throw new Error(`Melee cone did not collect all forward targets: ${meleeConeTargetCount}`);
   }
   await sleep(1500);
   const aiPerformanceBase = await samplePerformance(host, 2500);
@@ -324,6 +357,23 @@ async function main() {
     'room join through discovery'
   );
   await waitForPageExpression(host, 'LAN.room && LAN.room.players.length === 2', 10000, 'host room update');
+  const lobbyLayout = await host.evaluate(`({
+    playerRowHeights: Array.from(document.querySelectorAll('.lan-player-row')).map(row =>
+      Math.round(row.getBoundingClientRect().height)
+    ),
+    emptySlotHeights: Array.from(document.querySelectorAll('.lan-empty-slot')).map(row =>
+      Math.round(row.getBoundingClientRect().height)
+    ),
+    blueSlots: document.getElementById('lanBlueList').children.length,
+    redSlots: document.getElementById('lanRedList').children.length,
+    panelWidth: Math.round(document.querySelector('.lan-panel').getBoundingClientRect().width)
+  })`);
+  if (lobbyLayout.playerRowHeights.some(height => height < 60)
+      || lobbyLayout.emptySlotHeights.some(height => height < 60)
+      || lobbyLayout.blueSlots !== 5
+      || lobbyLayout.redSlots !== 5) {
+    throw new Error(`LAN lobby slots are too small: ${JSON.stringify(lobbyLayout)}`);
+  }
 
   const joinConnection = await joiner.evaluate(`({
     currentUrl: LANNET.currentUrl,
@@ -402,6 +452,34 @@ async function main() {
   const hostSelfId = await host.evaluate('LAN.selfId');
   const targetId = room.players.find(player => player.id !== hostSelfId).id;
   await waitForPageExpression(host, 'LAN.phase === "round"', 8000, 'round combat start');
+  const barrelTest = await host.evaluate(`
+    (() => {
+      const occupied = [p1.pos, ...Array.from(LAN.models.values()).map(player => player.pos)];
+      const barrel = activeBarrels.find(item => !item.exploded && occupied.every(pos =>
+        Math.hypot(pos.x - item.x, pos.z - item.z) > 8
+      )) || activeBarrels.find(item => !item.exploded);
+      if (!barrel) return { ok: false, reason: 'no active barrel' };
+      p1.cam.position.set(barrel.x, barrel.y + 0.7, barrel.z + 4);
+      p1.cam.lookAt(new THREE.Vector3(barrel.x, barrel.y, barrel.z));
+      p1.cam.updateMatrixWorld(true);
+      const sniper = getWeaponConfig('sniper');
+      const originalBroadcast = window.LAN_broadcastBarrel;
+      let broadcast = null;
+      window.LAN_broadcastBarrel = (x, y, z) => { broadcast = { x, y, z }; };
+      LAN_tryFire(p1, performance.now(), sniper);
+      LAN_tryFire(p1, performance.now() + 1000, sniper);
+      window.LAN_broadcastBarrel = originalBroadcast;
+      return {
+        ok: barrel.exploded && !!broadcast,
+        broadcast,
+        x: barrel.x,
+        z: barrel.z,
+        hp: barrel.hp
+      };
+    })()
+  `);
+  if (!barrelTest.ok) throw new Error(`LAN barrel did not explode: ${JSON.stringify(barrelTest)}`);
+  await sleep(1000);
   await host.evaluate(`
     LANNET.send({
       type: 'shot',
@@ -424,14 +502,17 @@ async function main() {
     cachedInteractions: LAN.roundReportCache?.interactions?.length || 0,
     hasPartRows: ['头 部', '身 体', '腿 部'].every(label =>
       (document.getElementById('roundReport')?.textContent || '').includes(label)),
-    hasSummaryTerms: ['总输出', '总承受', '回合状态', '击杀', '阵亡'].some(label =>
+    hasAISections: ['人物伤害', '输出总伤害', '承受总伤害'].every(label =>
+      (document.getElementById('roundReport')?.textContent || '').includes(label)),
+    hasRemovedSummary: ['本回合总输出', '本回合总承受', '回合状态', '交火报告'].some(label =>
       (document.getElementById('roundReport')?.textContent || '').includes(label))
   })`);
   if (!deathReportUi.visible
       || !deathReportUi.text.includes('伤害报告')
       || !deathReportUi.text.includes('150')
       || !deathReportUi.hasPartRows
-      || deathReportUi.hasSummaryTerms) {
+      || !deathReportUi.hasAISections
+      || deathReportUi.hasRemovedSummary) {
     throw new Error('Death round report did not include the fatal interaction');
   }
   await waitForPageExpression(host, 'LAN.phase === "prep"', 5000, 'next preparation');
@@ -441,14 +522,17 @@ async function main() {
     cachedInteractions: LAN.roundReportCache?.interactions?.length || 0,
     hasPartRows: ['头 部', '身 体', '腿 部'].every(label =>
       (document.getElementById('roundReport')?.textContent || '').includes(label)),
-    hasSummaryTerms: ['总输出', '总承受', '回合状态', '击杀', '阵亡'].some(label =>
+    hasAISections: ['人物伤害', '输出总伤害', '承受总伤害'].every(label =>
+      (document.getElementById('roundReport')?.textContent || '').includes(label)),
+    hasRemovedSummary: ['本回合总输出', '本回合总承受', '回合状态', '交火报告'].some(label =>
       (document.getElementById('roundReport')?.textContent || '').includes(label))
   })`);
   if (!survivorReportUi.visible
       || !survivorReportUi.text.includes('伤害报告')
       || !survivorReportUi.text.includes('150')
       || !survivorReportUi.hasPartRows
-      || survivorReportUi.hasSummaryTerms) {
+      || !survivorReportUi.hasAISections
+      || survivorReportUi.hasRemovedSummary) {
     throw new Error('Survivor round report was not shown during preparation');
   }
   await host.evaluate(`
@@ -533,15 +617,19 @@ async function main() {
     localJoiner,
     joinerServer: joinConnection.currentUrl,
     room,
+    lobbyLayout,
     profileId: savedProfile.playerId,
     dataFolder: dataDirectories.get('host'),
     profileUi,
     aiScoreboardUi,
-    aiSimpleModelApplied,
+    aiSimpleWeaponApplied,
+    aiCharacterPartCount,
+    meleeConeTargetCount,
     aiPerformanceBase,
     aiPerformanceAfterWeaponSwitch,
     deathReportUi,
     survivorReportUi,
+    barrelTest,
     scoreboardUi,
     performanceSample,
     performanceWithoutRemotes,

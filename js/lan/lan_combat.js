@@ -77,6 +77,22 @@ function LAN_tryFire(p, now, weaponCfg) {
                     break;
                 }
 
+                const barrel = hit.object.userData.barrelRef;
+                if (barrel && !barrel.exploded && !pierced.has(barrel)) {
+                    pierced.add(barrel);
+                    if (typeof hitBarrel === 'function') {
+                        hitBarrel(barrel, w.dmgBody || 30, p1, hit.point);
+                    }
+                    emitWorldSound('hit', hit.point.x, hit.point.y, hit.point.z, true);
+                    if (!showedHitmark) {
+                        showedHitmark = true;
+                        hitmark(p1);
+                        sHit(1);
+                    }
+                    if (!barrel.exploded || !(w.pierce > 0)) break;
+                    continue;
+                }
+
                 spawnSparks(hit.point, 0xffd28a);
                 const normal = getHitWorldNormal(hit);
                 spawnBulletHole(hit.point, normal);
@@ -106,7 +122,8 @@ function LAN_tryMelee(p, now, isHeavy) {
     p.cam.getWorldPosition(_rcOrigin);
     _rcDir.set(0, 0, -1).applyQuaternion(p.cam.quaternion);
 
-    const targets = prepareShotTargets();
+    const worldTargets = prepareShotTargets();
+    const targets = worldTargets.slice();
     const enemies = LAN_getEnemies(p);
     for (const enemy of enemies) {
         const meshes = getPlayerHitMeshes(enemy);
@@ -121,30 +138,67 @@ function LAN_tryMelee(p, now, isHeavy) {
     _ray.near = 0;
     _ray.far = MELEE.range;
     const hits = _ray.intersectObjects(targets, false);
-    if (hits.length === 0) return;
+    const hit = hits[0] || null;
+    const directTarget = hit ? hit.object.userData.lanPlayerRef : null;
+    const coneTargets = typeof findMeleeTargetsInCone === 'function'
+        ? findMeleeTargetsInCone(p1, enemies, worldTargets)
+        : [];
+    const attackTargets = new Map();
 
-    const hit = hits[0];
-    const target = hit.object.userData.lanPlayerRef;
-    if (!target) {
-        spawnSparks(hit.point, 0xffd28a);
-        const normal = getHitWorldNormal(hit);
-        if (typeof spawnSlashMark === 'function') {
-            spawnSlashMark(hit.point, normal, p.yaw, isHeavy);
+    for (const item of coneTargets) {
+        if (!item.target.baseVisible) continue;
+        attackTargets.set(item.target.netId, {
+            target: item.target,
+            point: item.point,
+        });
+    }
+    if (directTarget && directTarget.baseVisible) {
+        attackTargets.set(directTarget.netId, {
+            target: directTarget,
+            point: hit.point,
+        });
+    }
+
+    const barrel = hit ? hit.object.userData.barrelRef : null;
+    if (barrel && !barrel.exploded && typeof hitBarrel === 'function') {
+        const damage = isHeavy ? MELEE.dmgHeavy : MELEE.dmgLight;
+        hitBarrel(barrel, damage, p1, hit.point);
+    }
+
+    if (attackTargets.size === 0) {
+        if (!hit) return;
+        if (!barrel) {
+            spawnSparks(hit.point, 0xffd28a);
+            const normal = getHitWorldNormal(hit);
+            if (typeof spawnSlashMark === 'function') {
+                spawnSlashMark(hit.point, normal, p.yaw, isHeavy);
+            }
         }
         return;
     }
-    if (!target.baseVisible || target.team === p.team) return;
 
-    let damage = isHeavy ? MELEE.dmgHeavy : MELEE.dmgLight;
-    if (typeof isBackAttack === 'function' && isBackAttack(p, target)) {
-        damage *= MELEE.backMultiplier;
+    const appliedTargets = [];
+    let firstHitPoint = null;
+    for (const item of attackTargets.values()) {
+        const target = item.target;
+        if (!target.baseVisible || target.team === p.team) continue;
+        let damage = isHeavy ? MELEE.dmgHeavy : MELEE.dmgLight;
+        if (typeof isBackAttack === 'function' && isBackAttack(p, target)) {
+            damage *= MELEE.backMultiplier;
+        }
+        appliedTargets.push({
+            targetId: target.netId,
+            damage,
+        });
+        if (!firstHitPoint) firstHitPoint = item.point;
+        spawnSparks(item.point, 0xff5040);
     }
 
-    spawnSparks(hit.point, 0xff5040);
-    emitWorldSound('hit', hit.point.x, hit.point.y, hit.point.z, true);
+    if (appliedTargets.length === 0) return;
+    emitWorldSound('hit', firstHitPoint.x, firstHitPoint.y, firstHitPoint.z, true);
     hitmark(p);
     sHit(1);
-    LAN_onLocalMelee(target, damage);
+    LAN_onLocalMelee(appliedTargets);
 }
 
 window.LAN_tryFire = LAN_tryFire;

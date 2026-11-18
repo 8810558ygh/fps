@@ -5,3 +5,4 @@ Thumbs.db
 *.log
 dist/
 dist-release/
+dist-1.4.0/

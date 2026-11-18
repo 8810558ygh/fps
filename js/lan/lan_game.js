@@ -22,6 +22,9 @@ const LAN = {
     roundReportVisible: false,
     localInfo: null,
     inviteUrl: '',
+    reconnectPending: false,
+    hostExitHandled: false,
+    connectionLostTimer: 0,
 };
 
 window.LAN = LAN;
@@ -154,6 +157,66 @@ async function _lanCopyInviteUrl() {
     }
 }
 
+function _lanReturnToMainAfterHostExit(message) {
+    if (LAN.hostExitHandled) return;
+    LAN.hostExitHandled = true;
+    clearTimeout(LAN.connectionLostTimer);
+    LAN.connectionLostTimer = 0;
+    LAN.reconnectPending = false;
+    LAN.active = false;
+    LAN.room = null;
+    running = false;
+    gameState = 'idle';
+    if (document.pointerLockElement) document.exitPointerLock();
+    if (typeof LANNET.disconnect === 'function') LANNET.disconnect();
+    LANNET.currentUrl = null;
+    if (typeof window.closeCombatReport === 'function') window.closeCombatReport();
+    if (typeof SETTINGS_CancelPerformanceMode === 'function') SETTINGS_CancelPerformanceMode();
+
+    if (_lanEl('lanLobbyOverlay')) _lanEl('lanLobbyOverlay').style.display = 'none';
+    if (_lanEl('lanMatchHud')) _lanEl('lanMatchHud').style.display = 'none';
+    if (_lanEl('lanEndOverlay')) _lanEl('lanEndOverlay').style.display = 'none';
+    if (_lanEl('lanScoreboard')) _lanEl('lanScoreboard').style.display = 'none';
+    if (_lanEl('lobbyOverlay')) _lanEl('lobbyOverlay').style.display = 'flex';
+    document.body.classList.remove('in-game');
+    history.replaceState(null, '', location.pathname + location.hash);
+
+    if (typeof window.toast === 'function') {
+        window.toast(message || '房主已退出游戏，房间已关闭');
+    } else {
+        lanNotify(message || '房主已退出游戏，房间已关闭', 4000);
+    }
+}
+
+function _lanHandleConnectionLost() {
+    if (!LAN.room || LAN.hostExitHandled) return;
+    LAN.active = false;
+    LAN.reconnectPending = true;
+    lanNotify('与房主连接中断，正在尝试重连…', 4000);
+    if (LAN.connectionLostTimer) return;
+    LAN.connectionLostTimer = setTimeout(() => {
+        LAN.connectionLostTimer = 0;
+        if (!LANNET.connected && LAN.reconnectPending) {
+            _lanReturnToMainAfterHostExit('无法重新连接房主，已退出房间');
+        }
+    }, 6000);
+}
+
+function _lanHandleReconnected(msg) {
+    clearTimeout(LAN.connectionLostTimer);
+    LAN.connectionLostTimer = 0;
+    LAN.reconnectPending = false;
+    LAN.hostExitHandled = false;
+    LAN.active = true;
+    LAN.selfId = msg.id || LAN.selfId;
+    if (msg.room) {
+        LAN.room = msg.room;
+        LAN.phase = msg.room.phase || LAN.phase;
+    }
+    if (_lanEl('lanLobbyOverlay')) _lanEl('lanLobbyOverlay').style.display = 'none';
+    lanNotify('已重新连接本局游戏', 1800);
+}
+
 function _lanRenderLobby(room) {
     LAN.room = room;
     if (!room) return;
@@ -190,17 +253,30 @@ function _lanRenderLobby(room) {
             if (!player) {
                 const empty = document.createElement('div');
                 empty.className = 'lan-empty-slot';
-                empty.textContent = `空位 ${i + 1}`;
+                empty.innerHTML = `
+                    <span class="lan-seat-number">${i + 1}</span>
+                    <span class="lan-empty-icon">+</span>
+                    <span>等待玩家加入</span>
+                `;
                 list.appendChild(empty);
                 continue;
             }
             const row = document.createElement('div');
-            row.className = 'lan-player-row' + (player.id === LAN.selfId ? ' me' : '');
+            row.className = 'lan-player-row'
+                + (player.id === LAN.selfId ? ' me' : '')
+                + (player.ready ? ' is-ready' : ' is-waiting');
+            const avatar = Array.from(player.name || '玩')[0] || '玩';
             row.innerHTML = `
-                <span>${player.team === 'blue' ? '🔵' : '🔴'}</span>
-                <span>${_lanNameHtml(player.name)}</span>
-                ${player.owner ? '<span class="owner-tag">房主</span>' : ''}
-                ${player.ready ? '<span class="ready-tag">已准备</span>' : ''}
+                <span class="lan-seat-number">${i + 1}</span>
+                <span class="lan-player-avatar">${_lanNameHtml(avatar)}</span>
+                <span class="lan-player-main">
+                    <strong>${_lanNameHtml(player.name)}</strong>
+                    <small>${player.id === LAN.selfId ? '本机玩家' : '联机玩家'}</small>
+                </span>
+                <span class="lan-player-tags">
+                    ${player.owner ? '<span class="owner-tag">房主</span>' : ''}
+                    <span class="${player.ready ? 'ready-tag' : 'waiting-tag'}">${player.ready ? '已准备' : '未准备'}</span>
+                </span>
             `;
             list.appendChild(row);
         }
@@ -219,6 +295,7 @@ function _lanRenderLobby(room) {
 }
 
 function lanShowLobby() {
+    if (!LAN.room) LAN.hostExitHandled = false;
     if (!LANNET.connected) LANNET.connect();
     if (typeof SETTINGS_PrepareLanMatch === 'function') SETTINGS_PrepareLanMatch();
     const serverHint = _lanEl('lanServerHint');
@@ -364,7 +441,10 @@ function _lanDisposeRemote(player) {
             if (object.geometry) object.geometry.dispose();
             const materials = Array.isArray(object.material) ? object.material : [object.material];
             for (const material of materials) {
-                if (material && material !== player.mat && material !== LAN_REMOTE_WEAPON_MAT) {
+                if (material
+                    && material !== player.mat
+                    && material !== LAN_REMOTE_WEAPON_MAT
+                    && material !== (typeof DARK_MAT !== 'undefined' ? DARK_MAT : null)) {
                     material.dispose();
                 }
             }
@@ -383,89 +463,51 @@ function _lanClearRemotes() {
 
 const LAN_REMOTE_WEAPON_MAT = new THREE.MeshLambertMaterial({ color: 0x202a32 });
 
-function _lanDisposeDetachedModel(root, preservedMaterials) {
+function _lanDisposeWeaponModel(root, player) {
     if (!root) return;
     root.traverse(object => {
         if (!object.isMesh) return;
         if (object.geometry) object.geometry.dispose();
         const materials = Array.isArray(object.material) ? object.material : [object.material];
         for (const material of materials) {
-            if (material && !preservedMaterials.has(material)) material.dispose();
+            if (material
+                && material !== player.mat
+                && material !== LAN_REMOTE_WEAPON_MAT
+                && material !== (typeof DARK_MAT !== 'undefined' ? DARK_MAT : null)) {
+                material.dispose();
+            }
         }
     });
 }
 
-function _lanInstallSimplePlayerModel(player) {
-    if (!player || !player.mesh) return;
-    const group = player.mesh;
-    const preservedMaterials = new Set([player.mat]);
-    if (typeof DARK_MAT !== 'undefined') preservedMaterials.add(DARK_MAT);
-    const detachedChildren = group.children.slice();
-    for (const child of detachedChildren) {
-        group.remove(child);
-        _lanDisposeDetachedModel(child, preservedMaterials);
+function _lanInstallSimpleWeapon(player) {
+    if (!player || !player.gunHolder) return;
+    while (player.gunHolder.children.length) {
+        const child = player.gunHolder.children[0];
+        player.gunHolder.remove(child);
+        _lanDisposeWeaponModel(child, player);
     }
-    if (player.cam && player.cam.parent) player.cam.parent.remove(player.cam);
+    if (player.vm) {
+        while (player.vm.children.length) {
+            const child = player.vm.children[0];
+            player.vm.remove(child);
+            _lanDisposeWeaponModel(child, player);
+        }
+    }
 
-    const head = new THREE.Mesh(
-        new THREE.BoxGeometry(0.34, 0.34, 0.34),
-        player.mat
-    );
-    head.position.y = 1.68;
-    head.userData.part = 'head';
-
-    const body = new THREE.Mesh(
-        new THREE.BoxGeometry(0.54, 0.76, 0.34),
-        player.mat
-    );
-    body.position.y = 1.18;
-    body.userData.part = 'body';
-
-    const legs = new THREE.Mesh(
-        new THREE.BoxGeometry(0.42, 0.84, 0.28),
-        player.mat
-    );
-    legs.position.y = 0.48;
-    legs.userData.part = 'leg';
-
-    const gunHolder = new THREE.Group();
-    gunHolder.position.set(0.28, 1.30, -0.46);
     const weapon = new THREE.Mesh(
         new THREE.BoxGeometry(0.13, 0.13, 0.62),
         LAN_REMOTE_WEAPON_MAT
     );
     weapon.position.z = -0.22;
-    gunHolder.add(weapon);
-
-    group.add(head, body, legs, gunHolder);
-    group.traverse(object => {
-        if (!object.isMesh) return;
-        object.castShadow = false;
-        object.receiveShadow = false;
-    });
-
-    player.head = head;
-    player.body = body;
-    player.legL = legs;
-    player.legR = null;
-    player.visor = null;
-    player.footL = null;
-    player.footR = null;
-    player.armLUp = null;
-    player.armLLow = null;
-    player.armRUp = null;
-    player.armRLow = null;
-    player.handL = null;
-    player.handR = null;
-    player.gunHolder = gunHolder;
-    player.vm = new THREE.Group();
-    player.muzzle = null;
-    player.flashIndicator = null;
-    player.vulnIndicator = null;
-    player._lanSimpleModel = true;
+    weapon.castShadow = false;
+    weapon.receiveShadow = false;
+    player.gunHolder.add(weapon);
+    player._lanSimpleWeapon = weapon;
     player.gunHolder.visible = true;
+    if (player._lanRemote && player.muzzle) player.muzzle.visible = false;
 }
-window.LAN_installSimplePlayerModel = _lanInstallSimplePlayerModel;
+window.LAN_installSimpleWeapon = _lanInstallSimpleWeapon;
 
 function _lanEnsureRemote(state) {
     let player = LAN.models.get(state.id);
@@ -483,7 +525,7 @@ function _lanEnsureRemote(state) {
     player.name = state.name;
     player._lanRemote = true;
     player._shadowDisabled = true;
-    _lanInstallSimplePlayerModel(player);
+    _lanInstallSimpleWeapon(player);
     player.mesh.traverse(o => { if (o.isMesh) o.castShadow = false; });
     player._netTargetPos = player.pos.clone();
     player._netTargetYaw = player.yaw;
@@ -599,9 +641,10 @@ function _lanSyncRemote(state) {
     player._netTargetHeight = state.height;
     player.pitch = state.pitch;
     player.aiming = state.weapon !== 'knife';
-    player.baseVisible = state.alive;
-    player.deadUntil = state.alive ? 0 : Infinity;
-    player.mesh.visible = state.alive;
+    const connected = state.connected !== false;
+    player.baseVisible = !!state.alive && connected;
+    player.deadUntil = player.baseVisible ? 0 : Infinity;
+    player.mesh.visible = player.baseVisible;
 
     player.weaponKey = state.weapon || player.weaponKey;
     player.isMelee = state.weapon === 'knife';
@@ -675,6 +718,8 @@ function lanStartMatch(mapId) {
     LAN.nextRemoteNumericId = 100;
     LAN.spectateNetId = null;
     LAN.lastSavedMatchId = null;
+    LAN.reconnectPending = false;
+    LAN.hostExitHandled = false;
     _lanHideRoundReport(true);
 
     _lanHideLobby();
@@ -849,6 +894,17 @@ window.LAN_handleMessage = function (msg) {
     if (msg.type === 'hello') {
         LAN.selfId = msg.id || LAN.selfId;
         LAN.selfName = msg.name || LAN.selfName;
+        if (LAN.reconnectPending && LAN.room?.code) {
+            LANNET.send({ type: 'joinRoom', code: LAN.room.code });
+        }
+        return;
+    }
+    if (msg.type === 'hostLeft') {
+        _lanReturnToMainAfterHostExit(msg.message);
+        return;
+    }
+    if (msg.type === 'reconnected') {
+        _lanHandleReconnected(msg);
         return;
     }
     if (msg.type === 'error') {
@@ -856,6 +912,10 @@ window.LAN_handleMessage = function (msg) {
         return;
     }
     if (msg.type === 'lobby') {
+        clearTimeout(LAN.connectionLostTimer);
+        LAN.connectionLostTimer = 0;
+        LAN.reconnectPending = false;
+        LAN.hostExitHandled = false;
         LAN.room = msg.room;
         if (msg.room && msg.room.phase === 'lobby') {
             LAN.active = false;
@@ -1010,12 +1070,16 @@ function LAN_onLocalShot(hits, weaponKey, visual) {
     });
 }
 
-function LAN_onLocalMelee(target, damage) {
-    if (!target || !target.netId) return;
+function LAN_onLocalMelee(targetsOrTarget, damage) {
+    const targets = Array.isArray(targetsOrTarget)
+        ? targetsOrTarget
+        : (targetsOrTarget && targetsOrTarget.netId
+            ? [{ targetId: targetsOrTarget.netId, damage }]
+            : []);
+    if (!LAN.active || targets.length === 0) return;
     LANNET.send({
         type: 'melee',
-        targetId: target.netId,
-        damage,
+        targets: targets.slice(0, 5),
     });
 }
 
@@ -1043,7 +1107,7 @@ function LAN_renderScoreboard() {
         for (const state of players) {
             const row = document.createElement('div');
             row.className = 'lan-board-row'
-                + (state.alive ? '' : ' dead')
+                + (state.alive && state.connected !== false ? '' : ' dead')
                 + (state.id === LAN.selfId ? ' self' : '');
             row.innerHTML = `
                 <span>${_lanNameHtml(state.name)}</span>
@@ -1100,6 +1164,8 @@ function _lanScheduleInviteQuery() {
         });
     }, 100);
 }
+
+window.addEventListener('lan-connection-lost', _lanHandleConnectionLost);
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {

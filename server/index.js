@@ -15,6 +15,7 @@ const ROUND_END_MS = 2500;
 const ROUND_LIMIT_MS = 300000;
 const MATCH_POINT = 10;
 const MAX_TEAM = 5;
+const MELEE_SERVER_RANGE = 2.6;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -113,6 +114,13 @@ function safeText(value, max = 20) {
     .slice(0, max);
 }
 
+function normalizedIp(ws) {
+  let ip = String(ws?._socket?.remoteAddress || '');
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (ip === '::1') ip = '127.0.0.1';
+  return ip;
+}
+
 function emptyDamageStats() {
   return { head: 0, body: 0, leg: 0, barrel: 0, total: 0 };
 }
@@ -123,6 +131,7 @@ function createRoundStats() {
     incoming: new Map(),
     kills: [],
     deaths: [],
+    selfBarrelDamage: 0,
   };
 }
 
@@ -146,10 +155,17 @@ function addDamageToInteraction(map, playerId, damageType, amount) {
 }
 
 function recordDamageInteraction(attacker, target, part, amount, weaponKey) {
-  if (!attacker || !target || attacker.id === target.id) return;
+  if (!attacker || !target) return;
+  if (attacker.connected === false || target.connected === false) return;
   const damageType = weaponKey === 'barrel'
     ? 'barrel'
     : (['head', 'body', 'leg'].includes(part) ? part : 'body');
+  if (attacker.id === target.id) {
+    if (damageType === 'barrel') {
+      ensureRoundStats(attacker).selfBarrelDamage += Math.max(0, Math.round(amount));
+    }
+    return;
+  }
   addDamageToInteraction(ensureRoundStats(attacker).outgoing, target.id, damageType, amount);
   addDamageToInteraction(ensureRoundStats(target).incoming, attacker.id, damageType, amount);
 }
@@ -197,6 +213,7 @@ function buildRoundReport(room, client) {
     playerId: client.id,
     playerName: client.name,
     team: client.team,
+    selfBarrelDamage: stats.selfBarrelDamage || 0,
     interactions,
   };
 }
@@ -243,6 +260,7 @@ function publicPlayer(client) {
     name: client.name,
     team: client.team,
     ready: !!client.ready,
+    connected: client.connected !== false,
     owner: client.roomId && rooms.get(client.roomId)?.ownerId === client.id,
   };
 }
@@ -258,6 +276,80 @@ function roomLobby(room) {
       .filter(Boolean)
       .map(publicPlayer),
   };
+}
+
+function remapRoundInteractionId(room, oldId, newId) {
+  const renameMapKey = map => {
+    if (!map.has(oldId)) return;
+    const previous = map.get(oldId);
+    map.delete(oldId);
+    const existing = map.get(newId);
+    if (!existing) {
+      map.set(newId, previous);
+      return;
+    }
+    for (const key of ['head', 'body', 'leg', 'barrel', 'total']) {
+      existing[key] += previous[key] || 0;
+    }
+  };
+
+  for (const id of room.memberIds) {
+    const member = clients.get(id);
+    if (!member?.roundStats) continue;
+    renameMapKey(member.roundStats.outgoing);
+    renameMapKey(member.roundStats.incoming);
+    member.roundStats.kills = member.roundStats.kills.map(id => id === oldId ? newId : id);
+    member.roundStats.deaths = member.roundStats.deaths.map(id => id === oldId ? newId : id);
+  }
+}
+
+function tryMatchReconnect(room, newClient) {
+  if (!room.matchAllowedIps?.has(newClient.ip)) {
+    return { ok: false, message: '比赛已经开始，只有本局玩家可以重连' };
+  }
+
+  const candidates = Array.from(room.memberIds)
+    .map(id => clients.get(id))
+    .filter(client => client && client.connected === false && client.ip === newClient.ip);
+  if (candidates.length === 0) {
+    return { ok: false, message: '该 IP 的本局座位当前已在线，不能重复加入' };
+  }
+
+  const oldClient = candidates.find(client => client.name === newClient.name)
+    || candidates[0];
+  const oldId = oldClient.id;
+  const newId = newClient.id;
+  const orderedIds = Array.from(room.memberIds).map(id => id === oldId ? newId : id);
+  room.memberIds.clear();
+  for (const id of orderedIds) room.memberIds.add(id);
+
+  const state = room.states.get(oldId);
+  if (state) {
+    room.states.delete(oldId);
+    room.states.set(newId, state);
+  }
+  clients.delete(oldId);
+  clients.set(newId, newClient);
+
+  newClient.roomId = room.code;
+  newClient.team = oldClient.team;
+  newClient.ready = false;
+  newClient.matchKills = oldClient.matchKills || 0;
+  newClient.matchDeaths = oldClient.matchDeaths || 0;
+  newClient.matchDamage = oldClient.matchDamage || 0;
+  newClient.roundStats = oldClient.roundStats || createRoundStats();
+  newClient.lastShotAt = oldClient.lastShotAt || 0;
+  newClient.lastStateAt = oldClient.lastStateAt || 0;
+  newClient.lastBarrelAt = oldClient.lastBarrelAt || 0;
+  newClient._prevStateServerAt = oldClient._prevStateServerAt || 0;
+  remapRoundInteractionId(room, oldId, newId);
+
+  send(newClient.ws, {
+    type: 'reconnected',
+    id: newId,
+    room: roomLobby(room),
+  });
+  return { ok: true, oldId, newId };
 }
 
 function broadcastLobby(room) {
@@ -299,6 +391,7 @@ function teamPlayers(room, team) {
 function aliveCount(room, team) {
   let alive = 0;
   for (const client of teamPlayers(room, team)) {
+    if (client.connected === false) continue;
     const state = room.states.get(client.id);
     if (state && state.alive) alive++;
   }
@@ -365,6 +458,11 @@ function startMatch(room) {
   room.roundEndsAt = 0;
   room.matchId = crypto.randomUUID();
   room.matchStartedAt = Date.now();
+  room.matchAllowedIps = new Set(
+    Array.from(room.memberIds)
+      .map(id => clients.get(id)?.ip)
+      .filter(Boolean)
+  );
   broadcastRoom(room, { type: 'matchStart', mapId: room.mapId });
   beginPrep(room);
 }
@@ -462,6 +560,7 @@ function roomTick(room) {
       weapon: state.weapon,
       crouching: !!state.crouching,
       alive: !!state.alive,
+      connected: client.connected !== false,
       hp: state.hp,
       armor: state.armor,
       spawnSlot: state.spawnSlot,
@@ -490,14 +589,18 @@ const WEAPON_DAMAGE = {
   odin: { head: 95, body: 38, leg: 32, fireMs: 65 },
 };
 
-function applyDamage(room, attacker, target, weaponKey, part, distance, damageOverride) {
+function applyDamage(room, attacker, target, weaponKey, part, distance, damageOverride, options = {}) {
   if (room.phase !== 'round') return;
-  if (!attacker || !target || attacker.id === target.id) return;
-  if (!attacker.team || attacker.team === target.team) return;
+  if (!attacker || !target) return;
+  if (attacker.id === target.id && !options.allowSelf) return;
+  if (!attacker.team) return;
+  if (attacker.team === target.team && !options.allowFriendly) return;
 
   const attackerState = room.states.get(attacker.id);
   const targetState = room.states.get(target.id);
-  if (!attackerState || !targetState || !attackerState.alive || !targetState.alive) return;
+  if (!attackerState || !targetState) return;
+  if (!attackerState.alive && !options.allowDeadAttacker) return;
+  if (!targetState.alive) return;
 
   const dx = attackerState.x - targetState.x;
   const dz = attackerState.z - targetState.z;
@@ -511,7 +614,10 @@ function applyDamage(room, attacker, target, weaponKey, part, distance, damageOv
     if (weaponKey === 'odin' && Number(distance) > 30) damage = Math.max(1, damage * 0.82);
   }
   damage = Math.max(0, Math.min(300, damage));
-  attacker.matchDamage = (attacker.matchDamage || 0) + Math.round(damage);
+  const isEnemyHit = attacker.team !== target.team;
+  if (isEnemyHit) {
+    attacker.matchDamage = (attacker.matchDamage || 0) + Math.round(damage);
+  }
   recordDamageInteraction(attacker, target, part, damage, weaponKey);
 
   const absorb = Math.min(targetState.armor, damage * 0.66);
@@ -530,7 +636,7 @@ function applyDamage(room, attacker, target, weaponKey, part, distance, damageOv
 
   if (targetState.hp <= 0) {
     targetState.alive = false;
-    attacker.matchKills = (attacker.matchKills || 0) + 1;
+    if (isEnemyHit) attacker.matchKills = (attacker.matchKills || 0) + 1;
     target.matchDeaths = (target.matchDeaths || 0) + 1;
     recordKillInteraction(attacker, target);
     broadcastRoom(room, {
@@ -539,7 +645,7 @@ function applyDamage(room, attacker, target, weaponKey, part, distance, damageOv
       targetId: target.id,
     });
     sendRoundReport(room, target, 'death');
-    checkElimination(room);
+    if (!options.deferElimination) checkElimination(room);
   }
 }
 
@@ -550,6 +656,8 @@ wss.on('connection', ws => {
   const client = {
     id: 'p' + nextClientId++,
     ws,
+    ip: normalizedIp(ws),
+    connected: true,
     name: '玩家' + nextClientId,
     roomId: null,
     team: null,
@@ -612,7 +720,10 @@ wss.on('connection', ws => {
         return;
       }
       if (room.phase !== 'lobby') {
-        send(ws, { type: 'error', message: '比赛已经开始，暂时不能加入' });
+        const reconnect = tryMatchReconnect(room, client);
+        if (!reconnect.ok) {
+          send(ws, { type: 'error', message: reconnect.message });
+        }
         return;
       }
       leaveRoom(client);
@@ -734,18 +845,39 @@ wss.on('connection', ws => {
     }
 
     if (msg.type === 'melee') {
-      const target = clients.get(msg.targetId);
-      if (!target) return;
       const attackerState = room.states.get(client.id);
-      const targetState = room.states.get(target.id);
-      if (!attackerState || !targetState) return;
+      if (!attackerState) return;
       const now = Date.now();
       if (now - client.lastShotAt < 250) return;
       client.lastShotAt = now;
-      const dx = attackerState.x - targetState.x;
-      const dz = attackerState.z - targetState.z;
-      if (Math.hypot(dx, dz) > 3.0) return;
-      applyDamage(room, client, target, 'melee', 'body', 1, Math.min(150, Number(msg.damage) || 50));
+      const requestedTargets = Array.isArray(msg.targets)
+        ? msg.targets.slice(0, MAX_TEAM)
+        : [{ targetId: msg.targetId, damage: msg.damage }];
+      const seenTargets = new Set();
+      let applied = false;
+
+      for (const requested of requestedTargets) {
+        const target = clients.get(requested.targetId);
+        if (!target || seenTargets.has(target.id)) continue;
+        const targetState = room.states.get(target.id);
+        if (!targetState) continue;
+        const dx = attackerState.x - targetState.x;
+        const dz = attackerState.z - targetState.z;
+        if (Math.hypot(dx, dz) > MELEE_SERVER_RANGE) continue;
+        seenTargets.add(target.id);
+        applyDamage(
+          room,
+          client,
+          target,
+          'melee',
+          'body',
+          1,
+          Math.min(150, Math.max(0, Number(requested.damage) || 50)),
+          { deferElimination: true }
+        );
+        applied = true;
+      }
+      if (applied) checkElimination(room);
       return;
     }
 
@@ -758,19 +890,34 @@ wss.on('connection', ws => {
 
       broadcastRoom(room, { type: 'barrel', x, y, z, fromId: client.id }, client);
       for (const target of room.memberIds) {
-        if (target === client.id) continue;
         const targetClient = clients.get(target);
         const state = room.states.get(target);
-        if (!targetClient || !state || !state.alive) continue;
-        if (targetClient.team === client.team) continue;
+        if (!targetClient || targetClient.connected === false || !state || !state.alive) continue;
         const dx = state.x - x;
         const dy = state.y + state.height * 0.5 - y;
         const dz = state.z - z;
         const dist = Math.hypot(dx, dy, dz);
         if (dist > 6) continue;
         const damage = 200 * Math.pow(1 - dist / 6, 1.5);
-        if (damage > 1) applyDamage(room, client, targetClient, 'barrel', 'body', dist, damage);
+        if (damage > 1) {
+          applyDamage(
+            room,
+            client,
+            targetClient,
+            'barrel',
+            'body',
+            dist,
+            damage,
+            {
+              allowSelf: true,
+              allowFriendly: true,
+              allowDeadAttacker: true,
+              deferElimination: true,
+            }
+          );
+        }
       }
+      checkElimination(room);
       return;
     }
 
@@ -799,11 +946,19 @@ wss.on('connection', ws => {
 
     if (msg.type === 'returnLobby') {
       if (room.ownerId !== client.id) return;
+      for (const id of Array.from(room.memberIds)) {
+        const member = clients.get(id);
+        if (member && member.connected !== false) continue;
+        room.memberIds.delete(id);
+        room.states.delete(id);
+        if (member) clients.delete(id);
+      }
       room.phase = 'lobby';
       room.round = 0;
       room.blueScore = 0;
       room.redScore = 0;
       room.states.clear();
+      room.matchAllowedIps = null;
       for (const id of room.memberIds) {
         const member = clients.get(id);
         if (member) member.ready = false;
@@ -818,6 +973,29 @@ wss.on('connection', ws => {
   });
 
   ws.on('close', () => {
+    const room = client.roomId ? rooms.get(client.roomId) : null;
+    if (room && room.ownerId === client.id) {
+      room.phase = 'closed';
+      broadcastRoom(room, { type: 'hostLeft', message: '房主已退出游戏，房间已关闭' });
+      for (const id of room.memberIds) {
+        const member = clients.get(id);
+        if (!member || !member.ws) continue;
+        try { member.ws.close(4001, 'Host left'); } catch {}
+      }
+      rooms.delete(room.code);
+      client.roomId = null;
+      clients.delete(client.id);
+      return;
+    }
+
+    if (room && room.phase !== 'lobby') {
+      client.connected = false;
+      client.ws = null;
+      client.ready = false;
+      checkElimination(room);
+      return;
+    }
+
     leaveRoom(client);
     clients.delete(client.id);
   });
@@ -825,6 +1003,7 @@ wss.on('connection', ws => {
 
 setInterval(() => {
   for (const client of clients.values()) {
+    if (!client.ws || client.connected === false) continue;
     if (!client.ws.isAlive) {
       try { client.ws.terminate(); } catch {}
       continue;

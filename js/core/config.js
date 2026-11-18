@@ -34,6 +34,8 @@ const RECOIL_MIN_THRESHOLD    = 0.0006;
 const MELEE = {
     key: 'knife', name: '军刀',
     range: 2.0,
+    fallbackRange: 2.35,
+    coneCos: 0.62,
     dmgLight: 50, dmgHeavy: 75,
     backMultiplier: 2.0,
     lightFireMs: 400, heavyFireMs: 900,

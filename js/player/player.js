@@ -24,7 +24,7 @@ function setWeapon(p, key) {
             }
         }
     }
-    const simpleVisual = !!p._lanSimpleModel;
+    const simpleVisual = !!p._lanSimpleWeapon;
 
     // 保存当前枪的弹药
     if (!p.weaponAmmo) p.weaponAmmo = {};

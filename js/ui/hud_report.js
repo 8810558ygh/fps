@@ -235,77 +235,63 @@ function showLANRoundReport(data) {
     title.textContent = `第 ${data.round || 0} 回合 · 伤害报告`;
     report.appendChild(title);
 
-    const list = document.createElement('div');
-    list.style.cssText = 'display:grid; gap:10px;';
     if (!Array.isArray(data.interactions) || data.interactions.length === 0) {
         const empty = document.createElement('div');
         empty.style.cssText = 'padding:20px; color:#74899b; text-align:center; font-size:12px;';
         empty.textContent = '本回合没有与其他玩家产生伤害交互';
-        list.appendChild(empty);
+        report.appendChild(empty);
     } else {
         for (const interaction of data.interactions) {
-            const section = document.createElement('div');
-            section.style.cssText = `
-                padding:10px 12px 11px; border:1px solid rgba(255,255,255,0.06);
-                border-radius:8px; background:rgba(255,255,255,0.02);
-            `;
-
-            const name = document.createElement('strong');
-            name.style.cssText = `
-                display:block; margin-bottom:7px; overflow:hidden; text-overflow:ellipsis;
-                white-space:nowrap; font-size:13px; color:${interaction.team === 'red' ? '#ff9d94' : '#8bc5ff'};
-            `;
-            name.textContent = interaction.name || '玩家';
-            section.appendChild(name);
-
-            const header = document.createElement('div');
-            header.style.cssText = `
-                display:grid; grid-template-columns:1fr 60px 1fr; gap:8px;
-                padding-bottom:6px; border-bottom:1px solid rgba(255,255,255,0.07);
-                text-align:center; font-size:10px; letter-spacing:1px;
-            `;
-            header.innerHTML = `
-                <span style="color:#6db3ff;">输出</span>
-                <span style="color:rgba(255,255,255,0.35);">部位</span>
-                <span style="color:#ff7a6d;">承受</span>
-            `;
-            section.appendChild(header);
-
-            const parts = [
-                ['头 部', interaction.outgoing?.head || 0, interaction.incoming?.head || 0],
-                ['身 体', interaction.outgoing?.body || 0, interaction.incoming?.body || 0],
-                ['腿 部', interaction.outgoing?.leg || 0, interaction.incoming?.leg || 0],
+            const outgoing = interaction.outgoing || {};
+            const incoming = interaction.incoming || {};
+            const personOut = {
+                head: outgoing.head || 0,
+                body: outgoing.body || 0,
+                leg: outgoing.leg || 0,
+                total: (outgoing.head || 0) + (outgoing.body || 0) + (outgoing.leg || 0),
+            };
+            const personIn = {
+                head: incoming.head || 0,
+                body: incoming.body || 0,
+                leg: incoming.leg || 0,
+                total: (incoming.head || 0) + (incoming.body || 0) + (incoming.leg || 0),
+            };
+            const personRows = [
+                { label: '头 部', out: personOut.head, in: personIn.head },
+                { label: '身 体', out: personOut.body, in: personIn.body },
+                { label: '腿 部', out: personOut.leg, in: personIn.leg },
             ];
-            if ((interaction.outgoing?.barrel || 0) > 0
-                || (interaction.incoming?.barrel || 0) > 0) {
-                parts.push([
-                    '油 桶',
-                    interaction.outgoing?.barrel || 0,
-                    interaction.incoming?.barrel || 0,
-                ]);
+            report.appendChild(renderSection(
+                `${interaction.name || '玩家'} · 人物伤害`,
+                personOut,
+                personIn,
+                personRows
+            ));
+
+            const barrelOut = outgoing.barrel || 0;
+            const barrelIn = incoming.barrel || 0;
+            if (barrelOut > 0 || barrelIn > 0) {
+                report.appendChild(renderSection(
+                    `${interaction.name || '玩家'} · 环境伤害`,
+                    { total: barrelOut, head: 0, body: 0, leg: 0 },
+                    { total: barrelIn, head: 0, body: 0, leg: 0 },
+                    [{ label: '油 桶', out: barrelOut, in: barrelIn }]
+                ));
             }
-            for (const [label, outgoing, incoming] of parts) {
-                const row = document.createElement('div');
-                row.style.cssText = `
-                    display:grid; grid-template-columns:1fr 60px 1fr; gap:8px;
-                    padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.035);
-                    text-align:center; font:700 14px Consolas,monospace;
-                `;
-                row.innerHTML = `
-                    <span style="color:${outgoing > 0 ? '#6db3ff' : 'rgba(255,255,255,0.2)'};">${Math.round(outgoing)}</span>
-                    <span style="color:rgba(255,255,255,0.55); font:500 11px 'Microsoft YaHei',sans-serif;">${label}</span>
-                    <span style="color:${incoming > 0 ? '#ff7a6d' : 'rgba(255,255,255,0.2)'};">${Math.round(incoming)}</span>
-                `;
-                section.appendChild(row);
-            }
-            list.appendChild(section);
         }
     }
-    report.appendChild(list);
+    if ((data.selfBarrelDamage || 0) > 0) {
+        report.appendChild(renderSection(
+            '自身 · 环境伤害',
+            { total: 0, head: 0, body: 0, leg: 0 },
+            { total: data.selfBarrelDamage, head: 0, body: 0, leg: 0 },
+            [{ label: '油 桶', out: 0, in: data.selfBarrelDamage }]
+        ));
+    }
 
     const footer = document.createElement('div');
     footer.style.cssText = 'padding-top:8px; border-top:1px solid rgba(255,255,255,0.06); color:rgba(255,255,255,0.34); text-align:center; font-size:10px;';
-    footer.textContent = '点击可关闭 · 下一回合准备结束时自动关闭';
+    footer.textContent = '下一回合准备阶段结束时自动关闭';
     report.appendChild(footer);
     report.addEventListener('click', closeCombatReport);
 }

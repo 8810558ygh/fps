@@ -74,12 +74,21 @@ const LANNET = {
             }
         });
 
-        socket.addEventListener('close', () => {
+        socket.addEventListener('close', event => {
             if (this.ws !== socket) return;
             this.connected = false;
             this.connecting = false;
             this.stopPing();
             this.setStatus('连接已断开', false);
+            if (!this.manualClose) {
+                window.dispatchEvent(new CustomEvent('lan-connection-lost', {
+                    detail: {
+                        code: event.code,
+                        reason: event.reason || '',
+                        url: this.currentUrl,
+                    },
+                }));
+            }
             if (!this.manualClose) this.scheduleReconnect();
             const waiters = this._connectWaiters.splice(0);
             waiters.forEach(resolve => resolve(false));

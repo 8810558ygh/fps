@@ -5,6 +5,69 @@
 //   · combat_damage.js 提供 damage（运行时读取）
 //   · survival/zombie.js 提供 getAllZombies / damageZombie（生存模式）
 
+function findMeleeTargetsInCone(p, candidates, worldTargets, options = {}) {
+    if (!p || !p.cam || !Array.isArray(candidates) || candidates.length === 0) return [];
+    const origin = p.cam.getWorldPosition(new THREE.Vector3());
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(p.cam.quaternion).normalize();
+    const results = [];
+    const isAlive = options.isAlive
+        || (target => target.baseVisible && target.hp > 0);
+    const getTeam = options.getTeam
+        || (target => target.team);
+
+    for (const target of candidates) {
+        if (!target || !isAlive(target)) continue;
+        const team = getTeam(target);
+        if (team && p.team && team === p.team) continue;
+        const point = new THREE.Vector3(
+            target.pos.x,
+            target.pos.y + (target.height || 1.8) * 0.55,
+            target.pos.z
+        );
+        const offset = point.clone().sub(origin);
+        const distance = offset.length();
+        if (distance <= 0.001 || distance > MELEE.fallbackRange) continue;
+        const dot = offset.multiplyScalar(1 / distance).dot(forward);
+        if (dot < MELEE.coneCos) continue;
+
+        const lineRay = new THREE.Raycaster(
+            origin,
+            point.clone().sub(origin).normalize(),
+            0,
+            Math.max(0.01, distance - 0.2)
+        );
+        const blockers = lineRay.intersectObjects(worldTargets || [], false);
+        if (blockers.length > 0) continue;
+
+        results.push({ target, point, distance, dot });
+    }
+    results.sort((a, b) => a.distance - b.distance || b.dot - a.dot);
+    return results;
+}
+window.findMeleeTargetsInCone = findMeleeTargetsInCone;
+
+function findMeleeFallbackTarget(p, candidates, worldTargets) {
+    return findMeleeTargetsInCone(p, candidates, worldTargets)[0] || null;
+}
+window.findMeleeFallbackTarget = findMeleeFallbackTarget;
+
+function applyMeleePlayerDamage(p, target, isHeavy, hitPoint, isOnlineHost) {
+    const isBack = isBackAttack(p, target);
+    let rawDmg = isHeavy ? MELEE.dmgHeavy : MELEE.dmgLight;
+    if (isBack) rawDmg *= MELEE.backMultiplier;
+    const dmg = _applyVulnerabilityBonus(target, rawDmg, performance.now());
+
+    _addDamage(p, target.id, 'body', dmg);
+    spawnSparks(hitPoint, 0xff5040);
+    if (p.id === 1) {
+        hitmark(p);
+    } else if (isOnlineHost) {
+        NET_broadcast({ type: 'hitmarkForClient' });
+    }
+    emitWorldSound('hit', hitPoint.x, hitPoint.y, hitPoint.z, p.id === 1);
+    damage(target, dmg, p);
+}
+
 function tryMelee(p, now, isHeavy) {
     if (gameState !== 'combat') return;
     if (!p.isMelee) return;
@@ -51,14 +114,17 @@ function tryMelee(p, now, isHeavy) {
     //   · 其他模式：加 p2（对手）的 hitMeshes
     // ============================================================
     const targets = prepareShotTargets();
+    const worldTargets = targets.slice();
     const o = other(p);
+    const survivalCandidates = [];
 
     if (gameMode === 'survival') {
         if (typeof getAllZombies === 'function') {
             const zombies = getAllZombies();
             for (let zi = 0; zi < zombies.length; zi++) {
                 const z = zombies[zi];
-                if (!z.alive) continue;
+                if (!z.alive || z.dead) continue;
+                survivalCandidates.push(z);
                 const zParts = z.hitMeshes;
                 for (let pi = 0; pi < zParts.length; pi++) targets.push(zParts[pi]);
             }
@@ -69,6 +135,7 @@ function tryMelee(p, now, isHeavy) {
             && PlayerZombie.active
             && !PlayerZombie.active.dead) {
             const pz = PlayerZombie.active;
+            survivalCandidates.push(pz);
             for (let pi = 0; pi < pz.hitMeshes.length; pi++) {
                 targets.push(pz.hitMeshes[pi]);
             }
@@ -84,6 +151,89 @@ function tryMelee(p, now, isHeavy) {
     _ray.near = 0;
     _ray.far = m.range;
     const hits = _ray.intersectObjects(targets, false);
+    const firstHit = hits[0] || null;
+
+    if (gameMode === 'survival') {
+        const directZombie = firstHit ? firstHit.object.userData.zombieRef : null;
+        const coneZombies = findMeleeTargetsInCone(
+            p,
+            survivalCandidates,
+            worldTargets,
+            {
+                isAlive: zombie => zombie.alive && !zombie.dead && zombie.hp > 0,
+                getTeam: () => null,
+            }
+        );
+        const attackTargets = new Map();
+        for (const item of coneZombies) {
+            attackTargets.set(item.target, item.point);
+        }
+        if (directZombie && directZombie.alive && !directZombie.dead) {
+            attackTargets.set(directZombie, firstHit.point);
+        }
+
+        const barrel = firstHit ? firstHit.object.userData.barrelRef : null;
+        if (barrel && !barrel.exploded && typeof hitBarrel === 'function') {
+            hitBarrel(barrel, isHeavy ? m.dmgHeavy : m.dmgLight, p, firstHit.point);
+        }
+
+        if (attackTargets.size === 0) {
+            if (firstHit && !barrel) {
+                spawnSparks(firstHit.point, 0xffd28a);
+                const normal = getHitWorldNormal(firstHit);
+                if (typeof spawnSlashMark === 'function') {
+                    spawnSlashMark(firstHit.point, normal, p.yaw, isHeavy);
+                }
+            }
+            return;
+        }
+
+        let firstPoint = null;
+        let anyCrit = false;
+        for (const [zombie, point] of attackTargets) {
+            if (!zombie || !zombie.alive || zombie.dead || zombie.hp <= 0) continue;
+            let zombieDamage = isHeavy ? m.dmgHeavy : m.dmgLight;
+            let isCrit = false;
+            if (p.id === 1 && typeof SurvivalStats !== 'undefined') {
+                const roll = SurvivalStats.rollDamage(zombieDamage);
+                zombieDamage = roll.dmg;
+                isCrit = roll.isCrit;
+            }
+            if (zombie._isPlayerZombie) {
+                if (typeof PlayerZombie !== 'undefined') PlayerZombie.damage(zombieDamage, p);
+            } else if (typeof damageZombie === 'function') {
+                damageZombie(zombie, zombieDamage, p);
+            }
+            if (p.id === 1 && typeof spawnDamageNumber === 'function') {
+                spawnDamageNumber(point, zombieDamage, isCrit);
+            }
+            spawnSparks(point, isCrit ? 0xffd24a : 0xff5040);
+            if (!firstPoint) firstPoint = point;
+            anyCrit = anyCrit || isCrit;
+        }
+
+        if (firstPoint) {
+            emitWorldSound('hit', firstPoint.x, firstPoint.y, firstPoint.z, p.id === 1);
+            if (p.id === 1) {
+                hitmark(p);
+                if (anyCrit && typeof _flashCritHitmark === 'function') {
+                    _flashCritHitmark();
+                }
+            }
+        }
+        return;
+    }
+
+    if (gameMode !== 'survival' && o && now >= o.deadUntil
+        && (!firstHit
+            || (!firstHit.object.userData.part
+                && !firstHit.object.userData.barrelRef))) {
+        const fallback = findMeleeFallbackTarget(p, [o], worldTargets);
+        if (fallback) {
+            applyMeleePlayerDamage(p, o, isHeavy, fallback.point, isOnlineHost);
+            return;
+        }
+    }
 
     if (hits.length > 0) {
         const h = hits[0];
@@ -141,22 +291,7 @@ function tryMelee(p, now, isHeavy) {
                     emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
                 }
             } else if (part) {
-                const isBack = isBackAttack(p, o);
-                let rawDmg = isHeavy ? m.dmgHeavy : m.dmgLight;
-                if (isBack) rawDmg *= m.backMultiplier;
-
-                const dmg = _applyVulnerabilityBonus(o, rawDmg, now);
-
-                _addDamage(p, o.id, 'body', dmg);
-
-                spawnSparks(h.point, 0xff5040);
-                if (p.id === 1) {
-                    hitmark(p);
-                } else if (isOnlineHost) {
-                    NET_broadcast({ type: 'hitmarkForClient' });
-                }
-                emitWorldSound('hit', h.point.x, h.point.y, h.point.z, p.id === 1);
-                damage(o, dmg, p);
+                applyMeleePlayerDamage(p, o, isHeavy, h.point, isOnlineHost);
             } else {
                 spawnSparks(h.point, 0xffd28a);
 

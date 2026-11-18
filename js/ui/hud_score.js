@@ -62,7 +62,8 @@ function _getScoreboardData() {
             team: state.team === 'red' ? 'red' : 'blue',
             kills: Number(state.kills) || 0,
             deaths: Number(state.deaths) || 0,
-            alive: state.alive !== false,
+            alive: state.alive !== false && state.connected !== false,
+            disconnected: state.connected === false,
             self: state.id === LAN.selfId,
         }));
 
@@ -73,7 +74,8 @@ function _getScoreboardData() {
                 team: player.team === 'red' ? 'red' : 'blue',
                 kills: 0,
                 deaths: 0,
-                alive: true,
+                alive: player.connected !== false,
+                disconnected: player.connected === false,
                 self: player.id === LAN.selfId,
             }));
         }
@@ -185,7 +187,8 @@ function _updateScorePanelContent() {
         const row = document.createElement('div');
         row.className = 'sp-player-row'
             + (player.self ? ' self' : '')
-            + (player.alive ? '' : ' dead');
+                + (player.alive ? '' : ' dead')
+                + (player.disconnected ? ' disconnected' : '');
 
         const name = document.createElement('span');
         name.className = 'sp-player-name';
