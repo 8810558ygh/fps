@@ -211,7 +211,10 @@ function updateHUD(now) {
     // ★ 医疗包进度条（屏幕中间偏下）
     // ============================================================
     if (_mkEl) {
-        if (p.isMedkit && p.healing) {
+        const healingSelf = !!p.healing;
+        const healingTeammate = !!p.healingTeammate;
+        const beingHealed = !!p.beingHealed;
+        if (healingSelf || healingTeammate || beingHealed) {
             if (_hudState.mkDisplay !== 'flex') {
                 _mkEl.style.display = 'flex';
                 _hudState.mkDisplay = 'flex';
@@ -222,6 +225,20 @@ function updateHUD(now) {
                 _mkFill.style.width = pctStr;
                 _hudState.mkWidth = pctStr;
             }
+            const title = _mkEl.querySelector('.mk-title');
+            const hint = _mkEl.querySelector('.mk-hint');
+            if (title) {
+                title.textContent = beingHealed
+                    ? '正在接受治疗'
+                    : healingTeammate ? '正在治疗队友' : '使用医疗包';
+            }
+            if (hint) {
+                hint.textContent = beingHealed
+                    ? '队友正在治疗你 · 可以移动'
+                    : healingTeammate
+                        ? '保持按住右键 · 移动或离开范围会中断'
+                        : '按住左键 · 松开取消';
+            }
         } else if (_hudState.mkDisplay !== 'none') {
             _mkEl.style.display = 'none';
             _hudState.mkDisplay = 'none';
@@ -230,8 +247,10 @@ function updateHUD(now) {
         }
     }
 
+    const lanSpectating = typeof window.LAN_isSpectating === 'function'
+        && window.LAN_isSpectating();
     const scoped = running && gameState === 'combat' && !p.isMelee && !p.isSmoke && !p.isFlash && !p.isMedkit
-        && p.aiming && p.weapon.scope && now >= p.deadUntil;
+        && p.aiming && p.weapon.scope && (now >= p.deadUntil || lanSpectating);
     const scopeDisplay = scoped ? 'block' : 'none';
     if (_hudState.scopeDisplay !== scopeDisplay) {
         h.scope.style.display = scopeDisplay;
@@ -239,7 +258,8 @@ function updateHUD(now) {
     }
 
     const isSurvival = (running
-        && typeof gameMode !== 'undefined' && gameMode === 'survival'
+        && ((typeof gameMode !== 'undefined' && gameMode === 'survival')
+            || (typeof window.IS_SURVIVAL_CONTEXT === 'function' && window.IS_SURVIVAL_CONTEXT()))
         && typeof SurvivalState !== 'undefined' && SurvivalState.active);
 
     if (isSurvival) {

@@ -6,7 +6,7 @@ document.write(`
                 <button id="lanBackBtn" class="lan-back-btn">← 返回大厅</button>
                 <div>
                     <div class="lan-title">局 域 网 团 队 战</div>
-                    <div class="lan-subtitle">蓝队 vs 红队 · 每队最多 5 人</div>
+                    <div id="lanLobbySubtitle" class="lan-subtitle">蓝队 vs 红队 · 每队最多 5 人</div>
                 </div>
                 <div id="lanConnectionState" class="lan-connection">未连接</div>
             </div>
@@ -68,7 +68,7 @@ document.write(`
                         </div>
                         <div id="lanBlueList" class="lan-player-list"></div>
                     </div>
-                    <div class="lan-versus">VS</div>
+                    <div id="lanVersus" class="lan-versus">VS</div>
                     <div class="lan-team red">
                         <div class="lan-team-title">
                             <span>红 队</span>
@@ -88,6 +88,25 @@ document.write(`
                 <div id="lanRoomMessage" class="lan-room-message"></div>
             </div>
         </div>
+    </div>
+
+    <div id="lanIdentityOverlay">
+        <form id="lanIdentityForm" class="lan-identity-card">
+            <div class="lan-identity-kicker">
+                房间邀请 · <strong id="lanIdentityRoomCode">-----</strong>
+            </div>
+            <h2>先设置游戏 ID</h2>
+            <p>队友会在房间、战绩和观战界面中看到这个名字。</p>
+            <label for="lanIdentityInput">游戏 ID</label>
+            <input id="lanIdentityInput" type="text" maxlength="20"
+                   autocomplete="off" spellcheck="false"
+                   placeholder="输入你的游戏 ID">
+            <div id="lanIdentityError" class="lan-identity-error"></div>
+            <div class="lan-identity-actions">
+                <button id="lanIdentityCancelBtn" class="lan-secondary-btn" type="button">暂不加入</button>
+                <button id="lanIdentitySubmitBtn" class="lan-primary-btn" type="submit">使用此 ID 并加入</button>
+            </div>
+        </form>
     </div>
 
     <div id="lanMatchHud" style="display:none;">

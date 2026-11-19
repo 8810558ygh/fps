@@ -43,8 +43,11 @@
     function canOpenShop() {
         if (typeof running === 'undefined' || !running) return false;
         if (typeof isOver === 'function' && isOver()) return false;
-        if (typeof gameMode === 'undefined' || gameMode !== 'survival') return false;
+        if (typeof gameMode === 'undefined') return false;
+        if (gameMode !== 'survival'
+            && !(typeof window.IS_SURVIVAL_CONTEXT === 'function' && window.IS_SURVIVAL_CONTEXT())) return false;
         if (typeof SurvivalState === 'undefined' || !SurvivalState.active) return false;
+        if (typeof p1 !== 'undefined' && p1 && p1.downed) return false;
         return true;
     }
 

@@ -10,6 +10,7 @@ function LAN_tryFire(p, now, weaponCfg) {
     const targets = prepareShotTargets();
     const enemies = LAN_getEnemies(p);
     const meshToPlayer = new Map();
+    const meshToZombie = new Map();
 
     for (const enemy of enemies) {
         const meshes = getPlayerHitMeshes(enemy);
@@ -20,10 +21,22 @@ function LAN_tryFire(p, now, weaponCfg) {
             meshToPlayer.set(mesh, enemy);
         }
     }
+    if (LAN.mode === 'survival' && typeof getAllZombies === 'function') {
+        for (const zombie of getAllZombies()) {
+            if (!zombie.alive) continue;
+            for (const mesh of zombie.hitMeshes || []) {
+                if (!mesh) continue;
+                mesh.userData.lanZombieRef = zombie;
+                targets.push(mesh);
+                meshToZombie.set(mesh, zombie);
+            }
+        }
+    }
 
     const pellets = Math.max(1, w.pellets || 1);
     const spread = (w.spread || 0)
         + (typeof _getMovementSpread === 'function' ? _getMovementSpread(p) : 0);
+    const muzzleStart = muzzleWorld(p, _rcMuzzle).clone();
     const hitsToSend = [];
     let showedHitmark = false;
     let firstEnd = null;
@@ -51,6 +64,33 @@ function LAN_tryFire(p, now, weaponCfg) {
         if (intersections.length > 0) {
             for (const hit of intersections) {
                 _rcEnd.copy(hit.point);
+                const zombie = meshToZombie.get(hit.object) || hit.object.userData.lanZombieRef;
+                if (zombie && zombie.alive) {
+                    const rawPart = hit.object.userData.part || '';
+                    const part = rawPart.includes('head') ? 'head'
+                        : rawPart.includes('leg') ? 'leg' : 'body';
+                    let damage = typeof _resolveDamage === 'function'
+                        ? _resolveDamage(w, part, hit.distance)
+                        : (part === 'head' ? w.dmgHead : part === 'leg' ? w.dmgLeg : w.dmgBody);
+                    if (typeof SurvivalStats !== 'undefined'
+                        && typeof SurvivalStats.rollDamage === 'function') {
+                        damage = SurvivalStats.rollDamage(damage || 0).dmg;
+                    }
+                    if (typeof window.LAN_SURVIVAL_handleZombieHit === 'function') {
+                        window.LAN_SURVIVAL_handleZombieHit(zombie, damage, part, hit.point);
+                    }
+                    spawnSparks(hit.point, part === 'head' ? 0xffd24a : 0xff5040);
+                    if (!showedHitmark) {
+                        showedHitmark = true;
+                        hitmark(p1);
+                        sHit(1);
+                    }
+                    if (pierceLeft > 0) {
+                        pierceLeft--;
+                        continue;
+                    }
+                    break;
+                }
                 const target = meshToPlayer.get(hit.object) || hit.object.userData.lanPlayerRef;
                 if (target) {
                     if (!target.baseVisible || target.team === p1.team || pierced.has(target)) continue;
@@ -102,7 +142,7 @@ function LAN_tryFire(p, now, weaponCfg) {
         }
 
         if (i === 0) {
-            spawnTracer(muzzleWorld(p, _rcMuzzle), _rcEnd);
+            spawnTracer(muzzleStart, _rcEnd);
             firstEnd = _rcEnd.clone();
         }
     }
@@ -111,7 +151,7 @@ function LAN_tryFire(p, now, weaponCfg) {
         applyRecoil(p, w, now);
     }
     LAN_onLocalShot(hitsToSend, w.key, firstEnd ? {
-        sx: _rcOrigin.x, sy: _rcOrigin.y, sz: _rcOrigin.z,
+        sx: muzzleStart.x, sy: muzzleStart.y, sz: muzzleStart.z,
         ex: firstEnd.x, ey: firstEnd.y, ez: firstEnd.z,
     } : null);
 }
@@ -143,7 +183,33 @@ function LAN_tryMelee(p, now, isHeavy) {
     const coneTargets = typeof findMeleeTargetsInCone === 'function'
         ? findMeleeTargetsInCone(p1, enemies, worldTargets)
         : [];
+    const zombieConeTargets = (LAN.mode === 'survival'
+        && typeof getAllZombies === 'function'
+        && typeof findMeleeTargetsInCone === 'function')
+        ? findMeleeTargetsInCone(
+            p1,
+            getAllZombies().filter(zombie => zombie.alive),
+            worldTargets,
+            { isAlive: zombie => zombie.alive, getTeam: () => null }
+        )
+        : [];
     const attackTargets = new Map();
+
+    for (const item of zombieConeTargets) {
+        let damage = isHeavy ? MELEE.dmgHeavy : MELEE.dmgLight;
+        if (typeof SurvivalStats !== 'undefined'
+            && typeof SurvivalStats.rollDamage === 'function') {
+            damage = SurvivalStats.rollDamage(damage).dmg;
+        }
+        if (typeof window.LAN_SURVIVAL_handleZombieHit === 'function') {
+            window.LAN_SURVIVAL_handleZombieHit(item.target, damage, 'body', item.point);
+        }
+        spawnSparks(item.point, 0xff5040);
+    }
+    if (zombieConeTargets.length > 0) {
+        hitmark(p);
+        sHit(1);
+    }
 
     for (const item of coneTargets) {
         if (!item.target.baseVisible) continue;

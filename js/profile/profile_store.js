@@ -4,6 +4,7 @@
     'use strict';
 
     const ID_STORAGE_KEY = 'pvp_nick';
+    const ID_CONFIRMED_STORAGE_KEY = 'pvp_nick_confirmed_v1';
     const MATCH_STORAGE_KEY = 'pvp_match_history_v1';
     const MAX_LOCAL_MATCHES = 500;
 
@@ -13,6 +14,7 @@
             playerKey: '',
             directory: '',
             isNew: false,
+            idConfirmed: false,
             electron: !!(window.electronAPI && window.electronAPI.getProfile),
         },
         matches: [],
@@ -76,6 +78,7 @@
             if (PROFILE.info.electron) {
                 const loaded = await window.electronAPI.getProfile();
                 PROFILE.info = { ...PROFILE.info, ...loaded };
+                PROFILE.info.idConfirmed = true;
 
                 if (loaded.isNew) {
                     const legacyId = normalizeId(localStorage.getItem(ID_STORAGE_KEY));
@@ -86,6 +89,7 @@
                 }
             } else {
                 PROFILE.info.id = normalizeId(localStorage.getItem(ID_STORAGE_KEY)) || makeDefaultId();
+                PROFILE.info.idConfirmed = localStorage.getItem(ID_CONFIRMED_STORAGE_KEY) === '1';
                 PROFILE.info.directory = '浏览器本地存储';
             }
 
@@ -95,6 +99,7 @@
         } catch (error) {
             PROFILE.error = error.message || '玩家资料读取失败';
             PROFILE.info.id = normalizeId(localStorage.getItem(ID_STORAGE_KEY)) || makeDefaultId();
+            PROFILE.info.idConfirmed = localStorage.getItem(ID_CONFIRMED_STORAGE_KEY) === '1';
         } finally {
             PROFILE.ready = true;
             resolveReady(PROFILE);
@@ -125,6 +130,8 @@
         }
 
         localStorage.setItem(ID_STORAGE_KEY, PROFILE.info.id);
+        localStorage.setItem(ID_CONFIRMED_STORAGE_KEY, '1');
+        PROFILE.info.idConfirmed = true;
         if (window.LAN) window.LAN.selfName = PROFILE.info.id;
         if (window.LANNET && window.LANNET.connected) {
             window.LANNET.send({ type: 'hello', name: PROFILE.info.id });

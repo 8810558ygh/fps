@@ -7,6 +7,15 @@ function setWeapon(p, key) {
         p.healStart = 0;
         p.healEnd = 0;
     }
+    if (p.healingTeammate) {
+        if (p === p1 && typeof LANNET !== 'undefined' && LANNET.connected) {
+            LANNET.send({ type: 'survivalHealCancel' });
+        }
+        p.healingTeammate = false;
+        p.healingTargetId = null;
+        p.healStart = 0;
+        p.healEnd = 0;
+    }
 
     if (p.throwFuseActive && p.throwFuseInHand) {
         const isClient = (typeof gameMode !== 'undefined'
@@ -214,7 +223,7 @@ window.applyWeaponToPlayer = applyWeaponToPlayer;
 function getPlayerHitMeshes(p) {
     if (!p) return [];
     return [
-        p.head, p.body, p.visor, 
+        p.head, p.body, p.visor,
         p.legL, p.legR, p.footL, p.footR,
         p.armLUp, p.armLLow, p.armRUp, p.armRLow,
         p.handL, p.handR
@@ -282,7 +291,7 @@ function makePlayer(id, color, spawn, weaponKey, lightweight) {
     light.position.set(0.26, 1.3, -0.85);
 
     g.add(
-        body, head, visor, 
+        body, head, visor,
         legL, legR, footL, footR,
         armLUp, armLLow, armRUp, armRLow,
         handL, handR,
@@ -363,7 +372,7 @@ function makePlayer(id, color, spawn, weaponKey, lightweight) {
         flashIndicator,
         vulnIndicator,
 
-        head, body, visor, 
+        head, body, visor,
         legL, legR, footL, footR,
         armLUp, armLLow, armRUp, armRLow,
         handL, handR,
@@ -405,6 +414,9 @@ function makePlayer(id, color, spawn, weaponKey, lightweight) {
         healing: false,
         healStart: 0,
         healEnd: 0,
+        healingTeammate: false,
+        healingTargetId: null,
+        beingHealed: false,
 
         // ★ 每把枪的独立弹药记录
         weaponAmmo: {},

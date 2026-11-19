@@ -240,7 +240,10 @@ function loop() {
             const prevPX = p1.pos.x;
             const prevPY = p1.pos.y;
             const prevPZ = p1.pos.z;
-            if (p1.deadUntil !== Infinity) {
+            if (p1.deadUntil !== Infinity && !p1.downed) {
+                if (typeof LAN_SURVIVAL_preUpdate === 'function') {
+                    LAN_SURVIVAL_preUpdate(now);
+                }
                 collectLocalInput(p1);
                 if (gameState === 'prep') {
                     p1.input.fire = false;
@@ -268,6 +271,7 @@ function loop() {
             }
 
             if (typeof LAN_mainTick === 'function') LAN_mainTick(dt, now);
+            if (typeof LAN_SURVIVAL_tick === 'function') LAN_SURVIVAL_tick(dt, now);
         } else if (isHost) {
             collectLocalInput(p1);
             updatePlayer(p1, dt, now);
@@ -323,7 +327,9 @@ function loop() {
         }
 
         // ★ 传送门动画（仅生存模式）
-        if (gameMode === 'survival' && typeof updateSurvivalPortal === 'function') {
+        if ((gameMode === 'survival'
+            || (gameMode === 'lan' && typeof LAN !== 'undefined' && LAN.mode === 'survival'))
+            && typeof updateSurvivalPortal === 'function') {
             updateSurvivalPortal(dt, now);
         }
 

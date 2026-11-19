@@ -143,7 +143,9 @@
     let _open = false;
 
     function _isSurvivalActive() {
-        return typeof gameMode !== 'undefined' && gameMode === 'survival'
+        return typeof gameMode !== 'undefined'
+            && (gameMode === 'survival'
+                || (typeof window.IS_SURVIVAL_CONTEXT === 'function' && window.IS_SURVIVAL_CONTEXT()))
             && typeof SurvivalState !== 'undefined' && SurvivalState.active;
     }
 
@@ -151,6 +153,7 @@
         if (typeof running === 'undefined' || !running) return false;
         if (typeof isOver === 'function' && isOver()) return false;
         if (!_isSurvivalActive()) return false;
+        if (typeof p1 !== 'undefined' && p1 && p1.downed) return false;
         return true;
     }
 

@@ -44,7 +44,9 @@ function resetPlayer(p, now) {
     p.mesh.scale.y = 1;
 
     // ★ 生存模式下 maxHp 由个人属性决定，其他模式用 HP_MAX
-    p.maxHp = (gameMode === 'survival' && typeof SurvivalStats !== 'undefined')
+    p.maxHp = (((gameMode === 'survival')
+        || (typeof window.IS_SURVIVAL_CONTEXT === 'function' && window.IS_SURVIVAL_CONTEXT()))
+        && typeof SurvivalStats !== 'undefined')
         ? SurvivalStats.getMaxHp()
         : HP_MAX;
     p.hp = p.maxHp;
@@ -103,6 +105,9 @@ function resetPlayer(p, now) {
     p.healing = false;
     p.healStart = 0;
     p.healEnd = 0;
+    p.healingTeammate = false;
+    p.healingTargetId = null;
+    p.beingHealed = false;
 
     if (p.zipline) {
         p.zipline.active  = false;
@@ -158,7 +163,7 @@ function startRound(now) {
         barrelToP1: 0,
         barrelToP2: 0
     };
-    
+
     roundNumber++;
     clearAllSmokes();
     clearAllFlashes();
@@ -182,7 +187,7 @@ function startRound(now) {
     if (gameMode === 'ai' && typeof aiResetRound === 'function') aiResetRound(now);
 
     for (const k in keys) keys[k] = false;
-    mouse.leftDown = false; mouse.aim = false;
+    mouse.leftDown = false; mouse.aim = false; mouse.rightDown = false;
 
     if (p1 && p1.input) p1.input.aim = false;
     if (p2 && p2.input) p2.input.aim = false;

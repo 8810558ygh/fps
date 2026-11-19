@@ -30,7 +30,7 @@ function updatePlayer(p, dt, now) {
     }
 
     const _stunned = p.stunUntil > now;
-    const _healing = p.healing;
+    const _healing = p.healing || p.healingTeammate;
 
     if (_stunned) {
         if (p.input) {
@@ -111,7 +111,8 @@ function updatePlayer(p, dt, now) {
     if (p.aiming && !p.isMelee && !p.isSmoke && !p.isFlash && !p.isMedkit) spd *= p.weapon.adsSpeedMul;
 
     // ★ 演奏僵尸减速（仅生存模式 + 本地玩家）
-    if (gameMode === 'survival'
+    if ((gameMode === 'survival'
+        || (typeof window.IS_SURVIVAL_CONTEXT === 'function' && window.IS_SURVIVAL_CONTEXT()))
         && p.id === 1
         && typeof PlayerZombie !== 'undefined'
         && PlayerZombie.slowAmount > 0) {

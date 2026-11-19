@@ -654,6 +654,13 @@ function _zombieAttack(zombie, target, cfg) {
         rawDmg = window._applyVulnerabilityBonus(target, rawDmg, now);
     }
 
+    if (typeof gameMode !== 'undefined' && gameMode === 'lan'
+        && typeof LAN !== 'undefined' && LAN.mode === 'survival'
+        && typeof window.LAN_SURVIVAL_handleZombieAttack === 'function') {
+        window.LAN_SURVIVAL_handleZombieAttack(target, rawDmg, zombie);
+        return;
+    }
+
     let hpDamage = rawDmg;
     if (target.armor > 0) {
         const absorb = Math.min(target.armor, rawDmg * ARMOR_ABSORB);

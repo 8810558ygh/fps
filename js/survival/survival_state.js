@@ -98,6 +98,13 @@ window.getSurvivalMapAnchor = getSurvivalMapAnchor;
 function getSurvivalPlayers() {
     const arr = [];
     if (typeof p1 !== 'undefined' && p1) arr.push(p1);
+    if (typeof gameMode !== 'undefined' && gameMode === 'lan'
+        && typeof LAN !== 'undefined' && LAN.active
+        && typeof LAN_foreachRemote === 'function') {
+        LAN_foreachRemote(remote => {
+            if (remote && remote.baseVisible) arr.push(remote);
+        });
+    }
     return arr;
 }
 window.getSurvivalPlayers = getSurvivalPlayers;
@@ -515,6 +522,7 @@ window.isPlayerNearPortal = isPlayerNearPortal;
 
 function tryEnterPortal() {
     if (!SurvivalState.active) return false;
+    if (typeof gameMode !== 'undefined' && gameMode === 'lan') return false;
     if (SurvivalState.phase !== 'portal') return false;
     if (!isPlayerNearPortal()) return false;
 

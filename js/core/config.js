@@ -193,9 +193,10 @@ const SURVIVAL_WEAPONS_OVERRIDE = {
 window.getWeaponConfig = function(key) {
     const base = WEAPONS[key];
     if (!base) return null;
-    
+
     // 如果是生存模式，且这把枪有覆盖配置，则返回强化版数据
-    if (typeof gameMode !== 'undefined' && gameMode === 'survival') {
+    if ((typeof gameMode !== 'undefined' && gameMode === 'survival')
+        || (typeof window.IS_SURVIVAL_CONTEXT === 'function' && window.IS_SURVIVAL_CONTEXT())) {
         const ov = SURVIVAL_WEAPONS_OVERRIDE[key];
         if (ov) {
             return Object.assign({}, base, ov);

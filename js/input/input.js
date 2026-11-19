@@ -1,6 +1,6 @@
 // ===== js/input.js – 键盘/鼠标输入 =====
 const keys = {};
-const mouse = { aim: false, leftDown: false };
+const mouse = { aim: false, leftDown: false, rightDown: false };
 
 function _isSpectatorSafe() {
     return typeof NET !== 'undefined'
@@ -14,7 +14,8 @@ function _isOnlineClient() {
 }
 
 function _isSurvivalMode() {
-    return typeof gameMode !== 'undefined' && gameMode === 'survival';
+    return (typeof gameMode !== 'undefined' && gameMode === 'survival')
+        || (typeof window.IS_SURVIVAL_CONTEXT === 'function' && window.IS_SURVIVAL_CONTEXT());
 }
 
 // ============================================================
@@ -267,6 +268,10 @@ window.addEventListener('keydown', e => {
         }
 
         if (e.code === 'KeyF') {
+            if (typeof window.LAN_SURVIVAL_tryPortalConfirm === 'function'
+                && window.LAN_SURVIVAL_tryPortalConfirm()) {
+                return;
+            }
             if (typeof tryEnterPortal === 'function' && tryEnterPortal()) {
                 return;
             }
@@ -308,7 +313,10 @@ window.addEventListener('keyup', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     keys[e.code] = false;
 });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+window.addEventListener('blur', () => {
+    for (const k in keys) keys[k] = false;
+    mouse.rightDown = false;
+});
 
 document.addEventListener('mousedown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
@@ -354,6 +362,12 @@ document.addEventListener('mousedown', e => {
         mouse.leftDown = true;
     } else if (e.button === 2) {
         e.preventDefault(); e.stopPropagation();
+        if (typeof window.IS_SURVIVAL_CONTEXT === 'function'
+            && window.IS_SURVIVAL_CONTEXT()
+            && typeof p1 !== 'undefined' && p1 && p1.isMedkit) {
+            mouse.rightDown = true;
+            return;
+        }
         if (running && !isOver() && gameState === 'combat') {
             if (typeof p1 !== 'undefined' && p1 && p1.isMelee) {
                 tryMelee(p1, performance.now(), true);
@@ -379,7 +393,11 @@ document.addEventListener('mouseup', e => {
             return;
         }
         _requestFuseRelease();
-    } else if (e.button === 2) { e.preventDefault(); e.stopPropagation(); }
+    } else if (e.button === 2) {
+        mouse.rightDown = false;
+        e.preventDefault();
+        e.stopPropagation();
+    }
 });
 
 document.addEventListener('wheel', e => {

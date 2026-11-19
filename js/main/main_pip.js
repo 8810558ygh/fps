@@ -60,11 +60,14 @@ function updateScopePip() {
     }
 
     const now = performance.now();
+    const lanSpectating = typeof window.LAN_isSpectating === 'function'
+        && window.LAN_isSpectating();
+    const viewerCanSeeScope = lanSpectating || (p1.hp > 0 && now >= p1.deadUntil);
     const isADS = running && gameState === 'combat'
         && p1.aiming
         && p1.weapon && (p1.weapon.key === 'rifle' || p1.weapon.key === 'odin')
         && !p1.isMelee && !p1.isSmoke && !p1.isFlash
-        && p1.hp > 0 && now >= p1.deadUntil;
+        && viewerCanSeeScope;
 
     if (isADS !== _pipActive) {
         _pipActive = isADS;

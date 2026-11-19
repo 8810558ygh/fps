@@ -5,6 +5,7 @@ const LAN = {
     selfId: null,
     selfName: '',
     room: null,
+    mode: 'team',
     phase: 'lobby',
     round: 0,
     blueScore: 0,
@@ -53,6 +54,11 @@ const LAN_SPAWN_OFFSETS = [
     [2.0, 1.7],
     [-2.2, -1.7],
     [2.2, -1.7],
+    [-4.0, 0],
+    [4.0, 0],
+    [-1.6, 3.4],
+    [1.6, 3.4],
+    [0, -3.6],
 ];
 
 function _lanEl(id) {
@@ -177,6 +183,9 @@ function _lanReturnToMainAfterHostExit(message) {
     LAN.connectionLostTimer = 0;
     LAN.reconnectPending = false;
     LAN.active = false;
+    if (LAN.mode === 'survival' && typeof LAN_SURVIVAL_stop === 'function') {
+        LAN_SURVIVAL_stop();
+    }
     LAN.room = null;
     running = false;
     gameState = 'idle';
@@ -224,7 +233,11 @@ function _lanHandleReconnected(msg) {
     LAN.selfId = msg.id || LAN.selfId;
     if (msg.room) {
         LAN.room = msg.room;
+        LAN.mode = msg.room.mode || LAN.mode;
         LAN.phase = msg.room.phase || LAN.phase;
+    }
+    if (LAN.mode === 'survival' && msg.room?.survival && !running) {
+        lanStartMatch(msg.room.survival.mapId || msg.room.mapId, 'survival');
     }
     if (_lanEl('lanLobbyOverlay')) _lanEl('lanLobbyOverlay').style.display = 'none';
     lanNotify('已重新连接本局游戏', 1800);
@@ -263,6 +276,12 @@ function _lanRenderLobby(room) {
 
     const me = room.players.find(p => p.id === LAN.selfId);
     const isOwner = room.ownerId === LAN.selfId;
+    const survival = (room.mode || 'team') === 'survival';
+    if (_lanEl('lanLobbySubtitle')) {
+        _lanEl('lanLobbySubtitle').textContent = survival
+            ? '单队合作 · 最多 10 人 · 波次生存'
+            : '蓝队 vs 红队 · 每队最多 5 人';
+    }
     const codeEl = _lanEl('lanRoomCode');
     if (codeEl) codeEl.textContent = room.code;
 
@@ -272,14 +291,27 @@ function _lanRenderLobby(room) {
     if (pingEl) pingEl.textContent = `延迟：${LANNET.latency || '-'}ms`;
     _lanUpdateRoomInvite(room, isOwner);
 
-    for (const team of ['blue', 'red']) {
+    const redPanel = document.querySelector('.lan-team.red');
+    const teamsPanel = document.querySelector('.lan-teams');
+    const versus = _lanEl('lanVersus');
+    if (teamsPanel) teamsPanel.classList.toggle('survival', survival);
+    if (redPanel) redPanel.style.display = survival ? 'none' : '';
+    if (versus) versus.style.display = survival ? 'none' : '';
+    const blueTitle = document.querySelector('.lan-team.blue .lan-team-title span:first-child');
+    if (blueTitle) blueTitle.textContent = survival ? '生 存 小 队' : '蓝 队';
+    if (_lanEl('lanSwitchBlue')) _lanEl('lanSwitchBlue').style.display = survival ? 'none' : '';
+    if (_lanEl('lanSwitchRed')) _lanEl('lanSwitchRed').style.display = survival ? 'none' : '';
+
+    for (const team of (survival ? ['blue'] : ['blue', 'red'])) {
         const list = _lanEl(team === 'blue' ? 'lanBlueList' : 'lanRedList');
         const count = _lanEl(team === 'blue' ? 'lanBlueCount' : 'lanRedCount');
-        const players = room.players.filter(p => p.team === team);
-        if (count) count.textContent = `${players.length} / 5`;
+        const players = survival ? room.players : room.players.filter(p => p.team === team);
+        const maxSlots = survival ? 10 : 5;
+        if (count) count.textContent = `${players.length} / ${maxSlots}`;
         if (!list) continue;
         list.innerHTML = '';
-        for (let i = 0; i < 5; i++) {
+        list.classList.toggle('survival', survival);
+        for (let i = 0; i < maxSlots; i++) {
             const player = players[i];
             if (!player) {
                 const empty = document.createElement('div');
@@ -317,13 +349,14 @@ function _lanRenderLobby(room) {
         _lanEl('lanReadyBtn').textContent = me && me.ready ? '取消准备' : '准 备';
     }
     if (_lanEl('lanStartBtn')) {
-        const blueCount = room.players.filter(p => p.team === 'blue').length;
-        const redCount = room.players.filter(p => p.team === 'red').length;
+        const blueCount = survival ? room.players.length : room.players.filter(p => p.team === 'blue').length;
+        const redCount = survival ? 1 : room.players.filter(p => p.team === 'red').length;
         const allReady = room.players.length >= 2 && room.players.every(p => p.ready);
-        const modeSupported = (room.mode || 'team') === 'team';
+        const enoughPlayers = survival ? room.players.length >= 1 : room.players.length >= 2;
+        const readyForMode = survival ? room.players.every(p => p.ready) : allReady;
         _lanEl('lanStartBtn').style.display = isOwner ? '' : 'none';
-        _lanEl('lanStartBtn').disabled = !(blueCount > 0 && redCount > 0 && allReady && modeSupported);
-        _lanEl('lanStartBtn').title = modeSupported ? '' : '生存模式暂未开放';
+        _lanEl('lanStartBtn').disabled = !(blueCount > 0 && redCount > 0 && enoughPlayers && readyForMode);
+        _lanEl('lanStartBtn').title = '';
     }
 }
 
@@ -472,11 +505,7 @@ function _lanBindUI() {
     modeSelect?.addEventListener('change', () => {
         if (typeof audio === 'function') audio();
         _lanSetRoomMode(modeSelect.value);
-        if (modeSelect.value === 'survival') {
-            _lanSetRoomMessage('生存模式暂未开放，切回团队作战后可开始比赛');
-        } else {
-            _lanSetRoomMessage('');
-        }
+        _lanSetRoomMessage('');
     });
 
     const codeInput = _lanEl('lanRoomCodeInput');
@@ -650,11 +679,29 @@ function _lanSyncSelf(state, players) {
     LAN.playerStates.set(state.id, state);
     p1.netId = LAN.selfId;
     p1.team = state.team;
-    p1.maxHp = HP_MAX;
+    p1.maxHp = LAN.mode === 'survival' && Number(state.maxHp)
+        ? Number(state.maxHp)
+        : HP_MAX;
     p1.hp = state.hp;
     p1.armor = state.armor;
+    p1.downed = !!state.downed;
     p1.mat.color.setHex(_lanTeamColor(state.team));
     _lanPrepareHitMeshes(p1);
+
+    if (state.downed) {
+        p1.hp = 0;
+        p1.deadUntil = 0;
+        p1.baseVisible = false;
+        p1.aiming = false;
+        p1.aimStage = 0;
+        if (p1.input) {
+            p1.input.fire = false;
+            p1.input.aim = false;
+            p1.input.forward = 0;
+            p1.input.right = 0;
+        }
+        return;
+    }
 
     if (state.alive) {
         if (p1.deadUntil === Infinity) {
@@ -711,8 +758,9 @@ function _lanSyncRemote(state) {
     player.pitch = state.pitch;
     player.aiming = state.weapon !== 'knife';
     const connected = state.connected !== false;
-    player.baseVisible = !!state.alive && connected;
-    player.deadUntil = player.baseVisible ? 0 : Infinity;
+    player.downed = !!state.downed;
+    player.baseVisible = (!!state.alive || !!state.downed) && connected;
+    player.deadUntil = state.alive ? 0 : Infinity;
     player.mesh.visible = player.baseVisible;
 
     const weaponKey = state.weapon || player.weaponKey || 'rifle';
@@ -787,8 +835,9 @@ function _lanHandleSnapshot(msg) {
     _lanUpdateHUD(msg);
 }
 
-function lanStartMatch(mapId) {
+function lanStartMatch(mapId, mode = 'team') {
     LAN.active = true;
+    LAN.mode = mode;
     LAN.mapId = mapId || LAN.mapId;
     _lanClearRemotes();
     LAN.lastRoundKey = null;
@@ -801,8 +850,8 @@ function lanStartMatch(mapId) {
 
     _lanHideLobby();
     if (_lanEl('lanEndOverlay')) _lanEl('lanEndOverlay').style.display = 'none';
-    if (_lanEl('lanMatchHud')) _lanEl('lanMatchHud').style.display = 'grid';
-    if (_lanEl('timer')) _lanEl('timer').style.display = 'none';
+    if (_lanEl('lanMatchHud')) _lanEl('lanMatchHud').style.display = mode === 'survival' ? 'none' : 'grid';
+    if (_lanEl('timer')) _lanEl('timer').style.display = mode === 'survival' ? 'block' : 'none';
     if (_lanEl('exitBtn')) _lanEl('exitBtn').style.display = 'none';
     if (_lanEl('endOverlay')) _lanEl('endOverlay').style.display = 'none';
 
@@ -830,7 +879,10 @@ function lanStartMatch(mapId) {
     document.body.classList.add('in-game');
     if (typeof setOver === 'function') setOver(false);
     if (typeof enterFullscreenAndLock === 'function') enterFullscreenAndLock();
-    lanNotify('比赛开始 · 双方准备', 1600);
+    lanNotify(mode === 'survival' ? '生存小队集结 · 准备迎战' : '比赛开始 · 双方准备', 1600);
+    if (mode === 'survival' && typeof LAN_SURVIVAL_begin === 'function') {
+        LAN_SURVIVAL_begin(mapId);
+    }
 }
 
 function _lanSaveMatchResult(msg) {
@@ -996,6 +1048,9 @@ window.LAN_handleMessage = function (msg) {
         LAN.room = msg.room;
         if (msg.room && msg.room.phase === 'lobby') {
             LAN.active = false;
+            if (LAN.mode === 'survival' && typeof LAN_SURVIVAL_stop === 'function') {
+                LAN_SURVIVAL_stop();
+            }
             if (running) return;
             if (_lanEl('lanMatchHud')) _lanEl('lanMatchHud').style.display = 'none';
             if (_lanEl('timer')) _lanEl('timer').style.display = '';
@@ -1005,11 +1060,21 @@ window.LAN_handleMessage = function (msg) {
         return;
     }
     if (msg.type === 'matchStart') {
-        lanStartMatch(msg.mapId);
+        LAN.mode = msg.mode || 'team';
+        lanStartMatch(msg.mapId, LAN.mode);
         return;
     }
     if (msg.type === 'snapshot') {
+        if (msg.mode === 'survival' && typeof LAN_SURVIVAL_handleSnapshot === 'function') {
+            LAN_SURVIVAL_handleSnapshot(msg);
+            return;
+        }
         _lanHandleSnapshot(msg);
+        return;
+    }
+    if (msg.type && msg.type.startsWith('survival')
+        && typeof LAN_SURVIVAL_handleMessage === 'function') {
+        LAN_SURVIVAL_handleMessage(msg);
         return;
     }
     if (msg.type === 'damage' || msg.type === 'kill' || msg.type === 'barrel'
@@ -1072,6 +1137,7 @@ function LAN_mainTick(dt, now) {
             yaw: p1.yaw,
             pitch: p1.pitch,
             height: p1.height,
+            maxHp: p1.maxHp || HP_MAX,
             weapon: p1.isMelee ? 'knife'
                 : (p1.isSmoke ? 'smoke'
                 : (p1.isFlash ? 'flash'
@@ -1079,14 +1145,15 @@ function LAN_mainTick(dt, now) {
             aiming: !!p1.aiming,
             reloadRemain: Math.max(0, p1.reloadEnd - now),
             boltRemain: Math.max(0, p1.boltEnd - now),
+            aimStage: Math.max(0, Math.min(2, Number(p1.aimStage) || 0)),
             meleeRemain: Math.max(0, p1.meleeEnd - now),
             meleeHeavy: !!p1.meleeIsHeavy,
             crouching: p1.height < HEIGHT_STAND - 0.1,
         });
     }
-    LAN_updateSpectatorCamera(dt, now);
+    if (!p1.downed) LAN_updateSpectatorCamera(dt, now);
 
-    if (p1.deadUntil !== Infinity && typeof LAN_foreachRemote === 'function') {
+    if (p1.deadUntil !== Infinity && !p1.downed && typeof LAN_foreachRemote === 'function') {
         LAN_foreachRemote(remote => {
             if (!remote.baseVisible) return;
             const dx = p1.pos.x - remote.pos.x;
@@ -1111,6 +1178,7 @@ function LAN_foreachRemote(callback) {
 }
 
 function LAN_getEnemies(player) {
+    if (LAN.mode === 'survival') return [];
     const result = [];
     const myTeam = player === p1 ? p1.team : player.team;
     LAN_foreachRemote(remote => {
@@ -1133,6 +1201,13 @@ function LAN_getAliveTeammates() {
         }
     });
     return result;
+}
+
+function LAN_isSpectating() {
+    const targetId = LAN.spectateNetId;
+    if (!LAN.active || p1.deadUntil !== Infinity || !targetId) return false;
+    const state = LAN.playerStates.get(targetId);
+    return !!state && state.alive && state.connected !== false;
 }
 
 function _lanBuildSpectatorViewModel(weaponKey) {
@@ -1225,10 +1300,22 @@ function LAN_updateSpectatorCamera(dt, now) {
     p1.isFlash = weaponKey === 'flash';
     p1.isMedkit = weaponKey === 'medkit';
     p1.aiming = !!state.aiming && !p1.isMelee && !p1.isSmoke && !p1.isFlash;
+    p1.aimStage = Math.max(0, Math.min(2, Number(state.aimStage) || 0));
     p1.reloadEnd = now + (state.reloadRemain || 0);
     p1.boltEnd = now + (state.boltRemain || 0);
     p1.meleeEnd = now + (state.meleeRemain || 0);
     p1.meleeIsHeavy = !!state.meleeHeavy;
+
+    const targetFov = p1.aiming
+        ? (weaponKey === 'sniper' && p1.aimStage === 2 && p1.weapon.zoomFov2
+            ? p1.weapon.zoomFov2
+            : p1.weapon.zoomFov)
+        : BASE_FOV;
+    if (Number.isFinite(targetFov) && Math.abs(p1.cam.fov - targetFov) > 0.05) {
+        p1.cam.fov += (targetFov - p1.cam.fov) * Math.min(1, dt * 11);
+        p1.cam.updateProjectionMatrix();
+    }
+
     if (p1.vm) p1.vm.visible = true;
     if (typeof updateSniperViewmodel === 'function') {
         updateSniperViewmodel(p1, dt, now);
@@ -1236,6 +1323,7 @@ function LAN_updateSpectatorCamera(dt, now) {
 }
 
 window.LAN_cycleSpectateTarget = LAN_cycleSpectateTarget;
+window.LAN_isSpectating = LAN_isSpectating;
 
 function LAN_onLocalShot(hits, weaponKey, visual) {
     if (!LAN.active) return;
@@ -1316,6 +1404,77 @@ function LAN_prepareLocalHitRefs() {
     }
 }
 
+function _lanRemoveInviteQuery() {
+    const url = new URL(location.href);
+    url.searchParams.delete('lanRoom');
+    history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function _lanPromptInviteIdentity(code) {
+    const overlay = _lanEl('lanIdentityOverlay');
+    const form = _lanEl('lanIdentityForm');
+    const input = _lanEl('lanIdentityInput');
+    const error = _lanEl('lanIdentityError');
+    const submit = _lanEl('lanIdentitySubmitBtn');
+    const cancel = _lanEl('lanIdentityCancelBtn');
+    const codeEl = _lanEl('lanIdentityRoomCode');
+    if (!overlay || !form || !input || !submit || !cancel) return Promise.resolve(false);
+
+    if (codeEl) codeEl.textContent = code;
+    input.value = '';
+    if (error) error.textContent = '';
+    submit.disabled = false;
+    submit.textContent = '使用此 ID 并加入';
+
+    return new Promise(resolve => {
+        let settled = false;
+        const finish = accepted => {
+            if (settled) return;
+            settled = true;
+            form.removeEventListener('submit', onSubmit);
+            cancel.removeEventListener('click', onCancel);
+            overlay.style.display = 'none';
+            resolve(accepted);
+        };
+        const onCancel = () => {
+            _lanRemoveInviteQuery();
+            finish(false);
+        };
+        const onSubmit = async event => {
+            event.preventDefault();
+            const value = input.value.trim();
+            if (!value) {
+                if (error) error.textContent = '请输入游戏 ID';
+                input.focus();
+                return;
+            }
+            if (Array.from(value).length > 20) {
+                if (error) error.textContent = '游戏 ID 不能超过 20 个字符';
+                input.focus();
+                return;
+            }
+
+            submit.disabled = true;
+            submit.textContent = '正在保存…';
+            if (error) error.textContent = '';
+            const result = await window.PROFILE_SetId(value);
+            if (!result || !result.ok) {
+                submit.disabled = false;
+                submit.textContent = '使用此 ID 并加入';
+                if (error) error.textContent = result?.message || '游戏 ID 保存失败';
+                input.focus();
+                return;
+            }
+            finish(true);
+        };
+
+        form.addEventListener('submit', onSubmit);
+        cancel.addEventListener('click', onCancel);
+        overlay.style.display = 'flex';
+        setTimeout(() => input.focus(), 30);
+    });
+}
+
 async function _lanHandleInviteQuery() {
     const params = new URLSearchParams(location.search);
     const code = String(params.get('lanRoom') || '').trim().toUpperCase();
@@ -1323,6 +1482,11 @@ async function _lanHandleInviteQuery() {
 
     const input = _lanEl('lanRoomCodeInput');
     if (input) input.value = code;
+    if (window.PROFILE?.readyPromise) await window.PROFILE.readyPromise;
+    if (!window.electronAPI && !window.PROFILE?.info?.idConfirmed) {
+        const confirmed = await _lanPromptInviteIdentity(code);
+        if (!confirmed) return;
+    }
     const connected = await LANNET.connect();
     lanShowLobby();
     if (!connected) {
