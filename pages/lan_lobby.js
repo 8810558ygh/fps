@@ -26,8 +26,25 @@ document.write(`
             <div id="lanRoomSection" class="lan-room" style="display:none;">
                 <div class="lan-room-head">
                     <div>房间码 <strong id="lanRoomCode">-----</strong></div>
-                    <div id="lanRoomMap">地图：战场</div>
-                    <div id="lanRoomOwner">房主：-</div>
+                    <div id="lanRoomMap" class="lan-room-map">
+                        <span class="lan-room-map-label">地图</span>
+                        <div class="lan-room-select-wrap">
+                            <select id="lanRoomMapSelect" class="lan-room-select" aria-label="选择房间地图">
+                                <option value="battlefield">战场</option>
+                                <option value="desert">沙漠</option>
+                                <option value="indoor_complex">设备间</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="lanRoomMode" class="lan-room-mode">
+                        <span class="lan-room-map-label">模式</span>
+                        <div class="lan-room-select-wrap">
+                            <select id="lanRoomModeSelect" class="lan-room-select" aria-label="选择房间模式">
+                                <option value="team">团队作战</option>
+                                <option value="survival">生存模式</option>
+                            </select>
+                        </div>
+                    </div>
                     <div id="lanRoomPing">延迟：-</div>
                 </div>
 

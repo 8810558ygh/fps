@@ -314,6 +314,17 @@ document.addEventListener('mousedown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     if (_isAnyPanelOpen()) return;
 
+    if (typeof gameMode !== 'undefined' && gameMode === 'lan'
+        && typeof p1 !== 'undefined' && p1 && p1.deadUntil === Infinity
+        && typeof window.LAN !== 'undefined' && window.LAN.active) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.button === 0 && typeof LAN_cycleSpectateTarget === 'function') {
+            LAN_cycleSpectateTarget();
+        }
+        return;
+    }
+
     if (_isSpectatorSafe()) {
         if (e.button === 0) {
             e.preventDefault(); e.stopPropagation();

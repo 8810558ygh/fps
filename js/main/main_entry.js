@@ -117,11 +117,6 @@ function enterGame(mode) {
     }
 
     if (mode === 'ai') aiEnabled = true;
-    if (mode === 'ai'
-        && typeof window.LAN_installSimpleWeapon === 'function'
-        && !p2._lanSimpleWeapon) {
-        window.LAN_installSimpleWeapon(p2);
-    }
 
     p2.gunHolder.visible = (mode === 'ai' || mode === 'online');
     document.getElementById('lobbyOverlay').style.display = 'none';

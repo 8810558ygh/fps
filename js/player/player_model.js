@@ -151,10 +151,11 @@ window.preloadHdWeaponTemplates = preloadHdWeaponTemplates;
 // ============================================================
 // makeWeaponModel
 // ============================================================
-function makeWeaponModel(type, mat) {
-    if (type === 'rifle' || type === 'sniper' || type === 'shotgun'
+function makeWeaponModel(type, mat, options = {}) {
+    if (options.useHd !== false
+        && (type === 'rifle' || type === 'sniper' || type === 'shotgun'
         || type === 'odin' || type === 'knife' || type === 'smoke'
-        || type === 'flash' || type === 'medkit') {
+        || type === 'flash' || type === 'medkit')) {
         const tpl = _getWorldTemplate(type);
         if (tpl) return _cloneHdTemplate(tpl);
     }

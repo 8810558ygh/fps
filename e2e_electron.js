@@ -205,10 +205,10 @@ async function main() {
   ]);
   await host.evaluate("enterGame('ai'); true");
   await waitForPageExpression(host, 'running && gameMode === "ai"', 10000, 'AI match start');
-  const aiSimpleWeaponApplied = await host.evaluate('!!p2._lanSimpleWeapon');
+  const aiUsesHdWeapon = await host.evaluate('!p2._lanSimpleWeapon');
   const aiCharacterPartCount = await host.evaluate('getPlayerHitMeshes(p2).length');
-  if (!aiSimpleWeaponApplied || aiCharacterPartCount !== 13) {
-    throw new Error('AI opponent character model was simplified or weapon was not optimized');
+  if (!aiUsesHdWeapon || aiCharacterPartCount !== 13) {
+    throw new Error('AI opponent did not retain the standard HD weapon');
   }
   const meleeConeTargetCount = await host.evaluate(`
     (() => {
@@ -401,17 +401,192 @@ async function main() {
     throw new Error('Saved player ID was not sent to the room');
   }
 
+  await host.evaluate(`(() => {
+    const mapSelect = document.getElementById('lanRoomMapSelect');
+    mapSelect.value = 'desert';
+    mapSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await Promise.all([
+    waitForPageExpression(
+      host,
+      'LAN.room.mapId === "desert" && document.getElementById("lanRoomMapSelect").value === "desert"',
+      6000,
+      'host room map update'
+    ),
+    waitForPageExpression(
+      joiner,
+      'LAN.room.mapId === "desert" && document.getElementById("lanRoomMapSelect").value === "desert"',
+      6000,
+      'joiner room map sync'
+    ),
+  ]);
+  const roomMapSync = await Promise.all([
+    host.evaluate(`({
+      mapId: LAN.room.mapId,
+      selectedMapId: document.getElementById('lanRoomMapSelect').value,
+      optionCount: document.getElementById('lanRoomMapSelect').options.length,
+      canEdit: !document.getElementById('lanRoomMapSelect').disabled
+    })`),
+    joiner.evaluate(`({
+      mapId: LAN.room.mapId,
+      selectedMapId: document.getElementById('lanRoomMapSelect').value,
+      optionCount: document.getElementById('lanRoomMapSelect').options.length,
+      canEdit: !document.getElementById('lanRoomMapSelect').disabled
+    })`),
+  ]);
+  if (!roomMapSync[0].canEdit || roomMapSync[1].canEdit
+      || roomMapSync.some(state => state.mapId !== 'desert'
+        || state.selectedMapId !== 'desert'
+        || state.optionCount !== 3)) {
+    throw new Error(`Room map permissions or UI did not sync: ${JSON.stringify(roomMapSync)}`);
+  }
+
+  await joiner.evaluate("LANNET.send({ type: 'setMap', mapId: 'indoor_complex' }); true");
+  await sleep(300);
+  if (await joiner.evaluate('LAN.room.mapId') !== 'desert') {
+    throw new Error('A non-owner changed the room map');
+  }
+  await host.evaluate(`(() => {
+    const mapSelect = document.getElementById('lanRoomMapSelect');
+    mapSelect.value = 'battlefield';
+    mapSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await Promise.all([
+    waitForPageExpression(host, 'LAN.room.mapId === "battlefield"', 6000, 'host room map restore'),
+    waitForPageExpression(joiner, 'LAN.room.mapId === "battlefield"', 6000, 'joiner room map restore'),
+  ]);
+
   await Promise.all([
     host.evaluate("document.getElementById('lanReadyBtn').click(); true"),
     joiner.evaluate("document.getElementById('lanReadyBtn').click(); true"),
   ]);
   await waitForPageExpression(host, 'LAN.room.players.every(player => player.ready)', 6000, 'ready state');
+
+  const defaultRoomMode = await Promise.all([
+    host.evaluate(`({
+      roomMode: LAN.room.mode,
+      selectedMode: document.getElementById('lanRoomModeSelect').value,
+      ownerLabelRemoved: !document.getElementById('lanRoomOwner')
+    })`),
+    joiner.evaluate(`({
+      roomMode: LAN.room.mode,
+      selectedMode: document.getElementById('lanRoomModeSelect').value,
+      ownerLabelRemoved: !document.getElementById('lanRoomOwner')
+    })`),
+  ]);
+  if (defaultRoomMode.some(state => state.roomMode !== 'team'
+      || state.selectedMode !== 'team'
+      || !state.ownerLabelRemoved)) {
+    throw new Error(`Default room mode is invalid: ${JSON.stringify(defaultRoomMode)}`);
+  }
+
+  await host.evaluate(`(() => {
+    const modeSelect = document.getElementById('lanRoomModeSelect');
+    modeSelect.value = 'survival';
+    modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await Promise.all([
+    waitForPageExpression(
+      host,
+      'LAN.room.mode === "survival" && document.getElementById("lanRoomModeSelect").value === "survival"',
+      6000,
+      'host room mode update'
+    ),
+    waitForPageExpression(
+      joiner,
+      'LAN.room.mode === "survival" && document.getElementById("lanRoomModeSelect").value === "survival"',
+      6000,
+      'joiner room mode sync'
+    ),
+  ]);
+  const roomModeSync = await Promise.all([
+    host.evaluate(`({
+      mode: LAN.room.mode,
+      selectedMode: document.getElementById('lanRoomModeSelect').value,
+      optionCount: document.getElementById('lanRoomModeSelect').options.length,
+      canEdit: !document.getElementById('lanRoomModeSelect').disabled,
+      startDisabled: document.getElementById('lanStartBtn').disabled
+    })`),
+    joiner.evaluate(`({
+      mode: LAN.room.mode,
+      selectedMode: document.getElementById('lanRoomModeSelect').value,
+      optionCount: document.getElementById('lanRoomModeSelect').options.length,
+      canEdit: !document.getElementById('lanRoomModeSelect').disabled
+    })`),
+  ]);
+  if (!roomModeSync[0].canEdit || roomModeSync[1].canEdit
+      || roomModeSync.some(state => state.mode !== 'survival'
+        || state.selectedMode !== 'survival'
+        || state.optionCount !== 2)
+      || !roomModeSync[0].startDisabled) {
+    throw new Error(`Room mode permissions or UI did not sync: ${JSON.stringify(roomModeSync)}`);
+  }
+
+  await joiner.evaluate("LANNET.send({ type: 'setMode', mode: 'team' }); true");
+  await sleep(300);
+  if (await joiner.evaluate('LAN.room.mode') !== 'survival') {
+    throw new Error('A non-owner changed the room mode');
+  }
+  await host.evaluate(`(() => {
+    const modeSelect = document.getElementById('lanRoomModeSelect');
+    modeSelect.value = 'team';
+    modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await Promise.all([
+    waitForPageExpression(host, 'LAN.room.mode === "team"', 6000, 'host room mode restore'),
+    waitForPageExpression(joiner, 'LAN.room.mode === "team"', 6000, 'joiner room mode restore'),
+  ]);
   await waitForPageExpression(host, '!document.getElementById(\'lanStartBtn\').disabled', 6000, 'start button');
   await host.evaluate("document.getElementById('lanStartBtn').click(); true");
   await Promise.all([
     waitForPageExpression(host, 'LAN.active && LAN.phase !== "lobby"', 8000, 'host match start'),
     waitForPageExpression(joiner, 'LAN.active && LAN.phase !== "lobby"', 8000, 'joiner match start'),
   ]);
+  await waitForPageExpression(host, 'LAN.phase === "prep"', 4000, 'LAN preparation phase');
+  const prepTimerText = await host.evaluate("document.getElementById('lanRoundTimer').textContent");
+  if (!/^准备 \d{2}:\d{2}$/.test(prepTimerText)) {
+    throw new Error(`LAN preparation timer format is invalid: ${prepTimerText}`);
+  }
+  const prepStart = await host.evaluate('({ x: p1.pos.x, y: p1.pos.y, z: p1.pos.z })');
+  await host.evaluate('keys.KeyW = true; true');
+  await sleep(320);
+  await host.evaluate('keys.KeyW = false; true');
+  const prepMoved = await host.evaluate(`
+    Math.hypot(p1.pos.x - ${prepStart.x}, p1.pos.z - ${prepStart.z}) > 0.05
+  `);
+  await host.evaluate('keys.Space = true; true');
+  await sleep(100);
+  await host.evaluate('keys.Space = false; true');
+  const prepJumped = await host.evaluate('p1.vy > 0.05 || !p1.onGround');
+  await host.evaluate('mouse.leftDown = true; mouse.aim = true; true');
+  await sleep(100);
+  const prepFireBlocked = await host.evaluate('p1.input.fire === false && p1.input.aim === false');
+  await host.evaluate('mouse.leftDown = false; mouse.aim = false; true');
+  if (!prepMoved || !prepJumped || !prepFireBlocked) {
+    throw new Error(`LAN preparation movement failed: moved=${prepMoved} jumped=${prepJumped} blocked=${prepFireBlocked}`);
+  }
+  await waitForPageExpression(host, 'LAN.models.size >= 1', 5000, 'remote player model');
+  const lanWeaponModels = await host.evaluate(`
+    (() => {
+      const remote = Array.from(LAN.models.values())[0];
+      return {
+        ownUsesSimple: !!p1._lanSimpleWeapon,
+        remoteUsesSimple: !!remote?._lanSimpleWeapon,
+        remoteWeaponKey: remote?._lanSimpleWeaponKey || null,
+        remoteGunPartCount: remote?.gunHolder?.children?.[0]?.children?.length || 0
+      };
+    })()
+  `);
+  if (lanWeaponModels.ownUsesSimple
+      || !lanWeaponModels.remoteUsesSimple
+      || lanWeaponModels.remoteWeaponKey !== 'rifle'
+      || lanWeaponModels.remoteGunPartCount < 4) {
+    throw new Error(`LAN weapon LOD is incorrect: ${JSON.stringify(lanWeaponModels)}`);
+  }
   await waitForPageExpression(
     host,
     'LAN.playerStates.size === 2 && [...LAN.playerStates.values()].every(player => Number.isFinite(player.kills))',
@@ -452,6 +627,88 @@ async function main() {
   const hostSelfId = await host.evaluate('LAN.selfId');
   const targetId = room.players.find(player => player.id !== hostSelfId).id;
   await waitForPageExpression(host, 'LAN.phase === "round"', 8000, 'round combat start');
+  const combatTimerText = await host.evaluate("document.getElementById('lanRoundTimer').textContent");
+  if (!/^战斗 \d{2}:\d{2}$/.test(combatTimerText) || !combatTimerText.startsWith('战斗 03:') && !combatTimerText.startsWith('战斗 02:')) {
+    throw new Error(`LAN combat timer format is invalid: ${combatTimerText}`);
+  }
+  const spectatorTest = await host.evaluate(`
+    (() => {
+      const savedDeadUntil = p1.deadUntil;
+      const savedPosition = p1.cam.position.clone();
+      const savedQuaternion = p1.cam.quaternion.clone();
+      const makeTeammate = (id, offsetX) => {
+        const player = makePlayer(
+          900 + offsetX,
+          0x3a7bd5,
+          { x: p1.pos.x + offsetX, z: p1.pos.z - 2, yaw: 0.3 },
+          'rifle',
+          true
+        );
+        player.netId = id;
+        player.name = id;
+        player.team = p1.team;
+        player.baseVisible = true;
+        player.hp = 100;
+        player.eyeH = 1.6;
+        player.yaw = 0.3;
+        player.pitch = 0.1;
+        player.pos.set(p1.pos.x + offsetX, p1.pos.y, p1.pos.z - 2);
+        LAN.models.set(id, player);
+        LAN.playerStates.set(id, {
+          id,
+          name: id,
+          team: p1.team,
+          alive: true,
+          connected: true,
+          hp: 100,
+          height: 1.84,
+          weapon: 'rifle',
+          aiming: false,
+          reloadRemain: 0,
+          boltRemain: 0,
+          meleeRemain: 0,
+        });
+        return player;
+      };
+
+      p1.deadUntil = Infinity;
+      LAN.spectateNetId = null;
+      LAN.spectateWeaponKey = null;
+      const teammateA = makeTeammate('spectateA', 1);
+      const teammateB = makeTeammate('spectateB', 2);
+      const first = _lanEnsureSpectateTarget().netId;
+      LAN_cycleSpectateTarget();
+      const second = LAN.spectateNetId;
+      const selected = LAN.models.get(second);
+      LAN_updateSpectatorCamera(0.016, performance.now());
+      const cameraMatches = Math.abs(p1.cam.position.x - selected.pos.x) < 0.001
+        && Math.abs(p1.cam.position.y - (selected.pos.y + selected.eyeH)) < 0.001
+        && Math.abs(p1.cam.position.z - selected.pos.z) < 0.001;
+      const vmHasGun = p1.vm.children.length > 0;
+      render();
+      const observedBodyHidden = !selected.mesh.visible;
+
+      LAN.models.delete('spectateA');
+      LAN.models.delete('spectateB');
+      LAN.playerStates.delete('spectateA');
+      LAN.playerStates.delete('spectateB');
+      _lanDisposeRemote(teammateA);
+      _lanDisposeRemote(teammateB);
+      LAN.spectateNetId = null;
+      _lanClearSpectatorViewModel();
+      setWeapon(p1, p1.primaryWeaponKey || 'rifle');
+      p1.deadUntil = savedDeadUntil;
+      p1.cam.position.copy(savedPosition);
+      p1.cam.quaternion.copy(savedQuaternion);
+      return { first, second, switched: first !== second, cameraMatches, vmHasGun, observedBodyHidden };
+    })()
+  `);
+  if (!spectatorTest.switched
+      || !spectatorTest.cameraMatches
+      || !spectatorTest.vmHasGun
+      || !spectatorTest.observedBodyHidden) {
+    throw new Error(`LAN spectator test failed: ${JSON.stringify(spectatorTest)}`);
+  }
   const barrelTest = await host.evaluate(`
     (() => {
       const occupied = [p1.pos, ...Array.from(LAN.models.values()).map(player => player.pos)];
@@ -617,12 +874,20 @@ async function main() {
     localJoiner,
     joinerServer: joinConnection.currentUrl,
     room,
+    roomMapSync,
+    roomModeSync,
     lobbyLayout,
+    prepTimerText,
+    prepMoved,
+    prepJumped,
+    prepFireBlocked,
+    combatTimerText,
+    lanWeaponModels,
     profileId: savedProfile.playerId,
     dataFolder: dataDirectories.get('host'),
     profileUi,
     aiScoreboardUi,
-    aiSimpleWeaponApplied,
+    aiUsesHdWeapon,
     aiCharacterPartCount,
     meleeConeTargetCount,
     aiPerformanceBase,
@@ -631,6 +896,7 @@ async function main() {
     survivorReportUi,
     barrelTest,
     scoreboardUi,
+    spectatorTest,
     performanceSample,
     performanceWithoutRemotes,
     performanceUnoptimized,

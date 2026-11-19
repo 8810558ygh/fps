@@ -12,7 +12,7 @@ const PORT = Number(process.env.PORT || 8090);
 const TICK_MS = 33;
 const PREP_MS = 5000;
 const ROUND_END_MS = 2500;
-const ROUND_LIMIT_MS = 300000;
+const ROUND_LIMIT_MS = 180000;
 const MATCH_POINT = 10;
 const MAX_TEAM = 5;
 const MELEE_SERVER_RANGE = 2.6;
@@ -270,6 +270,7 @@ function roomLobby(room) {
     code: room.code,
     ownerId: room.ownerId,
     mapId: room.mapId,
+    mode: room.mode || 'team',
     phase: room.phase,
     players: Array.from(room.memberIds)
       .map(id => clients.get(id))
@@ -558,6 +559,11 @@ function roomTick(room) {
       yaw: state.yaw, pitch: state.pitch,
       height: state.height,
       weapon: state.weapon,
+      aiming: !!state.aiming,
+      reloadRemain: state.reloadRemain || 0,
+      boltRemain: state.boltRemain || 0,
+      meleeRemain: state.meleeRemain || 0,
+      meleeHeavy: !!state.meleeHeavy,
       crouching: !!state.crouching,
       alive: !!state.alive,
       connected: client.connected !== false,
@@ -697,6 +703,7 @@ wss.on('connection', ws => {
         code,
         ownerId: client.id,
         mapId: ['battlefield', 'desert', 'indoor_complex'].includes(msg.mapId) ? msg.mapId : 'battlefield',
+        mode: 'team',
         memberIds: new Set([client.id]),
         states: new Map(),
         phase: 'lobby',
@@ -776,8 +783,21 @@ wss.on('connection', ws => {
       return;
     }
 
+    if (msg.type === 'setMode') {
+      if (room.ownerId !== client.id || room.phase !== 'lobby') return;
+      if (['team', 'survival'].includes(msg.mode)) {
+        room.mode = msg.mode;
+        broadcastLobby(room);
+      }
+      return;
+    }
+
     if (msg.type === 'startMatch') {
       if (room.ownerId !== client.id || room.phase !== 'lobby') return;
+      if ((room.mode || 'team') !== 'team') {
+        send(ws, { type: 'error', message: '生存模式暂未开放，请切换为团队作战' });
+        return;
+      }
       const members = room.memberIds.size;
       const allReady = room.memberIds.size > 0 && [...room.memberIds].every(id => clients.get(id)?.ready);
       if (members < 2 || !allReady) {
@@ -810,6 +830,11 @@ wss.on('connection', ws => {
       state.height = Math.max(0.8, Math.min(2.2, Number(msg.height) || 1.84));
       state.weapon = String(msg.weapon || 'rifle').slice(0, 16);
       state.crouching = !!msg.crouching;
+      state.aiming = !!msg.aiming;
+      state.reloadRemain = Math.max(0, Math.min(10000, Number(msg.reloadRemain) || 0));
+      state.boltRemain = Math.max(0, Math.min(5000, Number(msg.boltRemain) || 0));
+      state.meleeRemain = Math.max(0, Math.min(5000, Number(msg.meleeRemain) || 0));
+      state.meleeHeavy = !!msg.meleeHeavy;
       client._prevStateServerAt = now;
       return;
     }

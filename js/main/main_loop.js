@@ -162,15 +162,24 @@ function render() {
     p1.mesh.visible = false;
     if (gameMode === 'lan') {
         p2.mesh.visible = false;
+        const spectateId = (p1.deadUntil === Infinity && window.LAN?.active)
+            ? window.LAN.spectateNetId
+            : null;
         if (typeof LAN_foreachRemote === 'function') {
             LAN_foreachRemote(remote => {
-                remote.mesh.visible = !!remote.baseVisible;
+                remote.mesh.visible = !!remote.baseVisible
+                    && remote.netId !== spectateId;
             });
         }
     } else {
         p2.mesh.visible = p2.baseVisible;
     }
-    p1.vm.visible = p1.baseVisible && !(p1.aiming && p1.weapon.scope);
+    const isLanSpectating = gameMode === 'lan'
+        && p1.deadUntil === Infinity
+        && window.LAN?.active
+        && window.LAN.spectateNetId;
+    const showVm = isLanSpectating || p1.baseVisible;
+    p1.vm.visible = !!showVm && !(p1.aiming && p1.weapon && p1.weapon.scope);
     if (p2.vm) p2.vm.visible = false;
 
     _shadowFrameCounter++;
@@ -234,10 +243,8 @@ function loop() {
             if (p1.deadUntil !== Infinity) {
                 collectLocalInput(p1);
                 if (gameState === 'prep') {
-                    p1.input.forward = 0;
-                    p1.input.right = 0;
-                    p1.input.jump = false;
                     p1.input.fire = false;
+                    p1.input.aim = false;
                 }
                 updatePlayer(p1, dt, now);
                 if (dt > 0.0001) {

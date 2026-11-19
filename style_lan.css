@@ -3,9 +3,10 @@
     inset: 0;
     z-index: 66;
     display: none;
-    align-items: center;
+    align-items: stretch;
     justify-content: center;
     padding: 20px;
+    overflow-y: auto;
     color: #dce8f4;
     background:
         radial-gradient(circle at 50% 30%, rgba(38, 94, 144, 0.35), transparent 48%),
@@ -14,22 +15,24 @@
 }
 
 .lan-panel {
-    width: min(1120px, 97vw);
-    max-height: 92vh;
-    overflow: auto;
-    border: 1px solid rgba(120, 175, 220, 0.24);
-    border-radius: 18px;
-    background: rgba(7, 17, 28, 0.9);
-    box-shadow: 0 26px 90px rgba(0, 0, 0, 0.6);
+    width: min(1180px, 100%);
+    min-height: calc(100vh - 40px);
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 .lan-topbar {
     display: grid;
-    grid-template-columns: 180px 1fr 150px;
+    grid-template-columns: 160px 1fr 150px;
     align-items: center;
     gap: 16px;
-    padding: 20px 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 16px 0 22px;
+    border-bottom: 1px solid rgba(137, 185, 225, 0.15);
 }
 
 .lan-title {
@@ -63,12 +66,13 @@
 
 .lan-entry {
     display: flex;
-    min-height: 330px;
+    flex: 1;
+    min-height: 360px;
     align-items: center;
     justify-content: center;
     flex-direction: column;
     gap: 22px;
-    padding: 40px;
+    padding: 40px 24px 64px;
 }
 
 .lan-join-row {
@@ -132,21 +136,80 @@
     opacity: 0.45;
 }
 
-.lan-room { padding: 22px 24px 26px; }
+.lan-room {
+    flex: 1;
+    padding: 22px 0 30px;
+}
 
 .lan-room-head {
     display: flex;
     flex-wrap: wrap;
     gap: 14px 26px;
     justify-content: space-between;
-    padding: 12px 16px;
+    padding: 0 0 14px;
     margin-bottom: 18px;
-    border-radius: 9px;
-    background: rgba(255, 255, 255, 0.035);
+    border-bottom: 1px solid rgba(137, 185, 225, 0.12);
     color: #8ea5b9;
     font-size: 13px;
 }
 #lanRoomCode { color: #ffd24a; font: 800 18px Consolas, monospace; letter-spacing: 3px; }
+
+.lan-room-map,
+.lan-room-mode {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.lan-room-map-label {
+    color: #8ea5b9;
+    font-size: 13px;
+}
+.lan-room-select-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+.lan-room-select-wrap::after {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    width: 6px;
+    height: 6px;
+    content: "";
+    pointer-events: none;
+    border-right: 1.5px solid #8fa6ba;
+    border-bottom: 1.5px solid #8fa6ba;
+    transform: translateY(-70%) rotate(45deg);
+}
+.lan-room-select {
+    min-width: 122px;
+    padding: 8px 32px 8px 12px;
+    border: 1px solid rgba(137, 185, 225, 0.12);
+    border-radius: 8px;
+    outline: none;
+    appearance: none;
+    color: #e7f1f8;
+    background: rgba(255, 255, 255, 0.035);
+    font: 700 12px "Microsoft YaHei", Arial, sans-serif;
+    cursor: pointer;
+    transition: border-color 0.16s, background 0.16s;
+}
+.lan-room-select:hover:not(:disabled),
+.lan-room-select:focus-visible {
+    border-color: rgba(255, 210, 74, 0.45);
+    background: rgba(255, 255, 255, 0.055);
+}
+.lan-room-select:disabled {
+    color: #b8cadb;
+    cursor: default;
+    opacity: 1;
+    -webkit-text-fill-color: #b8cadb;
+}
+.lan-room-select option {
+    color: #e7f1f8;
+    background: #0d1a27;
+}
 
 .lan-share-invite {
     margin-bottom: 18px;
@@ -249,7 +312,7 @@
     margin-bottom: 9px;
     border: 1px solid rgba(255, 255, 255, 0.075);
     border-radius: 10px;
-    background: rgba(0, 0, 0, 0.22);
+    background: rgba(255, 255, 255, 0.035);
     transition: border-color 0.16s, background 0.16s;
 }
 .lan-player-row.me {
@@ -346,7 +409,7 @@
     color: #51687c;
     border: 1px dashed rgba(255, 255, 255, 0.08);
     border-radius: 10px;
-    background: rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.018);
     font-size: 11px;
 }
 .lan-empty-icon {

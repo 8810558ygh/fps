@@ -16,6 +16,8 @@ const LAN = {
     lastStateSentAt: 0,
     lastRoundKey: null,
     spectateNetId: null,
+    spectateWeaponKey: null,
+    spectateViewWeapon: null,
     lastDeathNoticeAt: 0,
     lastSavedMatchId: null,
     roundReportCache: null,
@@ -33,6 +35,17 @@ const LAN_TEAM_COLORS = {
     blue: 0x3a7bd5,
     red: 0xd54a3a,
 };
+
+const LAN_MAP_NAMES = Object.freeze({
+    battlefield: '战场',
+    desert: '沙漠',
+    indoor_complex: '设备间',
+});
+
+const LAN_ROOM_MODE_NAMES = Object.freeze({
+    team: '团队作战',
+    survival: '生存模式',
+});
 
 const LAN_SPAWN_OFFSETS = [
     [0, 0],
@@ -217,6 +230,33 @@ function _lanHandleReconnected(msg) {
     lanNotify('已重新连接本局游戏', 1800);
 }
 
+function _lanSyncRoomMap(room, isOwner) {
+    const picker = _lanEl('lanRoomMap');
+    const select = _lanEl('lanRoomMapSelect');
+    if (!picker || !select) return;
+
+    const canEdit = isOwner && room.phase === 'lobby';
+    picker.classList.toggle('readonly', !canEdit);
+    picker.setAttribute('aria-label', `当前地图：${LAN_MAP_NAMES[room.mapId] || room.mapId}`);
+    select.value = room.mapId;
+    select.disabled = !canEdit;
+    select.title = canEdit ? '选择地图，所有成员会实时同步' : '地图由房主设置';
+}
+
+function _lanSyncRoomMode(room, isOwner) {
+    const picker = _lanEl('lanRoomMode');
+    const select = _lanEl('lanRoomModeSelect');
+    if (!picker || !select) return;
+
+    const canEdit = isOwner && room.phase === 'lobby';
+    const mode = room.mode || 'team';
+    picker.classList.toggle('readonly', !canEdit);
+    picker.setAttribute('aria-label', `当前模式：${LAN_ROOM_MODE_NAMES[mode] || mode}`);
+    select.value = mode;
+    select.disabled = !canEdit;
+    select.title = canEdit ? '选择房间模式，所有成员会实时同步' : '模式由房主设置';
+}
+
 function _lanRenderLobby(room) {
     LAN.room = room;
     if (!room) return;
@@ -226,17 +266,8 @@ function _lanRenderLobby(room) {
     const codeEl = _lanEl('lanRoomCode');
     if (codeEl) codeEl.textContent = room.code;
 
-    const mapNames = {
-        battlefield: '战场',
-        desert: '沙漠',
-        indoor_complex: '设备间',
-    };
-    const mapEl = _lanEl('lanRoomMap');
-    if (mapEl) mapEl.textContent = `地图：${mapNames[room.mapId] || room.mapId}`;
-
-    const owner = room.players.find(p => p.id === room.ownerId);
-    const ownerEl = _lanEl('lanRoomOwner');
-    if (ownerEl) ownerEl.textContent = `房主：${owner ? owner.name : '-'}`;
+    _lanSyncRoomMap(room, isOwner);
+    _lanSyncRoomMode(room, isOwner);
     const pingEl = _lanEl('lanRoomPing');
     if (pingEl) pingEl.textContent = `延迟：${LANNET.latency || '-'}ms`;
     _lanUpdateRoomInvite(room, isOwner);
@@ -289,8 +320,10 @@ function _lanRenderLobby(room) {
         const blueCount = room.players.filter(p => p.team === 'blue').length;
         const redCount = room.players.filter(p => p.team === 'red').length;
         const allReady = room.players.length >= 2 && room.players.every(p => p.ready);
+        const modeSupported = (room.mode || 'team') === 'team';
         _lanEl('lanStartBtn').style.display = isOwner ? '' : 'none';
-        _lanEl('lanStartBtn').disabled = !(blueCount > 0 && redCount > 0 && allReady);
+        _lanEl('lanStartBtn').disabled = !(blueCount > 0 && redCount > 0 && allReady && modeSupported);
+        _lanEl('lanStartBtn').title = modeSupported ? '' : '生存模式暂未开放';
     }
 }
 
@@ -343,6 +376,26 @@ function _lanCreateRoom() {
     const mapId = typeof getCurrentMapId === 'function' ? getCurrentMapId() : 'battlefield';
     if (!LANNET.send({ type: 'createRoom', mapId })) {
         _lanSetRoomMessage('尚未连接局域网服务器');
+    }
+}
+
+function _lanSetRoomMap(mapId) {
+    const room = LAN.room;
+    if (!room || room.ownerId !== LAN.selfId || room.phase !== 'lobby') return;
+    if (!LAN_MAP_NAMES[mapId] || room.mapId === mapId) return;
+    if (!LANNET.send({ type: 'setMap', mapId })) {
+        _lanSetRoomMessage('地图修改失败：尚未连接局域网服务器');
+        _lanSyncRoomMap(room, true);
+    }
+}
+
+function _lanSetRoomMode(mode) {
+    const room = LAN.room;
+    if (!room || room.ownerId !== LAN.selfId || room.phase !== 'lobby') return;
+    if (!LAN_ROOM_MODE_NAMES[mode] || (room.mode || 'team') === mode) return;
+    if (!LANNET.send({ type: 'setMode', mode })) {
+        _lanSetRoomMessage('模式修改失败：尚未连接局域网服务器');
+        _lanSyncRoomMode(room, true);
     }
 }
 
@@ -409,6 +462,23 @@ function _lanBindUI() {
         lanShowLobby();
     });
 
+    const mapSelect = _lanEl('lanRoomMapSelect');
+    mapSelect?.addEventListener('change', () => {
+        if (typeof audio === 'function') audio();
+        _lanSetRoomMap(mapSelect.value);
+    });
+
+    const modeSelect = _lanEl('lanRoomModeSelect');
+    modeSelect?.addEventListener('change', () => {
+        if (typeof audio === 'function') audio();
+        _lanSetRoomMode(modeSelect.value);
+        if (modeSelect.value === 'survival') {
+            _lanSetRoomMessage('生存模式暂未开放，切回团队作战后可开始比赛');
+        } else {
+            _lanSetRoomMessage('');
+        }
+    });
+
     const codeInput = _lanEl('lanRoomCodeInput');
     if (codeInput) {
         codeInput.addEventListener('keydown', e => {
@@ -443,7 +513,6 @@ function _lanDisposeRemote(player) {
             for (const material of materials) {
                 if (material
                     && material !== player.mat
-                    && material !== LAN_REMOTE_WEAPON_MAT
                     && material !== (typeof DARK_MAT !== 'undefined' ? DARK_MAT : null)) {
                     material.dispose();
                 }
@@ -461,8 +530,6 @@ function _lanClearRemotes() {
     LAN.playerStates.clear();
 }
 
-const LAN_REMOTE_WEAPON_MAT = new THREE.MeshLambertMaterial({ color: 0x202a32 });
-
 function _lanDisposeWeaponModel(root, player) {
     if (!root) return;
     root.traverse(object => {
@@ -472,7 +539,6 @@ function _lanDisposeWeaponModel(root, player) {
         for (const material of materials) {
             if (material
                 && material !== player.mat
-                && material !== LAN_REMOTE_WEAPON_MAT
                 && material !== (typeof DARK_MAT !== 'undefined' ? DARK_MAT : null)) {
                 material.dispose();
             }
@@ -480,7 +546,7 @@ function _lanDisposeWeaponModel(root, player) {
     });
 }
 
-function _lanInstallSimpleWeapon(player) {
+function _lanInstallSimpleWeapon(player, weaponKey = 'rifle') {
     if (!player || !player.gunHolder) return;
     while (player.gunHolder.children.length) {
         const child = player.gunHolder.children[0];
@@ -495,15 +561,16 @@ function _lanInstallSimpleWeapon(player) {
         }
     }
 
-    const weapon = new THREE.Mesh(
-        new THREE.BoxGeometry(0.13, 0.13, 0.62),
-        LAN_REMOTE_WEAPON_MAT
-    );
-    weapon.position.z = -0.22;
-    weapon.castShadow = false;
-    weapon.receiveShadow = false;
+    const weapon = makeWeaponModel(weaponKey, player.mat, { useHd: false });
+    if (!weapon) return;
+    weapon.traverse(object => {
+        if (!object.isMesh) return;
+        object.castShadow = false;
+        object.receiveShadow = false;
+    });
     player.gunHolder.add(weapon);
     player._lanSimpleWeapon = weapon;
+    player._lanSimpleWeaponKey = weaponKey;
     player.gunHolder.visible = true;
     if (player._lanRemote && player.muzzle) player.muzzle.visible = false;
 }
@@ -525,7 +592,7 @@ function _lanEnsureRemote(state) {
     player.name = state.name;
     player._lanRemote = true;
     player._shadowDisabled = true;
-    _lanInstallSimpleWeapon(player);
+    _lanInstallSimpleWeapon(player, state.weapon || 'rifle');
     player.mesh.traverse(o => { if (o.isMesh) o.castShadow = false; });
     player._netTargetPos = player.pos.clone();
     player._netTargetYaw = player.yaw;
@@ -560,6 +627,8 @@ function _lanApplyRoundSpawn(players) {
             p1.mat.color.setHex(_lanTeamColor(state.team));
             _lanPrepareHitMeshes(p1);
             LAN.spectateNetId = null;
+            _lanClearSpectatorViewModel();
+            setWeapon(p1, p1.primaryWeaponKey || 'rifle');
         } else {
             const remote = _lanEnsureRemote(state);
             remote.pos.set(spawn.x, terrainGroundAt(spawn.x, spawn.z), spawn.z);
@@ -646,7 +715,11 @@ function _lanSyncRemote(state) {
     player.deadUntil = player.baseVisible ? 0 : Infinity;
     player.mesh.visible = player.baseVisible;
 
-    player.weaponKey = state.weapon || player.weaponKey;
+    const weaponKey = state.weapon || player.weaponKey || 'rifle';
+    if (player._lanSimpleWeaponKey !== weaponKey) {
+        _lanInstallSimpleWeapon(player, weaponKey);
+    }
+    player.weaponKey = weaponKey;
     player.isMelee = state.weapon === 'knife';
     player.isSmoke = state.weapon === 'smoke';
     player.isFlash = state.weapon === 'flash';
@@ -672,9 +745,12 @@ function _lanUpdateHUD(msg) {
 
     const timer = _lanEl('lanRoundTimer');
     if (timer) {
-        const seconds = Math.max(0, msg.phaseRemain / 1000).toFixed(1);
-        timer.textContent = msg.phase === 'prep' ? `准备 ${seconds}s`
-            : msg.phase === 'round' ? `战斗 ${seconds}s`
+        const totalSeconds = Math.max(0, Math.ceil((msg.phaseRemain || 0) / 1000));
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        const countdown = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        timer.textContent = msg.phase === 'prep' ? `准备 ${countdown}`
+            : msg.phase === 'round' ? `战斗 ${countdown}`
             : msg.phase === 'roundEnd' ? '回合结束'
             : '比赛结束';
     }
@@ -697,6 +773,7 @@ function _lanHandleSnapshot(msg) {
             LAN.playerStates.delete(id);
         }
     }
+    if (p1.deadUntil === Infinity) _lanEnsureSpectateTarget();
 
     LAN.phase = msg.phase;
     LAN.round = msg.round;
@@ -999,6 +1076,11 @@ function LAN_mainTick(dt, now) {
                 : (p1.isSmoke ? 'smoke'
                 : (p1.isFlash ? 'flash'
                 : (p1.isMedkit ? 'medkit' : p1.weaponKey))),
+            aiming: !!p1.aiming,
+            reloadRemain: Math.max(0, p1.reloadEnd - now),
+            boltRemain: Math.max(0, p1.boltEnd - now),
+            meleeRemain: Math.max(0, p1.meleeEnd - now),
+            meleeHeavy: !!p1.meleeIsHeavy,
             crouching: p1.height < HEIGHT_STAND - 0.1,
         });
     }
@@ -1037,28 +1119,123 @@ function LAN_getEnemies(player) {
     return result;
 }
 
-function LAN_getAliveTeammate() {
+function LAN_getAliveTeammates() {
     const myTeam = p1.team;
-    let result = null;
+    const result = [];
     LAN_foreachRemote(remote => {
-        if (!result && remote.team === myTeam && remote.baseVisible && remote.hp > 0) {
-            result = remote;
+        const state = LAN.playerStates.get(remote.netId);
+        if (remote.team === myTeam
+            && state?.alive
+            && state.connected !== false
+            && remote.baseVisible
+            && remote.hp > 0) {
+            result.push(remote);
         }
     });
     return result;
 }
 
+function _lanBuildSpectatorViewModel(weaponKey) {
+    if (!p1.vm || typeof makeViewmodel !== 'function') return;
+    if (LAN.spectateWeaponKey === weaponKey && LAN.spectateViewWeapon) return;
+    while (p1.vm.children.length) {
+        const child = p1.vm.children[0];
+        p1.vm.remove(child);
+    }
+    const weapon = makeViewmodel(weaponKey, p1.mat);
+    if (!weapon) return;
+    p1.vm.add(weapon);
+    LAN.spectateViewWeapon = weapon;
+    LAN.spectateWeaponKey = weaponKey;
+}
+
+function _lanClearSpectatorViewModel() {
+    if (p1.vm) {
+        while (p1.vm.children.length) {
+            const child = p1.vm.children[0];
+            p1.vm.remove(child);
+        }
+    }
+    LAN.spectateViewWeapon = null;
+    LAN.spectateWeaponKey = null;
+}
+
+function _lanChooseRandomSpectateTarget(excludeId = null) {
+    const teammates = LAN_getAliveTeammates();
+    if (teammates.length === 0) return null;
+    const alternatives = teammates.filter(player => player.netId !== excludeId);
+    const pool = alternatives.length > 0 ? alternatives : teammates;
+    return pool[Math.floor(Math.random() * pool.length)] || pool[0];
+}
+
+function _lanEnsureSpectateTarget(notify = true) {
+    if (!LAN.active || p1.deadUntil !== Infinity) return null;
+    const teammates = LAN_getAliveTeammates();
+    if (teammates.length === 0) {
+        LAN.spectateNetId = null;
+        p1.vm.visible = false;
+        return null;
+    }
+    let target = teammates.find(player => player.netId === LAN.spectateNetId);
+    if (!target) {
+        target = _lanChooseRandomSpectateTarget();
+        LAN.spectateNetId = target ? target.netId : null;
+        LAN.spectateWeaponKey = null;
+        if (target && notify) {
+            lanNotify(`正在观战：${target.name || '队友'} · 左键切换`, 1800);
+        }
+    }
+    return target;
+}
+
+function LAN_cycleSpectateTarget() {
+    if (!LAN.active || p1.deadUntil !== Infinity) return;
+    const next = _lanChooseRandomSpectateTarget(LAN.spectateNetId);
+    if (!next) {
+        lanNotify('没有仍存活的队友');
+        return;
+    }
+    LAN.spectateNetId = next.netId;
+    LAN.spectateWeaponKey = null;
+    lanNotify(`观战目标：${next.name || '队友'}`, 1300);
+}
+
 function LAN_updateSpectatorCamera(dt, now) {
     if (!LAN.active || p1.deadUntil !== Infinity) return;
-    const target = LAN_getAliveTeammate();
+    const target = _lanEnsureSpectateTarget();
     if (!target) return;
+    const state = LAN.playerStates.get(target.netId);
+    if (!state) return;
 
     const eyeY = target.pos.y + target.eyeH;
     p1.cam.position.set(target.pos.x, eyeY, target.pos.z);
     p1.cam.rotation.y = target.yaw;
     p1.cam.rotation.x = target.pitch;
-    if (p1.vm) p1.vm.visible = false;
+
+    const weaponKey = state.weapon || 'rifle';
+    _lanBuildSpectatorViewModel(weaponKey);
+    p1.weaponKey = weaponKey;
+    p1.weapon = weaponKey === 'knife' ? MELEE
+        : weaponKey === 'smoke' ? SMOKE
+        : weaponKey === 'flash' ? FLASH
+        : weaponKey === 'medkit' ? MEDKIT
+        : (getWeaponConfig(weaponKey) || getWeaponConfig('rifle'));
+    p1.isMelee = weaponKey === 'knife';
+    p1.isSmoke = weaponKey === 'smoke';
+    p1.isFlash = weaponKey === 'flash';
+    p1.isMedkit = weaponKey === 'medkit';
+    p1.aiming = !!state.aiming && !p1.isMelee && !p1.isSmoke && !p1.isFlash;
+    p1.reloadEnd = now + (state.reloadRemain || 0);
+    p1.boltEnd = now + (state.boltRemain || 0);
+    p1.meleeEnd = now + (state.meleeRemain || 0);
+    p1.meleeIsHeavy = !!state.meleeHeavy;
+    if (p1.vm) p1.vm.visible = true;
+    if (typeof updateSniperViewmodel === 'function') {
+        updateSniperViewmodel(p1, dt, now);
+    }
 }
+
+window.LAN_cycleSpectateTarget = LAN_cycleSpectateTarget;
 
 function LAN_onLocalShot(hits, weaponKey, visual) {
     if (!LAN.active) return;
