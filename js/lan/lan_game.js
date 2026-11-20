@@ -27,6 +27,7 @@ const LAN = {
     inviteUrl: '',
     reconnectPending: false,
     hostExitHandled: false,
+    returnedToRoom: false,
     connectionLostTimer: 0,
 };
 
@@ -229,6 +230,7 @@ function _lanHandleReconnected(msg) {
     LAN.connectionLostTimer = 0;
     LAN.reconnectPending = false;
     LAN.hostExitHandled = false;
+    LAN.returnedToRoom = false;
     LAN.active = true;
     LAN.selfId = msg.id || LAN.selfId;
     if (msg.room) {
@@ -248,12 +250,16 @@ function _lanSyncRoomMap(room, isOwner) {
     const select = _lanEl('lanRoomMapSelect');
     if (!picker || !select) return;
 
-    const canEdit = isOwner && room.phase === 'lobby';
+    const survival = room.mode === 'survival';
+    const canEdit = isOwner && room.phase === 'lobby' && !survival;
+    const mapId = survival ? 'battlefield' : room.mapId;
     picker.classList.toggle('readonly', !canEdit);
-    picker.setAttribute('aria-label', `当前地图：${LAN_MAP_NAMES[room.mapId] || room.mapId}`);
-    select.value = room.mapId;
+    picker.setAttribute('aria-label', `当前地图：${LAN_MAP_NAMES[mapId] || mapId}`);
+    select.value = mapId;
     select.disabled = !canEdit;
-    select.title = canEdit ? '选择地图，所有成员会实时同步' : '地图由房主设置';
+    select.title = survival
+        ? '生存模式固定从战场开始'
+        : (canEdit ? '选择地图，所有成员会实时同步' : '地图由房主设置');
 }
 
 function _lanSyncRoomMode(room, isOwner) {
@@ -277,6 +283,7 @@ function _lanRenderLobby(room) {
     const me = room.players.find(p => p.id === LAN.selfId);
     const isOwner = room.ownerId === LAN.selfId;
     const survival = (room.mode || 'team') === 'survival';
+    const lobbyActive = room.phase === 'lobby';
     if (_lanEl('lanLobbySubtitle')) {
         _lanEl('lanLobbySubtitle').textContent = survival
             ? '单队合作 · 最多 10 人 · 波次生存'
@@ -301,6 +308,8 @@ function _lanRenderLobby(room) {
     if (blueTitle) blueTitle.textContent = survival ? '生 存 小 队' : '蓝 队';
     if (_lanEl('lanSwitchBlue')) _lanEl('lanSwitchBlue').style.display = survival ? 'none' : '';
     if (_lanEl('lanSwitchRed')) _lanEl('lanSwitchRed').style.display = survival ? 'none' : '';
+    if (_lanEl('lanSwitchBlue')) _lanEl('lanSwitchBlue').disabled = !lobbyActive;
+    if (_lanEl('lanSwitchRed')) _lanEl('lanSwitchRed').disabled = !lobbyActive;
 
     for (const team of (survival ? ['blue'] : ['blue', 'red'])) {
         const list = _lanEl(team === 'blue' ? 'lanBlueList' : 'lanRedList');
@@ -347,6 +356,7 @@ function _lanRenderLobby(room) {
 
     if (_lanEl('lanReadyBtn')) {
         _lanEl('lanReadyBtn').textContent = me && me.ready ? '取消准备' : '准 备';
+        _lanEl('lanReadyBtn').disabled = !lobbyActive;
     }
     if (_lanEl('lanStartBtn')) {
         const blueCount = survival ? room.players.length : room.players.filter(p => p.team === 'blue').length;
@@ -355,7 +365,8 @@ function _lanRenderLobby(room) {
         const enoughPlayers = survival ? room.players.length >= 1 : room.players.length >= 2;
         const readyForMode = survival ? room.players.every(p => p.ready) : allReady;
         _lanEl('lanStartBtn').style.display = isOwner ? '' : 'none';
-        _lanEl('lanStartBtn').disabled = !(blueCount > 0 && redCount > 0 && enoughPlayers && readyForMode);
+        _lanEl('lanStartBtn').disabled = !lobbyActive
+            || !(blueCount > 0 && redCount > 0 && enoughPlayers && readyForMode);
         _lanEl('lanStartBtn').title = '';
     }
 }
@@ -415,6 +426,7 @@ function _lanCreateRoom() {
 function _lanSetRoomMap(mapId) {
     const room = LAN.room;
     if (!room || room.ownerId !== LAN.selfId || room.phase !== 'lobby') return;
+    if (room.mode === 'survival') return;
     if (!LAN_MAP_NAMES[mapId] || room.mapId === mapId) return;
     if (!LANNET.send({ type: 'setMap', mapId })) {
         _lanSetRoomMessage('地图修改失败：尚未连接局域网服务器');
@@ -846,6 +858,7 @@ function lanStartMatch(mapId, mode = 'team') {
     LAN.lastSavedMatchId = null;
     LAN.reconnectPending = false;
     LAN.hostExitHandled = false;
+    LAN.returnedToRoom = false;
     _lanHideRoundReport(true);
 
     _lanHideLobby();
@@ -922,6 +935,7 @@ function _lanSaveMatchResult(msg) {
 function _lanMatchEnd(msg) {
     _lanSaveMatchResult(msg);
     _lanHideRoundReport(true);
+    LAN.returnedToRoom = false;
     running = false;
     gameState = 'idle';
     if (typeof SETTINGS_ApplyGraphics === 'function') SETTINGS_ApplyGraphics(true);
@@ -939,12 +953,29 @@ function _lanMatchEnd(msg) {
     }
     if (_lanEl('lanEndScore')) _lanEl('lanEndScore').textContent = `${msg.blueScore} : ${msg.redScore}`;
     if (_lanEl('lanReturnRoomBtn')) {
-        _lanEl('lanReturnRoomBtn').disabled = !(LAN.room && LAN.room.ownerId === LAN.selfId);
-        _lanEl('lanReturnRoomBtn').textContent = _lanEl('lanReturnRoomBtn').disabled
-            ? '等待房主返回房间' : '返回房间';
+        _lanEl('lanReturnRoomBtn').disabled = false;
+        _lanEl('lanReturnRoomBtn').textContent = '返回房间';
     }
     if (_lanEl('lanEndOverlay')) _lanEl('lanEndOverlay').style.display = 'flex';
     document.body.classList.remove('in-game');
+}
+
+function _lanHandleReturnedToLobby(msg) {
+    running = false;
+    gameState = 'idle';
+    LAN.active = false;
+    LAN.returnedToRoom = true;
+    if (msg.room) LAN.room = msg.room;
+    if (document.pointerLockElement) document.exitPointerLock();
+    if (_lanEl('lanEndOverlay')) _lanEl('lanEndOverlay').style.display = 'none';
+    if (_lanEl('lanMatchHud')) _lanEl('lanMatchHud').style.display = 'none';
+    if (_lanEl('lanScoreboard')) _lanEl('lanScoreboard').style.display = 'none';
+    if (_lanEl('timer')) _lanEl('timer').style.display = '';
+    if (_lanEl('lobbyOverlay')) _lanEl('lobbyOverlay').style.display = 'none';
+    document.body.classList.remove('in-game');
+    _lanShowRoom();
+    if (LAN.room) _lanRenderLobby(LAN.room);
+    _lanSetRoomMessage('');
 }
 
 function _lanHandleEvent(msg) {
@@ -1036,6 +1067,10 @@ window.LAN_handleMessage = function (msg) {
         _lanHandleReconnected(msg);
         return;
     }
+    if (msg.type === 'returnedToLobby') {
+        _lanHandleReturnedToLobby(msg);
+        return;
+    }
     if (msg.type === 'error') {
         _lanSetRoomMessage(msg.message || '操作失败');
         return;
@@ -1047,6 +1082,10 @@ window.LAN_handleMessage = function (msg) {
         LAN.hostExitHandled = false;
         LAN.room = msg.room;
         if (msg.room && msg.room.phase === 'lobby') {
+            const stillOnMatchEnd = _lanEl('lanEndOverlay')
+                && _lanEl('lanEndOverlay').style.display === 'flex'
+                && !LAN.returnedToRoom;
+            if (stillOnMatchEnd) return;
             LAN.active = false;
             if (LAN.mode === 'survival' && typeof LAN_SURVIVAL_stop === 'function') {
                 LAN_SURVIVAL_stop();
@@ -1054,6 +1093,8 @@ window.LAN_handleMessage = function (msg) {
             if (running) return;
             if (_lanEl('lanMatchHud')) _lanEl('lanMatchHud').style.display = 'none';
             if (_lanEl('timer')) _lanEl('timer').style.display = '';
+            if (_lanEl('lanEndOverlay')) _lanEl('lanEndOverlay').style.display = 'none';
+            _lanSetRoomMessage('');
             _lanShowRoom();
             _lanRenderLobby(msg.room);
         }

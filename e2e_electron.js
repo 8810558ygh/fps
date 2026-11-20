@@ -547,6 +547,23 @@ async function main() {
       || !roomModeSync[0].startDisabled) {
     throw new Error(`Room mode permissions or UI did not sync: ${JSON.stringify(roomModeSync)}`);
   }
+  const survivalMapLock = await Promise.all([
+    host.evaluate(`({
+      roomMap: LAN.room.mapId,
+      selectedMap: document.getElementById('lanRoomMapSelect').value,
+      disabled: document.getElementById('lanRoomMapSelect').disabled
+    })`),
+    joiner.evaluate(`({
+      roomMap: LAN.room.mapId,
+      selectedMap: document.getElementById('lanRoomMapSelect').value,
+      disabled: document.getElementById('lanRoomMapSelect').disabled
+    })`),
+  ]);
+  if (survivalMapLock.some(state => state.roomMap !== 'battlefield'
+      || state.selectedMap !== 'battlefield'
+      || !state.disabled)) {
+    throw new Error(`Survival map was not locked to battlefield: ${JSON.stringify(survivalMapLock)}`);
+  }
 
   await joiner.evaluate("LANNET.send({ type: 'setMode', mode: 'team' }); true");
   await sleep(300);
@@ -944,21 +961,51 @@ async function main() {
   `);
   const hostTeam = statsPlayers.find(player => player.id === hostSelfId).team;
   const matchId = `e2e-${Date.now()}`;
-  await host.evaluate(`
-    LAN_handleMessage(${JSON.stringify({
-      type: 'matchEnd',
-      matchId,
-      winnerTeam: hostTeam,
-      blueScore: 10,
-      redScore: 4,
-      mapId: 'battlefield',
-      rounds: 14,
-      playedAt: new Date().toISOString(),
-      durationMs: 90000,
-      players: statsPlayers,
-    })});
+  const matchEndPayload = {
+    type: 'matchEnd',
+    matchId,
+    winnerTeam: hostTeam,
+    blueScore: 10,
+    redScore: 4,
+    mapId: 'battlefield',
+    rounds: 14,
+    playedAt: new Date().toISOString(),
+    durationMs: 90000,
+    players: statsPlayers,
+  };
+  await Promise.all([
+    host.evaluate(`LAN_handleMessage(${JSON.stringify(matchEndPayload)}); true`),
+    joiner.evaluate(`LAN_handleMessage(${JSON.stringify(matchEndPayload)}); true`),
+  ]);
+  const returnButtonUi = await Promise.all([
+    host.evaluate(`({
+      text: document.getElementById('lanReturnRoomBtn').textContent,
+      disabled: document.getElementById('lanReturnRoomBtn').disabled
+    })`),
+    joiner.evaluate(`({
+      text: document.getElementById('lanReturnRoomBtn').textContent,
+      disabled: document.getElementById('lanReturnRoomBtn').disabled
+    })`),
+  ]);
+  if (returnButtonUi.some(ui => ui.text !== '返回房间' || ui.disabled)) {
+    throw new Error(`Return-to-room button is not available for every player: ${JSON.stringify(returnButtonUi)}`);
+  }
+  await joiner.evaluate(`
+    _lanHandleReturnedToLobby({
+      room: { ...LAN.room, phase: 'lobby' }
+    });
     true;
   `);
+  const returnedRoomUi = await joiner.evaluate(`({
+    endVisible: document.getElementById('lanEndOverlay').style.display !== 'none',
+    roomVisible: document.getElementById('lanRoomSection').style.display !== 'none',
+    readyDisabled: document.getElementById('lanReadyBtn').disabled,
+    teamSwitchDisabled: document.getElementById('lanSwitchBlue').disabled
+  })`);
+  if (returnedRoomUi.endVisible || !returnedRoomUi.roomVisible
+      || returnedRoomUi.readyDisabled || returnedRoomUi.teamSwitchDisabled) {
+    throw new Error(`Player did not return to an actionable room: ${JSON.stringify(returnedRoomUi)}`);
+  }
   const matchesFile = path.join(dataDirectories.get('host'), 'matches.json');
   const storedMatch = await waitFor(() => {
     const stored = JSON.parse(fs.readFileSync(matchesFile, 'utf8'));
@@ -1032,6 +1079,40 @@ async function main() {
       'joiner survival start'
     ),
   ]);
+  await waitForPageExpression(
+    host,
+    '!document.querySelector("#hud1 .centermsg").textContent.includes("回合")',
+    4000,
+    'survival center text'
+  );
+  await host.evaluate(`
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'KeyB',
+      bubbles: true,
+      cancelable: true
+    }));
+    true;
+  `);
+  await waitForPageExpression(
+    host,
+    'document.getElementById("survivalShop").style.display === "flex" && document.getElementById("weaponPanel").style.display !== "flex"',
+    3000,
+    'survival shop B key'
+  );
+  await host.evaluate(`
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'KeyB',
+      bubbles: true,
+      cancelable: true
+    }));
+    true;
+  `);
+  await waitForPageExpression(
+    host,
+    'document.getElementById("survivalShop").style.display === "none"',
+    3000,
+    'survival shop close'
+  );
 
   await Promise.all([
     waitForPageExpression(host, 'SurvivalState.phase === "wave" && SurvivalState.wave === 1', 20000, 'survival wave 1'),
@@ -1078,6 +1159,44 @@ async function main() {
     LAN_SURVIVAL_STATE.lastWaveClearSent = SurvivalState.wave;
     return true;
   })()`);
+  await joiner.evaluate(`
+    if (typeof clearDamageNumbers === 'function') clearDamageNumbers();
+    true;
+  `);
+  const damageNumberTest = await host.evaluate(`(() => {
+    if (typeof clearDamageNumbers === 'function') clearDamageNumbers();
+    p1.yaw = 0;
+    p1.pitch = 0;
+    p1.cam.rotation.y = 0;
+    p1.cam.rotation.x = 0;
+    p1.cam.position.set(p1.pos.x, p1.pos.y + p1.eyeH, p1.pos.z);
+    p1.cam.updateMatrixWorld(true);
+    const zombie = spawnZombie(p1.pos.x, p1.pos.z - 2, SurvivalState.wave, 'normal');
+    if (!zombie) return { spawned: false, numbers: 0 };
+    zombie.netId = 'local-damage-test';
+    zombie.pos.set(p1.pos.x, p1.pos.y, p1.pos.z - 2);
+    zombie.mesh.position.copy(zombie.pos);
+    zombie.mesh.updateMatrixWorld(true);
+    LAN_tryFire(p1, performance.now() + 5000, WEAPONS.rifle);
+    return {
+      spawned: true,
+      numbers: document.querySelectorAll('#damageNumbers .dmg-number').length
+    };
+  })()`);
+  if (!damageNumberTest.spawned || damageNumberTest.numbers < 1) {
+    throw new Error(`Local zombie damage number missing: ${JSON.stringify(damageNumberTest)}`);
+  }
+  const remoteDamageNumbers = await joiner.evaluate(
+    'document.querySelectorAll("#damageNumbers .dmg-number").length'
+  );
+  if (remoteDamageNumbers !== 0) {
+    throw new Error(`Remote zombie damage numbers leaked to another player: ${remoteDamageNumbers}`);
+  }
+  await host.evaluate(`
+    if (typeof clearDamageNumbers === 'function') clearDamageNumbers();
+    clearAllZombies();
+    true;
+  `);
 
   const joinerRoomId = await host.evaluate(
     "LAN.room.players.find(player => player.name === '测试玩家B').id"
@@ -1097,6 +1216,12 @@ async function main() {
     'Math.abs(LAN.playerStates.get(LAN.selfId).hp - 50) <= 2',
     4000,
     'joiner wounded for heal'
+  );
+  await waitForPageExpression(
+    joiner,
+    'LAN_SURVIVAL_STATE.lastDamageFlashAt > 0',
+    3000,
+    'survival incoming damage flash'
   );
   await host.evaluate(`(() => {
     const target = LAN.playerStates.get(${JSON.stringify(joinerRoomId)});
@@ -1278,6 +1403,21 @@ async function main() {
     4000,
     'downed body pose'
   );
+  await joiner.evaluate(`
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'KeyB',
+      bubbles: true,
+      cancelable: true
+    }));
+    true;
+  `);
+  const downedBKeyUi = await joiner.evaluate(`({
+    shop: document.getElementById('survivalShop').style.display,
+    weaponPanel: document.getElementById('weaponPanel').style.display
+  })`);
+  if (downedBKeyUi.shop === 'flex' || downedBKeyUi.weaponPanel === 'flex') {
+    throw new Error(`Downed B key opened an invalid panel: ${JSON.stringify(downedBKeyUi)}`);
+  }
 
   await host.evaluate(`(() => {
     const target = LAN.models.get(${JSON.stringify(joinerRoomId)});
@@ -1287,11 +1427,47 @@ async function main() {
   })()`);
   await sleep(300);
   await host.evaluate('keys.KeyE = true; true');
+  await sleep(1000);
+  const rescueNotInstant = await joiner.evaluate(
+    'LAN.playerStates.get(LAN.selfId).downed === true'
+  );
+  if (!rescueNotInstant) {
+    throw new Error('Rescue completed before the five-second timer');
+  }
   await waitForPageExpression(
     joiner,
     'LAN.playerStates.get(LAN.selfId).downed === false && LAN.playerStates.get(LAN.selfId).hp === 30',
     8000,
     'five second revive'
+  );
+  await host.evaluate('keys.KeyE = false; true');
+
+  await host.evaluate(`LANNET.send({
+    type: 'survivalZombieAttack',
+    targetId: ${JSON.stringify(joinerRoomId)},
+    damage: 500
+  });
+  LANNET.send({
+    type: 'survivalZombieAttack',
+    targetId: ${JSON.stringify(joinerRoomId)},
+    damage: 500
+  }); true`);
+  await waitForPageExpression(
+    joiner,
+    'LAN.playerStates.get(LAN.selfId).downed === true',
+    5000,
+    'joiner downed for repeat rescue'
+  );
+  await host.evaluate('keys.KeyE = true; true');
+  await sleep(1000);
+  if (!(await joiner.evaluate('LAN.playerStates.get(LAN.selfId).downed === true'))) {
+    throw new Error('Repeated rescue completed too early');
+  }
+  await waitForPageExpression(
+    joiner,
+    'LAN.playerStates.get(LAN.selfId).downed === false && LAN.playerStates.get(LAN.selfId).hp === 30',
+    8000,
+    'repeat rescue completed'
   );
   await host.evaluate('keys.KeyE = false; true');
 
@@ -1410,12 +1586,74 @@ async function main() {
   ]);
   const survivalTest = {
     zombieNetIds: Array.from(hostIds),
+    damageNumberTest,
+    remoteDamageNumbers,
+    damageFlashAt: await joiner.evaluate('LAN_SURVIVAL_STATE.lastDamageFlashAt'),
     teammateHealTest,
     healRangeInterrupt,
     summary: survivalSummaryUi,
     mapAfterPortal: await host.evaluate('getCurrentMapId()'),
     autoReviveHp: await joiner.evaluate('LAN.playerStates.get(LAN.selfId).hp'),
   };
+  await Promise.all([
+    host.evaluate(`
+      LAN_handleMessage({
+        type: 'survivalEndlessChoice',
+        hostId: LAN.room.ownerId
+      });
+      true;
+    `),
+    joiner.evaluate(`
+      LAN_handleMessage({
+        type: 'survivalEndlessChoice',
+        hostId: LAN.room.ownerId
+      });
+      true;
+    `),
+  ]);
+  const endlessChoiceUi = await Promise.all([
+    host.evaluate(`({
+      visible: document.getElementById('lanEndlessChoiceOverlay').style.display === 'flex',
+      finishEnabled: !document.getElementById('lanEndlessFinishBtn').disabled,
+      continueEnabled: !document.getElementById('lanEndlessContinueBtn').disabled,
+      waitVisible: document.querySelector('#lanEndlessChoiceOverlay .lan-endless-wait').style.display === 'block'
+    })`),
+    joiner.evaluate(`({
+      visible: document.getElementById('lanEndlessChoiceOverlay').style.display === 'flex',
+      actionsVisible: document.querySelector('#lanEndlessChoiceOverlay .lan-endless-actions').style.display !== 'none',
+      waitVisible: document.querySelector('#lanEndlessChoiceOverlay .lan-endless-wait').style.display === 'block'
+    })`),
+  ]);
+  if (!endlessChoiceUi[0].visible || !endlessChoiceUi[0].finishEnabled
+      || !endlessChoiceUi[0].continueEnabled || endlessChoiceUi[0].waitVisible
+      || !endlessChoiceUi[1].visible || endlessChoiceUi[1].actionsVisible
+      || !endlessChoiceUi[1].waitVisible) {
+    throw new Error(`Host endless choice UI is invalid: ${JSON.stringify(endlessChoiceUi)}`);
+  }
+  await host.evaluate("LAN_handleMessage({ type: 'survivalEnd', victory: true }); true");
+  await waitForPageExpression(
+    host,
+    'document.getElementById("survivalEndOverlay").classList.contains("victory") && LAN_SURVIVAL_STATE.lastEndAnimation === "victory"',
+    3000,
+    'victory animation'
+  );
+  const victoryAnimation = await host.evaluate(`({
+    visible: document.getElementById('survivalEndOverlay').style.display === 'flex',
+    className: document.getElementById('survivalEndOverlay').className,
+    choiceHidden: document.getElementById('lanEndlessChoiceOverlay').style.display === 'none'
+  })`);
+  await host.evaluate("LAN_handleMessage({ type: 'survivalEnd', victory: false }); true");
+  const defeatAnimation = await host.evaluate(`({
+    visible: document.getElementById('survivalEndOverlay').style.display === 'flex',
+    className: document.getElementById('survivalEndOverlay').className,
+    marker: LAN_SURVIVAL_STATE.lastEndAnimation
+  })`);
+  if (!victoryAnimation.visible || !victoryAnimation.className.includes('victory')
+      || !victoryAnimation.choiceHidden
+      || !defeatAnimation.visible || !defeatAnimation.className.includes('defeat')
+      || defeatAnimation.marker !== 'defeat') {
+    throw new Error(`Survival end animations failed: ${JSON.stringify({ victoryAnimation, defeatAnimation })}`);
+  }
 
   const result = {
     code,
@@ -1453,7 +1691,12 @@ async function main() {
     performanceWithoutRemotes,
     performanceUnoptimized,
     storedMatch,
+    returnButtonUi,
+    returnedRoomUi,
     survivalTest,
+    endlessChoiceUi,
+    victoryAnimation,
+    defeatAnimation,
     matchStarted: true,
     latency: await joiner.evaluate('LANNET.latency'),
   };

@@ -72,9 +72,15 @@ function LAN_tryFire(p, now, weaponCfg) {
                     let damage = typeof _resolveDamage === 'function'
                         ? _resolveDamage(w, part, hit.distance)
                         : (part === 'head' ? w.dmgHead : part === 'leg' ? w.dmgLeg : w.dmgBody);
+                    let isCrit = false;
                     if (typeof SurvivalStats !== 'undefined'
                         && typeof SurvivalStats.rollDamage === 'function') {
-                        damage = SurvivalStats.rollDamage(damage || 0).dmg;
+                        const roll = SurvivalStats.rollDamage(damage || 0);
+                        damage = roll.dmg;
+                        isCrit = !!roll.isCrit;
+                    }
+                    if (typeof spawnDamageNumber === 'function') {
+                        spawnDamageNumber(hit.point, damage, isCrit);
                     }
                     if (typeof window.LAN_SURVIVAL_handleZombieHit === 'function') {
                         window.LAN_SURVIVAL_handleZombieHit(zombie, damage, part, hit.point);
@@ -197,9 +203,15 @@ function LAN_tryMelee(p, now, isHeavy) {
 
     for (const item of zombieConeTargets) {
         let damage = isHeavy ? MELEE.dmgHeavy : MELEE.dmgLight;
+        let isCrit = false;
         if (typeof SurvivalStats !== 'undefined'
             && typeof SurvivalStats.rollDamage === 'function') {
-            damage = SurvivalStats.rollDamage(damage).dmg;
+            const roll = SurvivalStats.rollDamage(damage);
+            damage = roll.dmg;
+            isCrit = !!roll.isCrit;
+        }
+        if (typeof spawnDamageNumber === 'function') {
+            spawnDamageNumber(item.point, damage, isCrit);
         }
         if (typeof window.LAN_SURVIVAL_handleZombieHit === 'function') {
             window.LAN_SURVIVAL_handleZombieHit(item.target, damage, 'body', item.point);

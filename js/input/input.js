@@ -15,7 +15,9 @@ function _isOnlineClient() {
 
 function _isSurvivalMode() {
     return (typeof gameMode !== 'undefined' && gameMode === 'survival')
-        || (typeof window.IS_SURVIVAL_CONTEXT === 'function' && window.IS_SURVIVAL_CONTEXT());
+        || (typeof window.IS_SURVIVAL_CONTEXT === 'function' && window.IS_SURVIVAL_CONTEXT())
+        || (typeof gameMode !== 'undefined' && gameMode === 'lan'
+            && typeof window.LAN !== 'undefined' && window.LAN.mode === 'survival');
 }
 
 // ============================================================
@@ -226,11 +228,14 @@ window.addEventListener('keydown', e => {
         }
 
         if (e.code === 'KeyB') {
-            if (isSV
-                && typeof window.Shop !== 'undefined'
-                && typeof window.Shop.canOpen === 'function'
-                && window.Shop.canOpen()) {
-                window.Shop.toggle();
+            if (isSV) {
+                if (typeof window.Shop !== 'undefined'
+                    && typeof window.Shop.canOpen === 'function'
+                    && window.Shop.canOpen()) {
+                    window.Shop.toggle();
+                } else if (running && !isOver()) {
+                    if (typeof toast === 'function') toast('当前无法打开生存商店');
+                }
                 return;
             }
             if (_canOpenWeaponPanel()) {

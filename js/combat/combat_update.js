@@ -61,8 +61,12 @@ function updatePlayer(p, dt, now) {
 
     if (p.id === 1) {
         let msg = '';
-        if (gameState === 'prep') msg = `第 ${roundNumber} 回合 · 准备阶段`;
-        else if (gameState === 'roundEnd') msg = '回合结束';
+        const survivalMode = (gameMode === 'survival')
+            || (typeof window.IS_SURVIVAL_CONTEXT === 'function' && window.IS_SURVIVAL_CONTEXT());
+        if (!survivalMode) {
+            if (gameState === 'prep') msg = `第 ${roundNumber} 回合 · 准备阶段`;
+            else if (gameState === 'roundEnd') msg = '回合结束';
+        }
         if (!_stunned && !p.isMedkit) centerMsg(p, msg);
     }
 

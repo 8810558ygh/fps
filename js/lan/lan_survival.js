@@ -24,19 +24,20 @@
         zombieCounter: 0,
         portalReady: new Set(),
         portalRequired: [],
-        rescueTargetId: null,
-        rescueStartedAt: 0,
-        rescueSentFor: null,
+        activeRescue: null,
         healTargetId: null,
         healStart: 0,
         healEnd: 0,
         healLockX: null,
         healLockZ: null,
         lastHealCancelReason: '',
+        lastDamageFlashAt: 0,
         summaryTimer: 0,
         promptEl: null,
         rescueEl: null,
         portalEl: null,
+        endlessChoiceEl: null,
+        lastEndAnimation: '',
     };
 
     function isSurvivalContext() {
@@ -96,13 +97,13 @@
         S.promptEl.style.display = text ? 'block' : 'none';
     }
 
-    function showRescue(target, progress) {
+    function showRescue(target, progress, titleText = '') {
         ensureUi();
         if (!S.rescueEl) return;
         const title = S.rescueEl.querySelector('.lan-rescue-title');
         const fill = S.rescueEl.querySelector('.lan-rescue-track span');
         const time = S.rescueEl.querySelector('.lan-rescue-time');
-        if (title) title.textContent = `救援 ${target.name || '队友'}`;
+        if (title) title.textContent = titleText || `救援 ${target?.name || '队友'}`;
         if (fill) fill.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`;
         if (time) time.textContent = `${Math.max(0, 5 - progress * 5).toFixed(1)}s`;
         S.rescueEl.style.display = 'block';
@@ -206,6 +207,7 @@
         S.hostWaveStarted = -1;
         S.portalReady.clear();
         S.portalRequired = [];
+        S.activeRescue = null;
         S.summaryTimer = 0;
 
         SurvivalState.active = true;
@@ -224,6 +226,7 @@
         ensureUi();
         hideRescue();
         updatePortalStatus('');
+        hideEndlessChoice();
         placePlayers(Array.from(LAN.playerStates.values()));
     }
 
@@ -239,9 +242,11 @@
         SurvivalState.phase = S.phase;
         SurvivalState.wave = S.wave;
         SurvivalState.mapIndex = S.mapIndex;
+        SurvivalState.endlessMode = !!msg.endlessMode;
+        SurvivalState.endlessLoop = Number(msg.endlessLoop) || 0;
         SurvivalState.prepEndTime = performance.now() + Math.max(0, Number(msg.phaseRemain) || 0);
         gameState = S.phase === 'wave' ? 'combat'
-            : (['prep', 'portal', 'mapLoading'].includes(S.phase) ? 'prep' : gameState);
+            : (['prep', 'portal', 'mapLoading', 'endlessChoice'].includes(S.phase) ? 'prep' : gameState);
         roundNumber = S.wave;
         if (S.phase !== 'wave' && typeof clearAllZombies === 'function') {
             clearAllZombies();
@@ -286,13 +291,22 @@
     }
 
     function scaledWaveComposition(wave) {
+        const endlessLoop = Math.max(0, Number(SurvivalState.endlessLoop) || 0);
+        const globalWave = endlessLoop * 15
+            + Math.max(0, Number(S.mapIndex) || 0) * 5
+            + wave;
+        const endlessBonus = endlessLoop * 2;
         const base = (typeof buildWaveComposition === 'function')
-            ? buildWaveComposition(wave, 0)
-            : Array.from({ length: 3 + wave * 2 }, () => 'normal');
+            ? buildWaveComposition(globalWave, endlessBonus)
+            : Array.from(
+                { length: 3 + globalWave * 2 + endlessBonus },
+                () => 'normal'
+            );
+        const synced = base.map(type => type === 'musician' ? 'big' : type);
         const extraPlayers = Math.max(0, survivalPlayers().length - 1);
-        const extra = Math.round(base.length * 0.22 * extraPlayers);
-        for (let i = 0; i < extra; i++) base.push('normal');
-        return base;
+        const extra = Math.round(synced.length * 0.22 * extraPlayers);
+        for (let i = 0; i < extra; i++) synced.push('normal');
+        return synced;
     }
 
     function startHostWave(wave) {
@@ -455,41 +469,82 @@
 
     function updateRescue(dt, now) {
         const self = ownState();
-        if (!self?.alive || self.downed || p1.downed
-            || p1.healing || p1.healingTeammate || p1.beingHealed) {
-            S.rescueTargetId = null;
-            S.rescueStartedAt = 0;
+        const active = S.activeRescue;
+        const holding = !!(typeof keys !== 'undefined' && keys.KeyE);
+
+        if (p1.downed) {
+            if (active?.targetId === LAN.selfId && active.rescuerId !== LAN.selfId) {
+                const progress = Math.max(0, Math.min(1, (now - active.startAt) / REVIVE_MS));
+                showRescue(null, progress, '队友正在救你');
+            } else {
+                hideRescue();
+            }
+            setPrompt('');
+            return;
+        }
+
+        if (!self?.alive || p1.healing || p1.healingTeammate || p1.beingHealed) {
+            if (active?.rescuerId === LAN.selfId) {
+                LANNET.send({ type: 'survivalRescueCancel' });
+                S.activeRescue = null;
+            }
             hideRescue();
             setPrompt('');
             return;
         }
-        const target = nearestDownedTeammate();
-        if (!target) {
-            S.rescueTargetId = null;
-            S.rescueStartedAt = 0;
-            hideRescue();
+
+        if (active) {
+            if (active.rescuerId === LAN.selfId) {
+                const target = LAN.models.get(active.targetId);
+                const state = LAN.playerStates.get(active.targetId);
+                const distance = target
+                    ? Math.hypot(target.pos.x - p1.pos.x, target.pos.z - p1.pos.z)
+                    : Infinity;
+                if (!holding || !target || !state?.downed || distance > REVIVE_RANGE) {
+                    LANNET.send({ type: 'survivalRescueCancel' });
+                    S.activeRescue = null;
+                    hideRescue();
+                    setPrompt('');
+                    return;
+                }
+                const progress = Math.max(0, Math.min(1, (now - active.startAt) / REVIVE_MS));
+                showRescue(target, progress);
+            } else {
+                const target = LAN.models.get(active.targetId);
+                const distance = target
+                    ? Math.hypot(target.pos.x - p1.pos.x, target.pos.z - p1.pos.z)
+                    : Infinity;
+                if (distance <= REVIVE_RANGE) {
+                    setPrompt(`队友正在救援 ${target?.name || '队友'}`);
+                } else {
+                    setPrompt('');
+                }
+                hideRescue();
+            }
             return;
         }
-        const holding = !!(typeof keys !== 'undefined' && keys.KeyE);
+
+        const target = nearestDownedTeammate();
+        if (!target) {
+            hideRescue();
+            setPrompt('');
+            return;
+        }
         if (!holding) {
-            S.rescueTargetId = target.netId;
-            S.rescueStartedAt = 0;
             hideRescue();
             setPrompt(`按住 E 救援 ${target.name || '队友'}（5 秒）`);
             return;
         }
+        const start = performance.now();
+        S.activeRescue = {
+            rescuerId: LAN.selfId,
+            targetId: target.netId,
+            startAt: start,
+            endAt: start + REVIVE_MS,
+        };
+        LANNET.send({ type: 'survivalRescueStart', targetId: target.netId });
+        showRescue(target, 0);
         setPrompt('');
-        if (S.rescueTargetId !== target.netId) {
-            S.rescueTargetId = target.netId;
-            S.rescueStartedAt = now;
-            S.rescueSentFor = null;
-        }
-        const progress = Math.min(1, (now - S.rescueStartedAt) / REVIVE_MS);
-        showRescue(target, progress);
-        if (progress >= 1 && S.rescueSentFor !== target.netId) {
-            S.rescueSentFor = target.netId;
-            LANNET.send({ type: 'survivalRevive', targetId: target.netId });
-        }
     }
 
     function clearRemoteHealState(player) {
@@ -622,6 +677,22 @@
         updatePortalStatus(`传送门已就位 ${ready} / ${total} · 靠近后按 F 确认`);
     }
 
+    function flashIncomingDamage() {
+        S.lastDamageFlashAt = performance.now();
+        if (typeof dmgFlash === 'function') {
+            dmgFlash(p1);
+            return;
+        }
+        const flash = document.querySelector('#hud1 .dmgflash');
+        if (!flash) return;
+        flash.style.transition = 'none';
+        flash.style.opacity = '1';
+        requestAnimationFrame(() => {
+            flash.style.transition = 'opacity .35s';
+            flash.style.opacity = '0';
+        });
+    }
+
     function tryPortalConfirm() {
         if (!isSurvivalContext() || S.phase !== 'portal' || S.portalReady.has(LAN.selfId)) return false;
         const center = portalCenter();
@@ -630,6 +701,60 @@
         S.portalReady.add(LAN.selfId);
         updatePortalInteraction();
         return true;
+    }
+
+    function ensureEndlessChoiceUi() {
+        if (S.endlessChoiceEl) return S.endlessChoiceEl;
+        const el = document.createElement('div');
+        el.id = 'lanEndlessChoiceOverlay';
+        el.className = 'lan-endless-overlay';
+        el.innerHTML = `
+            <div class="lan-endless-card">
+                <div class="lan-endless-kicker">三张地图全部完成</div>
+                <h2>选择下一步</h2>
+                <p class="lan-endless-desc">由房主决定结束本局，或进入无限模式继续战斗。</p>
+                <div class="lan-endless-actions">
+                    <button id="lanEndlessFinishBtn" type="button">结束并通关</button>
+                    <button id="lanEndlessContinueBtn" type="button">进入无限模式</button>
+                </div>
+                <div class="lan-endless-wait">等待房主选择…</div>
+            </div>
+        `;
+        document.body.appendChild(el);
+        const choose = endless => {
+            if (!isSurvivalContext() || LAN.room?.ownerId !== LAN.selfId) return;
+            el.querySelectorAll('button').forEach(button => { button.disabled = true; });
+            const wait = el.querySelector('.lan-endless-wait');
+            if (wait) wait.textContent = '正在同步房主选择…';
+            LANNET.send({ type: 'survivalEndlessChoice', endless });
+        };
+        el.querySelector('#lanEndlessFinishBtn')?.addEventListener('click', () => choose(false));
+        el.querySelector('#lanEndlessContinueBtn')?.addEventListener('click', () => choose(true));
+        S.endlessChoiceEl = el;
+        return el;
+    }
+
+    function showEndlessChoice(msg) {
+        ensureUi();
+        const el = ensureEndlessChoiceUi();
+        const isHost = msg.hostId === LAN.selfId || LAN.room?.ownerId === LAN.selfId;
+        S.phase = 'endlessChoice';
+        SurvivalState.phase = 'endlessChoice';
+        running = false;
+        if (document.pointerLockElement) document.exitPointerLock();
+        const actions = el.querySelector('.lan-endless-actions');
+        const wait = el.querySelector('.lan-endless-wait');
+        if (actions) actions.style.display = isHost ? 'flex' : 'none';
+        if (wait) {
+            wait.style.display = isHost ? 'none' : 'block';
+            wait.textContent = '等待房主选择…';
+        }
+        el.querySelectorAll('button').forEach(button => { button.disabled = false; });
+        el.style.display = 'flex';
+    }
+
+    function hideEndlessChoice() {
+        if (S.endlessChoiceEl) S.endlessChoiceEl.style.display = 'none';
     }
 
     function showSummary(summary) {
@@ -689,23 +814,36 @@
     }
 
     function endSurvival(victory) {
+        hideEndlessChoice();
         running = false;
         gameState = 'idle';
         S.phase = victory ? 'victory' : 'defeat';
+        S.lastEndAnimation = S.phase;
+        SurvivalState.phase = S.phase;
         if (typeof clearAllZombies === 'function') clearAllZombies();
         if (document.pointerLockElement) document.exitPointerLock();
         const overlay = document.getElementById('survivalEndOverlay');
         if (overlay) {
+            overlay.classList.toggle('victory', victory);
+            overlay.classList.toggle('defeat', !victory);
             const icon = overlay.querySelector('.sv-end-icon');
             const title = overlay.querySelector('.sv-end-title');
             const hint = overlay.querySelector('.sv-end-hint');
             if (icon) icon.textContent = victory ? '🏆' : '💀';
-            if (title) title.textContent = victory ? '通 关' : '失 败';
-            if (hint) {
-                hint.textContent = LAN.room?.ownerId === LAN.selfId
-                    ? '点击返回房间'
-                    : '等待房主返回房间';
+            if (title) {
+                title.textContent = victory ? '通 关' : '失 败';
+                title.style.color = victory ? '#ffd24a' : '#ff4a4a';
+                title.style.textShadow = victory
+                    ? '0 0 30px rgba(255, 210, 74, 0.9), 0 4px 20px rgba(0, 0, 0, 0.85)'
+                    : '0 0 30px rgba(255, 60, 60, 0.85), 0 4px 20px rgba(0, 0, 0, 0.85)';
             }
+            if (hint) {
+                hint.textContent = victory
+                    ? '本局已通关 · 房主可返回房间'
+                    : '全队倒地 · 房主可返回房间';
+            }
+            overlay.style.display = 'none';
+            void overlay.offsetWidth;
             overlay.style.display = 'flex';
             overlay.onclick = () => {
                 if (LAN.room?.ownerId === LAN.selfId) {
@@ -713,6 +851,8 @@
                 }
             };
         }
+        if (victory && typeof sWin === 'function') sWin();
+        else if (!victory && typeof sDeath === 'function') sDeath();
         document.body.classList.remove('in-game');
     }
 
@@ -831,6 +971,41 @@
             }
             return;
         }
+        if (msg.type === 'survivalPlayerDamaged') {
+            if (msg.playerId === LAN.selfId) {
+                if (Number.isFinite(msg.hp)) p1.hp = msg.hp;
+                if (Number.isFinite(msg.armor)) p1.armor = msg.armor;
+                flashIncomingDamage();
+                if (typeof sHit === 'function') sHit(1);
+            }
+            return;
+        }
+        if (msg.type === 'survivalRescueStart') {
+            const start = performance.now();
+            const duration = Math.max(100, Number(msg.durationMs) || REVIVE_MS);
+            S.activeRescue = {
+                rescuerId: msg.rescuerId,
+                targetId: msg.targetId,
+                startAt: start,
+                endAt: start + duration,
+            };
+            return;
+        }
+        if (msg.type === 'survivalRescueCancel') {
+            if (S.activeRescue?.targetId === msg.targetId
+                && S.activeRescue?.rescuerId === msg.rescuerId) {
+                S.activeRescue = null;
+            }
+            hideRescue();
+            if (msg.rescuerId === LAN.selfId || msg.targetId === LAN.selfId) {
+                if (typeof lanNotify === 'function') {
+                    lanNotify(msg.reason === 'out-of-range'
+                        ? '救援中断 · 距离过远'
+                        : '救援已中断', 1800);
+                }
+            }
+            return;
+        }
         if (msg.type === 'survivalPlayerDowned') {
             if (msg.playerId === LAN.selfId && typeof lanNotify === 'function') {
                 lanNotify('你已倒地 · 等待队友按住 E 救援', 3500);
@@ -838,6 +1013,11 @@
             return;
         }
         if (msg.type === 'survivalPlayerRevived') {
+            if (S.activeRescue?.targetId === msg.playerId) {
+                S.activeRescue = null;
+            }
+            hideRescue();
+            setPrompt('');
             const target = msg.playerId === LAN.selfId ? p1 : LAN.models.get(msg.playerId);
             if (target) setPlayerAliveState(target, true, false, msg.hp, target.armor);
             if (msg.playerId === LAN.selfId && typeof lanNotify === 'function') {
@@ -847,6 +1027,10 @@
         }
         if (msg.type === 'survivalWaveSummary') {
             showSummary(msg.summary || { wave: S.wave, totalKills: 0, players: [] });
+            return;
+        }
+        if (msg.type === 'survivalEndlessChoice') {
+            showEndlessChoice(msg);
             return;
         }
         if (msg.type === 'survivalPortalProgress') {
@@ -861,6 +1045,7 @@
             return;
         }
         if (msg.type === 'survivalMapChange') {
+            hideEndlessChoice();
             loadNextMap(msg.mapId);
             return;
         }
@@ -869,6 +1054,7 @@
             S.wave = 0;
             S.hostWaveStarted = -1;
             S.playersPlaced = false;
+            S.activeRescue = null;
             running = true;
             gameState = 'prep';
             updatePortalStatus('');
@@ -878,6 +1064,7 @@
             return;
         }
         if (msg.type === 'survivalEnd') {
+            hideEndlessChoice();
             endSurvival(!!msg.victory);
         }
     }
@@ -911,6 +1098,7 @@
         S.active = false;
         S.phase = 'idle';
         S.waveQueue = [];
+        S.activeRescue = null;
         SurvivalState.active = false;
         SurvivalState.phase = 'idle';
         SurvivalState.waveQueue = [];
@@ -923,6 +1111,7 @@
         setPrompt('');
         hideRescue();
         updatePortalStatus('');
+        hideEndlessChoice();
     }
 
     window.LAN_SURVIVAL_begin = begin;

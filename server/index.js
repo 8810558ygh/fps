@@ -480,12 +480,15 @@ function broadcastSurvivalState(room) {
     mapIndex: survival.mapIndex,
     mapId: survival.mapId,
     phaseRemain: Math.max(0, survival.phaseEnd - Date.now()),
+    endlessMode: !!survival.endlessMode,
+    endlessLoop: survival.endlessLoop || 0,
     portalReady: Array.from(survival.portalReady || []),
     portalRequired: connectedSurvivalPlayers(room).map(client => client.id),
   });
 }
 
 function reviveAllDowned(room, hp = SURVIVAL_REVIVE_HP) {
+  if (room.survival?.activeRescue) cancelSurvivalRescue(room, 'auto-revive');
   for (const id of room.memberIds) {
     const client = clients.get(id);
     const state = room.states.get(id);
@@ -532,6 +535,7 @@ function finishSurvivalMapLoad(room, now) {
   survival.zombies.clear();
   survival.deadZombies.clear();
   survival.activeHeals.clear();
+  survival.activeRescue = null;
   prepareSurvivalMapState(room);
   broadcastRoom(room, {
     type: 'survivalMapLoaded',
@@ -589,6 +593,54 @@ function processSurvivalHeals(room, now) {
       amount: healed,
     });
   }
+}
+
+function cancelSurvivalRescue(room, reason = 'cancelled') {
+  const rescue = room.survival?.activeRescue;
+  if (!rescue) return;
+  room.survival.activeRescue = null;
+  broadcastRoom(room, {
+    type: 'survivalRescueCancel',
+    rescuerId: rescue.rescuerId,
+    targetId: rescue.targetId,
+    reason,
+  });
+}
+
+function processSurvivalRescue(room, now) {
+  const survival = room.survival;
+  const rescue = survival?.activeRescue;
+  if (!survival || !rescue) return;
+  if (!['prep', 'wave', 'portal'].includes(survival.phase)) {
+    cancelSurvivalRescue(room, 'phase-ended');
+    return;
+  }
+  const rescuerState = room.states.get(rescue.rescuerId);
+  const targetState = room.states.get(rescue.targetId);
+  if (!rescuerState?.alive || rescuerState.downed
+      || !targetState?.downed) {
+    cancelSurvivalRescue(room, 'invalid-target');
+    return;
+  }
+  const distance = Math.hypot(
+    rescuerState.x - targetState.x,
+    rescuerState.z - targetState.z
+  );
+  if (distance > SURVIVAL_REVIVE_RANGE + 0.35) {
+    cancelSurvivalRescue(room, 'out-of-range');
+    return;
+  }
+  if (now < rescue.endAt) return;
+  targetState.downed = false;
+  targetState.alive = true;
+  targetState.hp = SURVIVAL_REVIVE_HP;
+  survival.activeRescue = null;
+  broadcastRoom(room, {
+    type: 'survivalPlayerRevived',
+    playerId: rescue.targetId,
+    rescuerId: rescue.rescuerId,
+    hp: SURVIVAL_REVIVE_HP,
+  });
 }
 
 function leaveRoom(client, notify = true) {
@@ -675,8 +727,8 @@ function beginPrep(room) {
 
 function startSurvivalMatch(room) {
   if (!room.memberIds.size) return;
-  const mapId = SURVIVAL_MAPS.includes(room.mapId) ? room.mapId : 'battlefield';
-  const mapIndex = Math.max(0, SURVIVAL_MAPS.indexOf(mapId));
+  const mapId = 'battlefield';
+  const mapIndex = 0;
   for (const id of room.memberIds) {
     const client = clients.get(id);
     if (!client) continue;
@@ -699,6 +751,8 @@ function startSurvivalMatch(room) {
     mapIndex,
     mapId,
     mapsCleared: 0,
+    endlessMode: false,
+    endlessLoop: 0,
     phaseEnd: Date.now() + SURVIVAL_PREP_MS,
     portalReady: new Set(),
     mapReady: new Set(),
@@ -706,6 +760,7 @@ function startSurvivalMatch(room) {
     deadZombies: new Set(),
     queueRemaining: 0,
     activeHeals: new Map(),
+    activeRescue: null,
   };
   resetSurvivalRoundState(room);
   broadcastRoom(room, {
@@ -738,6 +793,7 @@ function startMatch(room) {
   room.redScore = 0;
   room.roundWinner = null;
   room.roundEndsAt = 0;
+  room.returnedIds.clear();
   room.matchId = crypto.randomUUID();
   room.matchStartedAt = Date.now();
   room.matchAllowedIps = new Set(
@@ -796,6 +852,7 @@ function roomTick(room) {
       finishSurvivalMapLoad(room, now);
     }
     processSurvivalHeals(room, now);
+    processSurvivalRescue(room, now);
   } else if (room.phase === 'prep' && now >= room.phaseEnd) {
     room.phase = 'round';
     room.phaseEnd = now + ROUND_LIMIT_MS;
@@ -813,6 +870,7 @@ function roomTick(room) {
     if (room.blueScore >= MATCH_POINT || room.redScore >= MATCH_POINT) {
       room.phase = 'matchEnd';
       room.phaseEnd = now;
+      room.returnedIds.clear();
       broadcastRoom(room, {
         type: 'matchEnd',
         matchId: room.matchId,
@@ -1033,6 +1091,7 @@ wss.on('connection', ws => {
         mode: 'team',
         memberIds: new Set([client.id]),
         states: new Map(),
+        returnedIds: new Set(),
         phase: 'lobby',
         round: 0,
         blueScore: 0,
@@ -1116,6 +1175,7 @@ wss.on('connection', ws => {
 
     if (msg.type === 'setMap') {
       if (room.ownerId !== client.id || room.phase !== 'lobby') return;
+      if (room.mode === 'survival') return;
       if (['battlefield', 'desert', 'indoor_complex'].includes(msg.mapId)) {
         room.mapId = msg.mapId;
         broadcastLobby(room);
@@ -1128,6 +1188,7 @@ wss.on('connection', ws => {
       if (['team', 'survival'].includes(msg.mode)) {
         room.mode = msg.mode;
         if (room.mode === 'survival') {
+          room.mapId = 'battlefield';
           for (const id of room.memberIds) {
             const member = clients.get(id);
             if (member) {
@@ -1248,6 +1309,16 @@ wss.on('connection', ws => {
           deferElimination: true,
         }
       );
+      const updatedState = room.states.get(target.id);
+      if (updatedState) {
+        broadcastRoom(room, {
+          type: 'survivalPlayerDamaged',
+          playerId: target.id,
+          hp: updatedState.hp,
+          armor: updatedState.armor,
+          source: 'zombie',
+        });
+      }
       return;
     }
 
@@ -1260,12 +1331,15 @@ wss.on('connection', ws => {
       room.survival.zombies.clear();
       if (room.survival.wave >= 5) {
         reviveAllDowned(room, SURVIVAL_REVIVE_HP);
-        if (room.survival.mapsCleared >= SURVIVAL_MAPS.length - 1) {
-          room.survival.phase = 'victory';
+        if (room.survival.mapsCleared >= SURVIVAL_MAPS.length - 1
+            && !room.survival.endlessMode) {
+          room.survival.phase = 'endlessChoice';
           room.survival.phaseEnd = now;
-          room.phase = 'matchEnd';
           broadcastSurvivalState(room);
-          broadcastRoom(room, { type: 'survivalEnd', victory: true });
+          broadcastRoom(room, {
+            type: 'survivalEndlessChoice',
+            hostId: room.ownerId,
+          });
         } else {
           room.survival.phase = 'portal';
           room.survival.phaseEnd = 0;
@@ -1280,25 +1354,64 @@ wss.on('connection', ws => {
       return;
     }
 
-    if (msg.type === 'survivalRevive') {
+    if (msg.type === 'survivalRescueStart') {
       if (room.mode !== 'survival' || !room.survival) return;
       if (!['prep', 'wave', 'portal'].includes(room.survival.phase)) return;
       const target = clients.get(String(msg.targetId || ''));
-      if (!target || target === client) return;
+      const reject = reason => send(ws, {
+        type: 'survivalRescueCancel',
+        rescuerId: client.id,
+        targetId: String(msg.targetId || ''),
+        reason,
+      });
+      if (!target || target === client) {
+        reject('invalid-target');
+        return;
+      }
       const targetState = room.states.get(target.id);
       const rescuerState = room.states.get(client.id);
-      if (!targetState || !targetState.downed || !rescuerState || !rescuerState.alive) return;
+      if (!targetState || !targetState.downed || !rescuerState || !rescuerState.alive) {
+        reject('invalid-target');
+        return;
+      }
       const dist = Math.hypot(targetState.x - rescuerState.x, targetState.z - rescuerState.z);
-      if (dist > SURVIVAL_REVIVE_RANGE + 0.35) return;
-      targetState.downed = false;
-      targetState.alive = true;
-      targetState.hp = SURVIVAL_REVIVE_HP;
-      broadcastRoom(room, {
-        type: 'survivalPlayerRevived',
-        playerId: target.id,
+      if (dist > SURVIVAL_REVIVE_RANGE + 0.35) {
+        reject('out-of-range');
+        return;
+      }
+      const active = room.survival.activeRescue;
+      if (active) {
+        if (active.targetId === target.id) {
+          send(ws, {
+            type: 'survivalRescueStart',
+            rescuerId: active.rescuerId,
+            targetId: active.targetId,
+            durationMs: Math.max(0, active.endAt - Date.now()),
+          });
+          return;
+        }
+        cancelSurvivalRescue(room, 'rescuer-busy');
+      }
+      const now = Date.now();
+      room.survival.activeRescue = {
         rescuerId: client.id,
-        hp: SURVIVAL_REVIVE_HP,
+        targetId: target.id,
+        startAt: now,
+        endAt: now + 5000,
+      };
+      broadcastRoom(room, {
+        type: 'survivalRescueStart',
+        rescuerId: client.id,
+        targetId: target.id,
+        durationMs: 5000,
       });
+      return;
+    }
+
+    if (msg.type === 'survivalRescueCancel') {
+      if (room.mode === 'survival' && room.survival?.activeRescue?.rescuerId === client.id) {
+        cancelSurvivalRescue(room, 'released');
+      }
       return;
     }
 
@@ -1345,6 +1458,40 @@ wss.on('connection', ws => {
       return;
     }
 
+    if (msg.type === 'survivalEndlessChoice') {
+      if (room.mode !== 'survival' || !room.survival) return;
+      if (room.ownerId !== client.id || room.survival.phase !== 'endlessChoice') return;
+      if (msg.endless) {
+        room.survival.endlessMode = true;
+        room.survival.endlessLoop = (room.survival.endlessLoop || 0) + 1;
+        room.survival.mapsCleared = 0;
+        room.survival.mapIndex = 0;
+        room.survival.mapId = 'battlefield';
+        room.survival.phase = 'mapLoading';
+        room.survival.mapReady.clear();
+        room.survival.portalReady.clear();
+        room.survival.zombies.clear();
+        room.survival.deadZombies.clear();
+        room.survival.activeHeals.clear();
+        room.survival.activeRescue = null;
+        broadcastSurvivalState(room);
+        broadcastRoom(room, {
+          type: 'survivalMapChange',
+          mapId: room.survival.mapId,
+          mapIndex: 0,
+          endless: true,
+          endlessLoop: room.survival.endlessLoop,
+        });
+      } else {
+        room.survival.phase = 'victory';
+        room.survival.phaseEnd = Date.now();
+        room.phase = 'matchEnd';
+        broadcastSurvivalState(room);
+        broadcastRoom(room, { type: 'survivalEnd', victory: true });
+      }
+      return;
+    }
+
     if (msg.type === 'survivalPortalReady') {
       if (room.mode !== 'survival' || !room.survival || room.survival.phase !== 'portal') return;
       const state = room.states.get(client.id);
@@ -1362,7 +1509,12 @@ wss.on('connection', ws => {
         const nextIndex = (room.survival.mapIndex + 1) % SURVIVAL_MAPS.length;
         room.survival.phase = 'mapLoading';
         room.survival.mapIndex = nextIndex;
-        room.survival.mapsCleared++;
+        if (nextIndex === 0) {
+          room.survival.mapsCleared = 0;
+          if (room.survival.endlessMode) room.survival.endlessLoop++;
+        } else {
+          room.survival.mapsCleared++;
+        }
         room.survival.mapId = SURVIVAL_MAPS[nextIndex];
         room.survival.mapReady.clear();
         room.survival.portalReady.clear();
@@ -1578,7 +1730,38 @@ wss.on('connection', ws => {
     }
 
     if (msg.type === 'returnLobby') {
-      if (room.ownerId !== client.id) return;
+      if (room.mode !== 'survival'
+          && (room.phase === 'matchEnd' || room.phase === 'lobby')) {
+        if (room.phase === 'matchEnd') {
+          for (const id of Array.from(room.memberIds)) {
+            const member = clients.get(id);
+            if (member && member.connected !== false) continue;
+            room.memberIds.delete(id);
+            room.states.delete(id);
+            if (member) clients.delete(id);
+          }
+          room.phase = 'lobby';
+          room.round = 0;
+          room.blueScore = 0;
+          room.redScore = 0;
+          room.states.clear();
+          room.matchAllowedIps = null;
+          room.returnedIds?.clear();
+          for (const id of room.memberIds) {
+            const member = clients.get(id);
+            if (member) member.ready = false;
+          }
+        }
+        client.ready = false;
+        send(ws, {
+          type: 'returnedToLobby',
+          room: roomLobby(room),
+        });
+        return;
+      }
+      if (room.ownerId !== client.id) {
+        return;
+      }
       for (const id of Array.from(room.memberIds)) {
         const member = clients.get(id);
         if (member && member.connected !== false) continue;
@@ -1593,6 +1776,7 @@ wss.on('connection', ws => {
       room.states.clear();
       room.survival = null;
       room.matchAllowedIps = null;
+      room.returnedIds?.clear();
       for (const id of room.memberIds) {
         const member = clients.get(id);
         if (member) member.ready = false;
