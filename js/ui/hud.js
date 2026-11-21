@@ -53,18 +53,24 @@ function feed(p, html) {
 
 function centerMsg(p, text) { if (p.id === 1) H[1].center.textContent = text; }
 
-let _dmgFlashRaf = 0;
+let _dmgFlashHoldTimer = 0;
+let _dmgFlashEndTimer = 0;
 function dmgFlash(p) {
     if (p.id !== 1) return;
-    if (_dmgFlashRaf) return;
     const f = H[1].flash;
+    if (!f) return;
+    clearTimeout(_dmgFlashHoldTimer);
+    clearTimeout(_dmgFlashEndTimer);
     f.style.transition = 'none';
     f.style.opacity = 1;
-    _dmgFlashRaf = requestAnimationFrame(() => {
-        _dmgFlashRaf = 0;
+    void f.offsetWidth;
+    _dmgFlashHoldTimer = setTimeout(() => {
         f.style.transition = 'opacity .4s';
         f.style.opacity = 0;
-    });
+        _dmgFlashEndTimer = setTimeout(() => {
+            f.style.transition = 'opacity .35s';
+        }, 420);
+    }, 70);
 }
 
 function hitmark(p) {

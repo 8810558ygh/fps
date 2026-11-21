@@ -65,7 +65,7 @@ const FLASH = {
     fuseMs: 5000,
     maxDistance: 45,
     minFovMargin: 0.0,
-    flashDurationMs: 5000,
+    flashDurationMs: 3000,
     flashFadeMs: 800,
     cooldownMs: 800, maxPerRound: 1,
     speedMul: 1.0, scope: false, adsSpeedMul: 1.0,

@@ -60,6 +60,13 @@ function handleRoomMessage(fromId, data) {
 
         case 'clientInput':
             if (NET.isHost) handleClientInput(fromId, data); break;
+        case 'securityRequest':
+        case 'securityState':
+        case 'securityDenied':
+            if (typeof window.SECURITY_HandlePeerMessage === 'function') {
+                window.SECURITY_HandlePeerMessage(data, fromId);
+            }
+            break;
         case 'hostState':
             if (!NET.isHost) handleHostState(data); break;
         case 'killEvent':

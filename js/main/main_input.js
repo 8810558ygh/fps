@@ -59,6 +59,10 @@ document.addEventListener('pointerlockchange', () => {
 document.addEventListener('mousemove', e => {
     if (document.pointerLockElement === renderer.domElement && running && !isOver()) {
         if (NET.isSpectator()) return;
+        if (typeof window.SECURITY_HandleMouseMove === 'function'
+            && window.SECURITY_HandleMouseMove(e)) {
+            return;
+        }
 
         const S  = (window.SETTINGS && window.SETTINGS.sensitivity) ? window.SETTINGS.sensitivity : null;
         const RT = window.SETTINGS_RT || {};

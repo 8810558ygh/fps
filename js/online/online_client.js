@@ -7,6 +7,9 @@
 // ============================================================
 function handleHostState(data) {
     if (NET.isHost) return;
+    if (data.security && typeof window.SECURITY_ApplyPeerState === 'function') {
+        window.SECURITY_ApplyPeerState(data.security);
+    }
     NET.lastHostState = data;
     if (data.hostSeat) NET.hostSeat = data.hostSeat;
     if (typeof stateEndTime !== 'undefined') stateEndTime = performance.now() + data.stateEndTimeRemain;

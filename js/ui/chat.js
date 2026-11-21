@@ -39,12 +39,10 @@ const CHAT_AI_REPLIES = ['？', '哦', '呵', '。。。', '是吗', '继续', '
 // 特殊代码
 // ============================================================
 const XRAY_ON_CMDS = [
-    '打开透视', '开透视', '透视开', '透视打开',
-    'xray on', 'xray', 'XRAY', 'XrayOn',
+    'xray on',
 ];
 const XRAY_OFF_CMDS = [
-    '关闭透视', '关透视', '透视关', '透视关闭',
-    'xray off', 'XrayOff',
+    'xray off',
 ];
 
 let aiStreak = 0;
@@ -127,7 +125,7 @@ function handleSpecialCommand(text) {
     }
     if (XRAY_OFF_CMDS.some(c => c.toLowerCase() === t)) {
         xrayEnabled = false;
-        applyNormalMaterials();
+        clearXrayMaterials();
         addLocalSystemMessage('★ 透视已关闭');
         sEmpty(1);
         return true;
@@ -155,25 +153,69 @@ function ensureXrayMat(o) {
     }
 }
 
-function applyXrayMaterials() {
-    if (typeof p2 === 'undefined' || !p2 || !p2.mesh) return;
-    p2.mesh.traverse(o => {
+function applyXrayMaterials(target) {
+    if (!target || !target.mesh) return;
+    target.mesh.traverse(o => {
         if (!o.isMesh) return;
         ensureXrayMat(o);
         o.material = o.userData._xrayMat;
         o.renderOrder = 9999;
     });
-    p2._xrayApplied = true;
+    target._xrayApplied = true;
 }
 
-function applyNormalMaterials() {
-    if (typeof p2 === 'undefined' || !p2 || !p2.mesh) return;
-    p2.mesh.traverse(o => {
+function applyNormalMaterials(target) {
+    if (!target || !target.mesh) return;
+    target.mesh.traverse(o => {
         if (!o.isMesh) return;
         if (o.userData._origMat) o.material = o.userData._origMat;
         o.renderOrder = 0;
     });
-    p2._xrayApplied = false;
+    target._xrayApplied = false;
+}
+
+function getXrayCandidates() {
+    const result = [];
+    if (typeof p2 !== 'undefined' && p2) result.push(p2);
+    if (typeof gameMode !== 'undefined'
+        && gameMode === 'lan'
+        && typeof LAN !== 'undefined'
+        && LAN.models) {
+        for (const player of LAN.models.values()) {
+            if (player) result.push(player);
+        }
+    }
+    return result;
+}
+
+function getXrayTargets() {
+    if (typeof gameMode !== 'undefined'
+        && gameMode === 'lan'
+        && typeof LAN !== 'undefined'
+        && LAN.models) {
+        const targets = [];
+        for (const [id, player] of LAN.models) {
+            const state = LAN.playerStates.get(id);
+            if (!player
+                || !state
+                || state.team === p1.team
+                || !state.alive
+                || state.downed
+                || state.connected === false
+                || !player.baseVisible) {
+                continue;
+            }
+            targets.push(player);
+        }
+        return targets;
+    }
+    return (typeof p2 !== 'undefined' && p2 && p2.baseVisible) ? [p2] : [];
+}
+
+function clearXrayMaterials() {
+    for (const target of getXrayCandidates()) {
+        if (target._xrayApplied) applyNormalMaterials(target);
+    }
 }
 
 const _xrayEye = new THREE.Vector3();
@@ -202,41 +244,34 @@ function collectSmokeOccluders(targets) {
 // ============================================================
 // ★ 优化：遮挡检测缓存
 // ============================================================
-let _occludedLastCheck = 0;
-let _occludedCached = false;
+const _occludedTargetCache = new WeakMap();
 
-function isOpponentOccluded() {
+function isOpponentOccluded(target) {
     const now = performance.now();
-
-    if (now - _occludedLastCheck < 100) {
-        return _occludedCached;
-    }
-    _occludedLastCheck = now;
-
-    if (!p2 || !p2.baseVisible) {
-        _occludedCached = false;
-        return false;
-    }
-
-    _occludedCached = _isOpponentOccludedUncached();
-    return _occludedCached;
+    const cached = _occludedTargetCache.get(target);
+    if (cached && now - cached.at < 100) return cached.occluded;
+    if (!target || !target.baseVisible) return false;
+    const occluded = _isOpponentOccludedUncached(target);
+    _occludedTargetCache.set(target, { at: now, occluded });
+    return occluded;
 }
 
 // 原 isOpponentOccluded 的完整逻辑（重命名，不做节流）
-function _isOpponentOccludedUncached() {
+function _isOpponentOccludedUncached(target) {
+    if (!target) return false;
     p1.cam.getWorldPosition(_xrayEye);
 
-    const scaleY = p2.height / HEIGHT_STAND;
+    const scaleY = target.height / HEIGHT_STAND;
     const checkPoints = [
-        p2.pos.y + 0.95 * scaleY,
-        p2.pos.y + 1.62 * scaleY,
+        target.pos.y + 0.95 * scaleY,
+        target.pos.y + 1.62 * scaleY,
     ];
 
     const targets = wallMeshes.concat(crateMeshes);
     collectSmokeOccluders(targets);
 
     for (const y of checkPoints) {
-        _xrayTarget.set(p2.pos.x, y, p2.pos.z);
+        _xrayTarget.set(target.pos.x, y, target.pos.z);
         _xrayDir.copy(_xrayTarget).sub(_xrayEye);
         const dist = _xrayDir.length();
         if (dist < 0.5) return false;
@@ -253,20 +288,26 @@ function _isOpponentOccludedUncached() {
 }
 
 function updateXrayVisibility() {
-    if (typeof p2 === 'undefined' || !p2 || !p2.mesh) return;
-
+    const candidates = getXrayCandidates();
     if (!xrayEnabled) {
-        if (p2._xrayApplied) applyNormalMaterials();
+        for (const target of candidates) {
+            if (target._xrayApplied) applyNormalMaterials(target);
+        }
         return;
     }
-    if (!p2.baseVisible || !p2.mesh.visible) {
-        if (p2._xrayApplied) applyNormalMaterials();
-        return;
+    const targets = new Set(getXrayTargets());
+    for (const target of candidates) {
+        if (!targets.has(target)
+            || !target.baseVisible
+            || !target.mesh
+            || !target.mesh.visible) {
+            if (target._xrayApplied) applyNormalMaterials(target);
+            continue;
+        }
+        const occluded = isOpponentOccluded(target);
+        if (occluded && !target._xrayApplied) applyXrayMaterials(target);
+        else if (!occluded && target._xrayApplied) applyNormalMaterials(target);
     }
-
-    const occluded = isOpponentOccluded();
-    if (occluded && !p2._xrayApplied) applyXrayMaterials();
-    else if (!occluded && p2._xrayApplied) applyNormalMaterials();
 }
 
 function isXrayOn() { return xrayEnabled; }
@@ -425,10 +466,8 @@ function clearChat() {
     aiStreak = 0;
     if (xrayEnabled) {
         xrayEnabled = false;
-        applyNormalMaterials();
+        clearXrayMaterials();
     }
-    _occludedLastCheck = 0;
-    _occludedCached = false;
 }
 
 // ============================================================

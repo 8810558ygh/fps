@@ -1,6 +1,6 @@
 {
   "name": "heroes-duel-lan",
-  "version": "1.8.0",
+  "version": "2.0.0",
   "private": true,
   "description": "双雄对决局域网团队战",
   "main": "electron/main.js",

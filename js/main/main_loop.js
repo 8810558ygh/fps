@@ -179,7 +179,12 @@ function render() {
         && window.LAN?.active
         && window.LAN.spectateNetId;
     const showVm = isLanSpectating || p1.baseVisible;
-    p1.vm.visible = !!showVm && !(p1.aiming && p1.weapon && p1.weapon.scope);
+    const securityActive = typeof window.SECURITY_IsActive === 'function'
+        && window.SECURITY_IsActive();
+    if (securityActive && p1.baseVisible && p1.deadUntil !== Infinity) {
+        p1.mesh.visible = true;
+    }
+    p1.vm.visible = !securityActive && !!showVm && !(p1.aiming && p1.weapon && p1.weapon.scope);
     if (p2.vm) p2.vm.visible = false;
 
     _shadowFrameCounter++;
@@ -188,9 +193,12 @@ function render() {
         renderer.shadowMap.needsUpdate = true;
     }
 
-    updateScopePip();
+    if (!securityActive) updateScopePip();
 
-    renderer.render(scene, p1.cam);
+    const securityCamera = typeof window.SECURITY_GetRenderCamera === 'function'
+        ? window.SECURITY_GetRenderCamera()
+        : null;
+    renderer.render(scene, securityCamera || p1.cam);
 }
 
 // ============================================================
@@ -234,6 +242,8 @@ function loop() {
     const isHost      = !isLan && ((gameMode !== 'online') || (typeof NET !== 'undefined' && NET.isHost));
     const isClient    = NET.isClientPlayer();
     const isSpectator = NET.isSpectator();
+    const securityActive = typeof window.SECURITY_IsActive === 'function'
+        && window.SECURITY_IsActive();
 
     if (running) {
         if (isLan) {
@@ -244,12 +254,14 @@ function loop() {
                 if (typeof LAN_SURVIVAL_preUpdate === 'function') {
                     LAN_SURVIVAL_preUpdate(now);
                 }
-                collectLocalInput(p1);
-                if (gameState === 'prep') {
-                    p1.input.fire = false;
-                    p1.input.aim = false;
+                if (!securityActive) {
+                    collectLocalInput(p1);
+                    if (gameState === 'prep') {
+                        p1.input.fire = false;
+                        p1.input.aim = false;
+                    }
+                    updatePlayer(p1, dt, now);
                 }
-                updatePlayer(p1, dt, now);
                 if (dt > 0.0001) {
                     if (!p1._netVelocity) p1._netVelocity = new THREE.Vector3();
                     p1._netVelocity.set(
@@ -273,8 +285,10 @@ function loop() {
             if (typeof LAN_mainTick === 'function') LAN_mainTick(dt, now);
             if (typeof LAN_SURVIVAL_tick === 'function') LAN_SURVIVAL_tick(dt, now);
         } else if (isHost) {
-            collectLocalInput(p1);
-            updatePlayer(p1, dt, now);
+            if (!securityActive) {
+                collectLocalInput(p1);
+                updatePlayer(p1, dt, now);
+            }
 
             if (gameMode === 'online' && NET.isHost) {
                 updatePlayer(p2, dt, now);
@@ -286,8 +300,10 @@ function loop() {
             const prevPX = p1.pos.x;
             const prevPY = p1.pos.y;
             const prevPZ = p1.pos.z;
-            collectLocalInput(p1);
-            updatePlayer(p1, dt, now);
+            if (!securityActive) {
+                collectLocalInput(p1);
+                updatePlayer(p1, dt, now);
+            }
 
             if (dt > 0.0001) {
                 if (!p1._netVelocity) p1._netVelocity = new THREE.Vector3();
@@ -370,6 +386,7 @@ function loop() {
         }
     }
 
+    if (typeof window.SECURITY_Tick === 'function') window.SECURITY_Tick(dt, now);
     if (typeof updateDamageNumbers === 'function') updateDamageNumbers();
 
     updateEffects(dt, now);

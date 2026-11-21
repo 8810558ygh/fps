@@ -315,6 +315,214 @@ async function main() {
   await host.evaluate("setWeapon(p2, 'shotgun'); true");
   await sleep(500);
   const aiPerformanceAfterWeaponSwitch = await samplePerformance(host, 2500);
+  const singleNewMatchReset = await host.evaluate(`(() => {
+    setWeapon(p1, 'sniper');
+    setWeapon(p1, 'knife');
+    p1.pos.set(4, 0, 7);
+    p1.mesh.position.copy(p1.pos);
+    p1.medkits = 3;
+    resetMatch();
+    return {
+      weaponKey: p1.weaponKey,
+      primaryWeaponKey: p1.primaryWeaponKey,
+      ammo: p1.ammo,
+      reserve: p1.reserve,
+      medkits: p1.medkits,
+      atSpawn: Math.hypot(p1.pos.x - p1.spawn.x, p1.pos.z - p1.spawn.z) < 0.01,
+      pitch: p1.pitch
+    };
+  })()`);
+  if (singleNewMatchReset.weaponKey !== 'rifle'
+      || singleNewMatchReset.primaryWeaponKey !== 'rifle'
+      || singleNewMatchReset.ammo !== 25
+      || singleNewMatchReset.reserve !== 50
+      || singleNewMatchReset.medkits !== 0
+      || !singleNewMatchReset.atSpawn
+      || singleNewMatchReset.pitch !== 0) {
+    throw new Error(`Single-player new match state leaked: ${JSON.stringify(singleNewMatchReset)}`);
+  }
+  const securityLocalTest = await host.evaluate(`(async () => {
+    loadMap('indoor_complex');
+    gameState = 'combat';
+    running = true;
+    p1.hp = Math.max(100, p1.hp);
+    p1.deadUntil = 0;
+    p1.invulnUntil = Infinity;
+    p2.hp = 0;
+    p2.deadUntil = Infinity;
+    p2.baseVisible = false;
+    p2.mesh.visible = false;
+    p1.pos.set(-35, 0, 24.75);
+    p1.mesh.position.copy(p1.pos);
+    SECURITY_HandleKeyDown({ code: 'KeyF', repeat: false, preventDefault() {} });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const entered = {
+      active: SECURITY_IsActive(),
+      cam: SECURITY_GetRenderCamera()?.position.toArray() || null,
+      hud: document.body.classList.contains('security-camera-active'),
+      cameraCount: SECURITY_GetState().cameraCount,
+      cameraModels: SECURITY_GetState().cameraModels,
+      cameraNames: SECURITY_GetState().cameraNames,
+      playerVisible: p1.mesh.visible,
+      monitorCollider: colliders.some(box =>
+        box.x0 < -35 && box.x1 > -35
+        && box.z0 < 26.3 && box.z1 > 26.3
+        && box.top > 0.8
+      ),
+      powerCollider: colliders.some(box =>
+        box.x0 < 35 && box.x1 > 35
+        && box.z0 < -28 && box.z1 > -28
+        && box.top > 2.5
+      ),
+      powerPanelBlocker: (() => {
+        const ray = new THREE.Raycaster(
+          new THREE.Vector3(35, 1.5, -24.8),
+          new THREE.Vector3(0, 0, -1),
+          0,
+          8
+        );
+        const hit = ray.intersectObjects(wallMeshes, false)[0];
+        return !!hit && hit.point.z < -27;
+      })()
+    };
+    SECURITY_HandleMouseDown({ button: 0 });
+    const switched = SECURITY_GetState().cameraIndex;
+    SECURITY_HandleKeyDown({ code: 'KeyF', repeat: false, preventDefault() {} });
+    await new Promise(resolve => requestAnimationFrame(resolve));
+
+    p1.pos.set(35, 0, -24.7);
+    p1.mesh.position.copy(p1.pos);
+    SECURITY_HandleKeyDown({ code: 'KeyF', repeat: false, preventDefault() {} });
+    await new Promise(resolve => setTimeout(resolve, 2150));
+    const powerOff = SECURITY_GetState().powered;
+    SECURITY_HandleKeyUp({ code: 'KeyF' });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    SECURITY_HandleKeyDown({ code: 'KeyF', repeat: false, preventDefault() {} });
+    await new Promise(resolve => setTimeout(resolve, 2150));
+    const powerRestored = SECURITY_GetState().powered;
+    SECURITY_HandleKeyUp({ code: 'KeyF' });
+    return {
+      entered,
+      switched,
+      exited: !SECURITY_IsActive(),
+      powerOff,
+      powerRestored
+    };
+  })()`);
+  if (!securityLocalTest.entered.active
+      || !securityLocalTest.entered.hud
+      || !securityLocalTest.entered.cam
+      || securityLocalTest.entered.cameraCount !== 9
+      || securityLocalTest.entered.cameraModels !== 9
+      || securityLocalTest.entered.cameraNames.length !== 9
+      || !securityLocalTest.entered.cameraNames.includes('东北走廊拐角')
+      || !securityLocalTest.entered.cameraNames.includes('西南走廊拐角')
+      || !securityLocalTest.entered.cameraNames.includes('监控室内部')
+      || !securityLocalTest.entered.playerVisible
+      || !securityLocalTest.entered.monitorCollider
+      || !securityLocalTest.entered.powerCollider
+      || !securityLocalTest.entered.powerPanelBlocker
+      || securityLocalTest.switched !== 1
+      || !securityLocalTest.exited
+      || securityLocalTest.powerOff
+      || !securityLocalTest.powerRestored) {
+    throw new Error(`Security camera local test failed: ${JSON.stringify(securityLocalTest)}`);
+  }
+  const securityPeerTest = await host.evaluate(`(() => {
+    const saved = {
+      gameMode,
+      running,
+      gameState,
+      isHost: NET.isHost,
+      role: NET.role,
+      myPeerId: NET.myPeerId,
+      mySeat: NET.mySeat,
+      p1Pos: p1.pos.clone(),
+      p2Pos: p2.pos.clone()
+    };
+    try {
+      gameMode = 'online';
+      running = true;
+      gameState = 'combat';
+      NET.isHost = true;
+      NET.role = 'player';
+      NET.myPeerId = 'peer-host-test';
+      NET.mySeat = 'blue';
+      p2.hp = 100;
+      p2.deadUntil = 0;
+      p2.baseVisible = true;
+      p1.pos.set(-35, 0, 24.75);
+      p1.mesh.position.copy(p1.pos);
+      SECURITY_ResetLocal();
+
+      SECURITY_HandleKeyDown({ code: 'KeyF', repeat: false, preventDefault() {} });
+      const hostEntered = SECURITY_IsActive()
+        && SECURITY_GetState().controllerId === 'peer-host';
+      SECURITY_HandleKeyDown({ code: 'KeyF', repeat: false, preventDefault() {} });
+      const hostExited = !SECURITY_IsActive()
+        && SECURITY_GetState().controllerId === null;
+
+      p2.pos.set(-35, 0, 24.75);
+      p2.mesh.position.copy(p2.pos);
+      SECURITY_HandlePeerMessage({
+        type: 'securityRequest', action: 'enter'
+      }, 'peer-guest-test');
+      const remoteController = SECURITY_GetState().controllerId;
+      SECURITY_HandlePeerMessage({
+        type: 'securityRequest', action: 'look', yaw: 0.36, pitch: 0.21
+      }, 'peer-guest-test');
+      const remoteLook = SECURITY_GetState();
+
+      const sharedState = SECURITY_GetPeerState();
+      NET.isHost = false;
+      SECURITY_ResetLocal();
+      SECURITY_ApplyPeerState(sharedState);
+      const guestEntered = SECURITY_IsActive()
+        && SECURITY_GetState().controllerId === 'peer-client';
+
+      SECURITY_HandleKeyDown({ code: 'KeyF', repeat: false, preventDefault() {} });
+      NET.isHost = true;
+      SECURITY_ResetLocal();
+      p2.pos.set(35, 0, -24.7);
+      p2.mesh.position.copy(p2.pos);
+      SECURITY_HandlePeerMessage({
+        type: 'securityRequest', action: 'power'
+      }, 'peer-guest-test');
+      const remotePowerOff = SECURITY_GetState().powered === false;
+
+      return {
+        hostEntered,
+        hostExited,
+        remoteController,
+        remoteYaw: remoteLook.yaw,
+        remotePitch: remoteLook.pitch,
+        guestEntered,
+        remotePowerOff
+      };
+    } finally {
+      gameMode = saved.gameMode;
+      running = saved.running;
+      gameState = saved.gameState;
+      NET.isHost = saved.isHost;
+      NET.role = saved.role;
+      NET.myPeerId = saved.myPeerId;
+      NET.mySeat = saved.mySeat;
+      p1.pos.copy(saved.p1Pos);
+      p1.mesh.position.copy(p1.pos);
+      p2.pos.copy(saved.p2Pos);
+      p2.mesh.position.copy(p2.pos);
+      SECURITY_ResetLocal();
+    }
+  })()`);
+  if (!securityPeerTest.hostEntered
+      || !securityPeerTest.hostExited
+      || securityPeerTest.remoteController !== 'peer-client'
+      || Math.abs(securityPeerTest.remoteYaw - 0.36) >= 0.05
+      || Math.abs(securityPeerTest.remotePitch - 0.21) >= 0.05
+      || !securityPeerTest.guestEntered
+      || !securityPeerTest.remotePowerOff) {
+    throw new Error(`Peer security system failed: ${JSON.stringify(securityPeerTest)}`);
+  }
   await host.evaluate('exitToLobby(); true');
 
   await host.evaluate(`
@@ -685,6 +893,21 @@ async function main() {
   if (!/^准备 \d{2}:\d{2}$/.test(prepTimerText)) {
     throw new Error(`LAN preparation timer format is invalid: ${prepTimerText}`);
   }
+  await host.evaluate(`
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'KeyB', key: 'b', bubbles: true, cancelable: true
+    }));
+    window.dispatchEvent(new KeyboardEvent('keyup', {
+      code: 'KeyB', key: 'b', bubbles: true, cancelable: true
+    }));
+    true;
+  `);
+  await waitForPageExpression(
+    host,
+    'document.getElementById("weaponPanel").style.display === "flex"',
+    3000,
+    'LAN preparation weapon panel open'
+  );
   const prepStart = await host.evaluate('({ x: p1.pos.x, y: p1.pos.y, z: p1.pos.z })');
   await host.evaluate('keys.KeyW = true; true');
   await sleep(320);
@@ -692,10 +915,20 @@ async function main() {
   const prepMoved = await host.evaluate(`
     Math.hypot(p1.pos.x - ${prepStart.x}, p1.pos.z - ${prepStart.z}) > 0.05
   `);
-  await host.evaluate('keys.Space = true; true');
-  await sleep(100);
-  await host.evaluate('keys.Space = false; true');
-  const prepJumped = await host.evaluate('p1.vy > 0.05 || !p1.onGround');
+  const prepJumped = await host.evaluate(`new Promise(resolve => {
+    keys.Space = true;
+    const startedAt = performance.now();
+    function checkJump() {
+      const jumped = p1.vy > 0.05 || !p1.onGround;
+      if (jumped || performance.now() - startedAt > 400) {
+        keys.Space = false;
+        resolve(jumped);
+        return;
+      }
+      requestAnimationFrame(checkJump);
+    }
+    checkJump();
+  })`);
   await host.evaluate('mouse.leftDown = true; mouse.aim = true; true');
   await sleep(100);
   const prepFireBlocked = await host.evaluate('p1.input.fire === false && p1.input.aim === false');
@@ -764,6 +997,277 @@ async function main() {
   const combatTimerText = await host.evaluate("document.getElementById('lanRoundTimer').textContent");
   if (!/^战斗 \d{2}:\d{2}$/.test(combatTimerText) || !combatTimerText.startsWith('战斗 03:') && !combatTimerText.startsWith('战斗 02:')) {
     throw new Error(`LAN combat timer format is invalid: ${combatTimerText}`);
+  }
+  const panelClosedAtCombat = await host.evaluate(
+    'document.getElementById("weaponPanel").style.display === "none"'
+  );
+  const panelClosedByFallback = await host.evaluate(`(() => {
+    const panel = document.getElementById('weaponPanel');
+    panel.style.display = 'flex';
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'KeyB', key: 'b', bubbles: true, cancelable: true
+    }));
+    window.dispatchEvent(new KeyboardEvent('keyup', {
+      code: 'KeyB', key: 'b', bubbles: true, cancelable: true
+    }));
+    return panel.style.display === 'none';
+  })()`);
+  if (!panelClosedAtCombat || !panelClosedByFallback) {
+    throw new Error(`LAN weapon panel lifecycle failed: ${JSON.stringify({
+      panelClosedAtCombat,
+      panelClosedByFallback
+    })}`);
+  }
+  const weaponPanelLifecycleTest = {
+    openedInPrep: true,
+    closedAtCombat: panelClosedAtCombat,
+    bFallbackClose: panelClosedByFallback
+  };
+  const flashIndicatorId = `e2e-flash-indicator-${Date.now()}`;
+  await host.evaluate(`(async () => {
+    const target = LAN.models.get(${JSON.stringify(targetId)});
+    if (!target) return false;
+    const now = performance.now();
+    const pos = new THREE.Vector3(
+      target.pos.x,
+      target.pos.y + 1.7,
+      target.pos.z - 0.8
+    );
+    applyLANFlashResult(
+      pos,
+      now,
+      [${JSON.stringify(targetId)}],
+      FLASH.flashDurationMs
+    );
+    LAN_broadcastFx('flashDetonate', {
+      id: ${JSON.stringify(flashIndicatorId)},
+      px: pos.x, py: pos.y, pz: pos.z,
+      targets: [${JSON.stringify(targetId)}],
+      durationMs: FLASH.flashDurationMs
+    });
+    return true;
+  })()`);
+  await Promise.all([
+    waitForPageExpression(
+      host,
+      `LAN.models.get(${JSON.stringify(targetId)})?.flashIndicator?.visible === true`,
+      4000,
+      'remote flash indicator'
+    ),
+    waitForPageExpression(
+      joiner,
+      'p1.flashUntil > performance.now() && parseFloat(document.getElementById("flashOverlay").style.opacity || "0") > 0',
+      4000,
+      'flashed player screen overlay'
+    ),
+  ]);
+  const flashIndicatorTest = {
+    remoteIndicator: await host.evaluate(`(() => {
+      const player = LAN.models.get(${JSON.stringify(targetId)});
+      const indicator = player?.flashIndicator;
+      return {
+        visible: !!indicator?.visible,
+        aboveHead: !!indicator && indicator.position.y > 1.4,
+        white: indicator?.userData?.sphere?.material?.color?.getHexString?.() === 'ffffff'
+      };
+    })()`),
+    localFlashRemain: await joiner.evaluate('p1.flashUntil - performance.now()'),
+  };
+  if (!flashIndicatorTest.remoteIndicator.visible
+      || !flashIndicatorTest.remoteIndicator.aboveHead
+      || !flashIndicatorTest.remoteIndicator.white
+      || flashIndicatorTest.localFlashRemain <= 0
+      || flashIndicatorTest.localFlashRemain > 3100) {
+    throw new Error(`LAN flash indicator failed: ${JSON.stringify(flashIndicatorTest)}`);
+  }
+  await Promise.all([
+    host.evaluate(`(() => {
+      const player = LAN.models.get(${JSON.stringify(targetId)});
+      if (player) player.flashUntil = 0;
+      return true;
+    })()`),
+    joiner.evaluate('p1.flashUntil = 0; true'),
+  ]);
+  const minimapEnemyTest = await host.evaluate(`(() => {
+    const remote = LAN.models.get(${JSON.stringify(targetId)});
+    const state = LAN.playerStates.get(${JSON.stringify(targetId)});
+    if (!remote || !state) return { ok: false, reason: 'remote missing' };
+    const saved = {
+      team: p1.team,
+      camQuaternion: p1.cam.quaternion.clone(),
+      remotePosition: remote.pos.clone(),
+      remoteMeshPosition: remote.mesh.position.clone(),
+      remoteTarget: remote._netTargetPos?.clone() || null,
+      state
+    };
+    try {
+      p1.team = 'blue';
+      LAN.playerStates.set(${JSON.stringify(targetId)}, {
+        ...state,
+        team: 'red',
+        alive: true,
+        downed: false,
+        connected: true
+      });
+      remote.team = 'red';
+      remote.baseVisible = true;
+      remote.mesh.visible = true;
+      const cameraPosition = p1.cam.getWorldPosition(new THREE.Vector3());
+      let visible = false;
+      for (const distance of [0.65, 0.9, 1.2, 1.8]) {
+        for (let i = 0; i < 8 && !visible; i++) {
+          const angle = -Math.PI / 2 + i * Math.PI / 4;
+          const x = cameraPosition.x + Math.cos(angle) * distance;
+          const z = cameraPosition.z + Math.sin(angle) * distance;
+          remote.pos.set(x, terrainGroundAt(x, z), z);
+          remote.mesh.position.copy(remote.pos);
+          p1.cam.lookAt(
+            remote.pos.x,
+            remote.pos.y + 1.0,
+            remote.pos.z
+          );
+          p1.cam.updateMatrixWorld(true);
+          visible = MINIMAP_isEnemyVisible(${JSON.stringify(targetId)});
+        }
+        if (visible) break;
+      }
+      return {
+        ok: true,
+        enemies: MINIMAP_collectEnemies(),
+        visible
+      };
+    } finally {
+      p1.team = saved.team;
+      p1.cam.quaternion.copy(saved.camQuaternion);
+      p1.cam.updateMatrixWorld(true);
+      remote.pos.copy(saved.remotePosition);
+      remote.mesh.position.copy(saved.remoteMeshPosition);
+      if (saved.remoteTarget && remote._netTargetPos) {
+        remote._netTargetPos.copy(saved.remoteTarget);
+      }
+      LAN.playerStates.set(${JSON.stringify(targetId)}, saved.state);
+    }
+  })()`);
+  if (!minimapEnemyTest.ok
+      || !minimapEnemyTest.enemies.includes(targetId)
+      || !minimapEnemyTest.visible) {
+    throw new Error(`LAN minimap enemy visibility failed: ${JSON.stringify(minimapEnemyTest)}`);
+  }
+  const lanXrayTest = await host.evaluate(`(() => {
+    const remote = LAN.models.get(${JSON.stringify(targetId)});
+    const state = LAN.playerStates.get(${JSON.stringify(targetId)});
+    const wall = colliders
+      .filter(c => Number.isFinite(c.x0) && Number.isFinite(c.x1)
+        && Number.isFinite(c.z0) && Number.isFinite(c.z1)
+        && c.top >= 1.5
+        && Math.abs(c.x1 - c.x0) >= 1
+        && Math.abs(c.z1 - c.z0) >= 1)
+      .sort((a, b) => {
+        const aw = (a.x1 - a.x0) * (a.z1 - a.z0);
+        const bw = (b.x1 - b.x0) * (b.z1 - b.z0);
+        return bw - aw;
+      })[0];
+    if (!remote || !state || !wall) {
+      return { ok: false, reason: 'missing target or wall' };
+    }
+    const saved = {
+      team: p1.team,
+      pos: p1.pos.clone(),
+      camPosition: p1.cam.position.clone(),
+      camQuaternion: p1.cam.quaternion.clone(),
+      remotePosition: remote.pos.clone(),
+      remoteMeshPosition: remote.mesh.position.clone(),
+      remoteTarget: remote._netTargetPos?.clone() || null,
+      state,
+      xrayWasOn: isXrayOn()
+    };
+    try {
+      p1.team = 'blue';
+      LAN.playerStates.set(${JSON.stringify(targetId)}, {
+        ...state,
+        team: 'red',
+        alive: true,
+        downed: false,
+        connected: true
+      });
+      remote.team = 'red';
+      remote.baseVisible = true;
+      remote.mesh.visible = true;
+      const cx = (wall.x0 + wall.x1) / 2;
+      const minZ = Math.min(wall.z0, wall.z1);
+      const maxZ = Math.max(wall.z0, wall.z1);
+      p1.pos.set(cx, terrainGroundAt(cx, minZ - 2.5), minZ - 2.5);
+      p1.cam.position.set(
+        p1.pos.x,
+        p1.pos.y + p1.eyeH,
+        p1.pos.z
+      );
+      remote.pos.set(cx, terrainGroundAt(cx, maxZ + 2.5), maxZ + 2.5);
+      remote.mesh.position.copy(remote.pos);
+      p1.cam.lookAt(
+        remote.pos.x,
+        remote.pos.y + 1.1,
+        remote.pos.z
+      );
+      p1.cam.updateMatrixWorld(true);
+      handleSpecialCommand('xray on');
+      updateXrayVisibility();
+      let xrayMaterial = false;
+      remote.mesh.traverse(o => {
+        if (!o.isMesh) return;
+        if (o.material === o.userData._xrayMat
+            && o.material.depthTest === false
+            && o.material.color?.getHexString?.() === 'ff3355') {
+          xrayMaterial = true;
+        }
+      });
+      const applied = !!remote._xrayApplied && xrayMaterial;
+      handleSpecialCommand('xray off');
+      const restored = !remote._xrayApplied;
+      return { ok: applied && restored, applied, restored };
+    } finally {
+      if (saved.xrayWasOn) handleSpecialCommand('xray on');
+      else handleSpecialCommand('xray off');
+      p1.team = saved.team;
+      p1.pos.copy(saved.pos);
+      p1.cam.position.copy(saved.camPosition);
+      p1.cam.quaternion.copy(saved.camQuaternion);
+      p1.cam.updateMatrixWorld(true);
+      remote.pos.copy(saved.remotePosition);
+      remote.mesh.position.copy(saved.remoteMeshPosition);
+      if (saved.remoteTarget && remote._netTargetPos) {
+        remote._netTargetPos.copy(saved.remoteTarget);
+      }
+      LAN.playerStates.set(${JSON.stringify(targetId)}, saved.state);
+    }
+  })()`);
+  if (!lanXrayTest.ok) {
+    throw new Error(`LAN xray failed: ${JSON.stringify(lanXrayTest)}`);
+  }
+  const xrayCommandFilterTest = await host.evaluate(`(() => {
+    const wasOn = isXrayOn();
+    const chineseAliasHandled = handleSpecialCommand('打开透视');
+    const shortAliasHandled = handleSpecialCommand('xray');
+    const onHandled = handleSpecialCommand('XRAY ON');
+    const enabled = isXrayOn();
+    const offHandled = handleSpecialCommand('xray off');
+    if (wasOn) handleSpecialCommand('xray on');
+    return {
+      chineseAliasHandled,
+      shortAliasHandled,
+      onHandled,
+      enabled,
+      offHandled,
+      disabled: !isXrayOn()
+    };
+  })()`);
+  if (xrayCommandFilterTest.chineseAliasHandled
+      || xrayCommandFilterTest.shortAliasHandled
+      || !xrayCommandFilterTest.onHandled
+      || !xrayCommandFilterTest.enabled
+      || !xrayCommandFilterTest.offHandled
+      || !xrayCommandFilterTest.disabled) {
+    throw new Error(`Xray command filter failed: ${JSON.stringify(xrayCommandFilterTest)}`);
   }
   const trajectoryPreviewTest = await host.evaluate(`
     (() => {
@@ -1233,6 +1737,199 @@ async function main() {
   ]);
   await host.evaluate("LANNET.send({ type: 'returnLobby' }); true");
   await Promise.all([
+    waitForPageExpression(host, 'LAN.room && LAN.room.phase === "lobby"', 8000, 'security test host lobby'),
+    waitForPageExpression(joiner, 'LAN.room && LAN.room.phase === "lobby"', 8000, 'security test joiner lobby'),
+  ]);
+  await host.evaluate(`
+    _lanHandleReturnedToLobby({ room: { ...LAN.room, phase: 'lobby' } });
+    true;
+  `);
+
+  await host.evaluate(`(() => {
+    const mapSelect = document.getElementById('lanRoomMapSelect');
+    mapSelect.value = 'indoor_complex';
+    mapSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await Promise.all([
+    waitForPageExpression(host, 'LAN.room.mapId === "indoor_complex"', 6000, 'host security map'),
+    waitForPageExpression(joiner, 'LAN.room.mapId === "indoor_complex"', 6000, 'joiner security map'),
+  ]);
+  await Promise.all([
+    host.evaluate("document.getElementById('lanReadyBtn').click(); true"),
+    joiner.evaluate("document.getElementById('lanReadyBtn').click(); true"),
+  ]);
+  await waitForPageExpression(
+    host,
+    'LAN.room.players.every(player => player.ready)',
+    12000,
+    'security test ready'
+  );
+  await waitForPageExpression(host, '!document.getElementById("lanStartBtn").disabled', 12000, 'security start button');
+  await host.evaluate("document.getElementById('lanStartBtn').click(); true");
+  await Promise.all([
+    waitForPageExpression(
+      host,
+      'LAN.active && LAN.phase === "prep" && getCurrentMapId() === "indoor_complex"',
+      30000,
+      'host security match start'
+    ),
+    waitForPageExpression(
+      joiner,
+      'LAN.active && LAN.phase === "prep" && getCurrentMapId() === "indoor_complex"',
+      30000,
+      'joiner security match start'
+    ),
+  ]);
+
+  await Promise.all([
+    host.evaluate(`(() => {
+      p1.pos.set(-35, 0, 24.75);
+      p1.mesh.position.copy(p1.pos);
+      LANNET.send({
+        type: 'state',
+        x: p1.pos.x, y: p1.pos.y, z: p1.pos.z,
+        yaw: p1.yaw, pitch: p1.pitch, height: p1.height,
+        weapon: 'rifle', aiming: false, crouching: false
+      });
+      return true;
+    })()`),
+    joiner.evaluate(`(() => {
+      p1.pos.set(35, 0, -24.7);
+      p1.mesh.position.copy(p1.pos);
+      LANNET.send({
+        type: 'state',
+        x: p1.pos.x, y: p1.pos.y, z: p1.pos.z,
+        yaw: p1.yaw, pitch: p1.pitch, height: p1.height,
+        weapon: 'rifle', aiming: false, crouching: false
+      });
+      return true;
+    })()`),
+  ]);
+  await Promise.all([
+    waitForPageExpression(
+      host,
+      'Math.hypot(LAN.playerStates.get(LAN.selfId)?.x + 35, LAN.playerStates.get(LAN.selfId)?.z - 24.75) < 0.2',
+      5000,
+      'host security position'
+    ),
+    waitForPageExpression(
+      joiner,
+      'Math.hypot(LAN.playerStates.get(LAN.selfId)?.x - 35, LAN.playerStates.get(LAN.selfId)?.z + 24.7) < 0.2',
+      5000,
+      'joiner power position'
+    ),
+  ]);
+
+  await host.evaluate(`SECURITY_HandleKeyDown({
+    code: 'KeyF', repeat: false, preventDefault() {}
+  }); true`);
+  await Promise.all([
+    waitForPageExpression(host, 'SECURITY_IsActive() && !p1.vm.visible', 5000, 'host camera view'),
+    waitForPageExpression(
+      joiner,
+      `SECURITY_GetState().controllerId === ${JSON.stringify(hostSelfId)}`,
+      5000,
+      'joiner sees camera controller'
+    ),
+  ]);
+  const lanSecurityEnter = await Promise.all([
+    host.evaluate(`({
+      active: SECURITY_IsActive(),
+      camera: SECURITY_GetState().cameraIndex,
+      hud: document.body.classList.contains('security-camera-active'),
+      weaponVisible: p1.vm.visible
+    })`),
+    joiner.evaluate(`({
+      controllerId: SECURITY_GetState().controllerId,
+      powered: SECURITY_GetState().powered
+    })`),
+  ]);
+  await host.evaluate('SECURITY_HandleMouseDown({ button: 0 }); true');
+  await Promise.all([
+    waitForPageExpression(host, 'SECURITY_GetState().cameraIndex === 1', 5000, 'host camera cycle'),
+    waitForPageExpression(joiner, 'SECURITY_GetState().cameraIndex === 1', 5000, 'joiner camera cycle'),
+  ]);
+  await host.evaluate("LANNET.send({ type: 'securityLook', yaw: 2.72, pitch: 0.23 }); true");
+  await waitForPageExpression(
+    joiner,
+    'Math.abs(SECURITY_GetState().yaw - 2.72) < 0.05 && Math.abs(SECURITY_GetState().pitch - 0.23) < 0.05',
+    5000,
+    'joiner camera look sync'
+  );
+  const lanSecurityCamera = {
+    cameraIndex: await host.evaluate('SECURITY_GetState().cameraIndex'),
+    yawAtJoiner: await joiner.evaluate('SECURITY_GetState().yaw'),
+    pitchAtJoiner: await joiner.evaluate('SECURITY_GetState().pitch'),
+  };
+
+  await joiner.evaluate(`SECURITY_HandleKeyDown({
+    code: 'KeyF', repeat: false, preventDefault() {}
+  }); true`);
+  await Promise.all([
+    waitForPageExpression(
+      host,
+      'SECURITY_GetState().powered === false && !SECURITY_IsActive()',
+      6000,
+      'host forced camera exit on power cut'
+    ),
+    waitForPageExpression(joiner, 'SECURITY_GetState().powered === false', 6000, 'joiner power cut'),
+  ]);
+  const forcedExitByPower = {
+    active: await host.evaluate('SECURITY_IsActive()'),
+    controllerId: await joiner.evaluate('SECURITY_GetState().controllerId'),
+  };
+  await joiner.evaluate('SECURITY_HandleKeyUp({ code: "KeyF" }); true');
+  await sleep(120);
+  await joiner.evaluate(`SECURITY_HandleKeyDown({
+    code: 'KeyF', repeat: false, preventDefault() {}
+  }); true`);
+  await Promise.all([
+    waitForPageExpression(host, 'SECURITY_GetState().powered === true', 6000, 'host power restore sync'),
+    waitForPageExpression(joiner, 'SECURITY_GetState().powered === true', 6000, 'joiner power restore'),
+  ]);
+  await joiner.evaluate('SECURITY_HandleKeyUp({ code: "KeyF" }); true');
+  await host.evaluate(`SECURITY_HandleKeyDown({
+    code: 'KeyF', repeat: false, preventDefault() {}
+  }); true`);
+  await waitForPageExpression(host, 'SECURITY_IsActive()', 5000, 'host camera re-enter');
+  await host.evaluate(`SECURITY_HandleKeyDown({
+    code: 'KeyF', repeat: false, preventDefault() {}
+  }); true`);
+  await Promise.all([
+    waitForPageExpression(host, '!SECURITY_IsActive()', 5000, 'host F camera exit'),
+    waitForPageExpression(joiner, 'SECURITY_GetState().controllerId === null', 5000, 'joiner camera release'),
+  ]);
+  const lanSecurityTest = {
+    enter: lanSecurityEnter,
+    cameraIndex: lanSecurityCamera.cameraIndex,
+    yawAtJoiner: lanSecurityCamera.yawAtJoiner,
+    pitchAtJoiner: lanSecurityCamera.pitchAtJoiner,
+    forcedExitByPower,
+    exitedWithF: !(await host.evaluate('SECURITY_IsActive()')),
+    powerRestored: await joiner.evaluate('SECURITY_GetState().powered'),
+  };
+  if (!lanSecurityTest.enter[0].active
+      || !lanSecurityTest.enter[0].hud
+      || lanSecurityTest.enter[0].weaponVisible
+      || lanSecurityTest.enter[1].controllerId !== hostSelfId
+      || !lanSecurityTest.enter[1].powered
+      || lanSecurityTest.cameraIndex !== 1
+      || Math.abs(lanSecurityTest.yawAtJoiner - 2.72) >= 0.05
+      || Math.abs(lanSecurityTest.pitchAtJoiner - 0.23) >= 0.05
+      || lanSecurityTest.forcedExitByPower.active
+      || lanSecurityTest.forcedExitByPower.controllerId !== null
+      || !lanSecurityTest.exitedWithF
+      || !lanSecurityTest.powerRestored) {
+    throw new Error(`LAN security system failed: ${JSON.stringify(lanSecurityTest)}`);
+  }
+
+  await Promise.all([
+    host.evaluate('running = false; gameState = "idle"; true'),
+    joiner.evaluate('running = false; gameState = "idle"; true'),
+  ]);
+  await host.evaluate("LANNET.send({ type: 'returnLobby' }); true");
+  await Promise.all([
     waitForPageExpression(host, 'LAN.room && LAN.room.phase === "lobby"', 8000, 'AI test lobby'),
     waitForPageExpression(joiner, 'LAN.room && LAN.room.phase === "lobby"', 8000, 'AI test joiner lobby'),
   ]);
@@ -1452,6 +2149,25 @@ async function main() {
     waitForPageExpression(joiner, 'LAN.room && LAN.room.phase === "lobby"', 8000, 'joiner return to survival lobby'),
   ]);
 
+  await Promise.all([
+    host.evaluate(`
+      setWeapon(p1, 'sniper');
+      setWeapon(p1, 'knife');
+      p1.pos.set(4, 0, 7);
+      p1.mesh.position.copy(p1.pos);
+      p1.medkits = 3;
+      true;
+    `),
+    joiner.evaluate(`
+      setWeapon(p1, 'sniper');
+      setWeapon(p1, 'knife');
+      p1.pos.set(4, 0, 7);
+      p1.mesh.position.copy(p1.pos);
+      p1.medkits = 3;
+      true;
+    `),
+  ]);
+
   await host.evaluate(`(() => {
     const select = document.getElementById('lanRoomModeSelect');
     select.value = 'survival';
@@ -1548,7 +2264,82 @@ async function main() {
       'joiner survival start'
     ),
   ]);
+  await Promise.all([
+    waitForPageExpression(
+      host,
+      'LAN_SURVIVAL_STATE.playersPlaced === true',
+      5000,
+      'host survival players placed'
+    ),
+    waitForPageExpression(
+      joiner,
+      'LAN_SURVIVAL_STATE.playersPlaced === true',
+      5000,
+      'joiner survival players placed'
+    ),
+  ]);
+  const lanNewMatchReset = await Promise.all([
+    host.evaluate(`(() => {
+      const state = LAN.playerStates.get(LAN.selfId);
+      const spawn = _lanGetSpawn('blue', state?.spawnSlot || 0);
+      return {
+        weaponKey: p1.weaponKey,
+        primaryWeaponKey: p1.primaryWeaponKey,
+        ammo: p1.ammo,
+        reserve: p1.reserve,
+        medkits: p1.medkits,
+        atSpawn: Math.hypot(p1.pos.x - spawn.x, p1.pos.z - spawn.z) < 0.05,
+        pitch: p1.pitch
+      };
+    })()`),
+    joiner.evaluate(`(() => {
+      const state = LAN.playerStates.get(LAN.selfId);
+      const spawn = _lanGetSpawn('blue', state?.spawnSlot || 0);
+      return {
+        weaponKey: p1.weaponKey,
+        primaryWeaponKey: p1.primaryWeaponKey,
+        ammo: p1.ammo,
+        reserve: p1.reserve,
+        medkits: p1.medkits,
+        atSpawn: Math.hypot(p1.pos.x - spawn.x, p1.pos.z - spawn.z) < 0.05,
+        pitch: p1.pitch
+      };
+    })()`),
+  ]);
+  if (lanNewMatchReset.some(state =>
+    state.weaponKey !== 'rifle'
+    || state.primaryWeaponKey !== 'rifle'
+    || state.ammo !== 25
+    || state.reserve !== 50
+    || state.medkits !== 0
+    || !state.atSpawn
+    || state.pitch !== 0
+  )) {
+    throw new Error(`LAN new match state leaked: ${JSON.stringify(lanNewMatchReset)}`);
+  }
   await host.evaluate('LAN_AI.enabled = false; true');
+  const hostDamageFlashVisual = await host.evaluate(`new Promise(resolve => {
+    const flash = document.querySelector('#hud1 .dmgflash');
+    const oldSend = LANNET.send;
+    let peak = 0;
+    let frames = 0;
+    const sample = () => {
+      peak = Math.max(peak, Number(flash.style.opacity) || 0);
+      frames++;
+      if (frames < 30) {
+        requestAnimationFrame(sample);
+        return;
+      }
+      LANNET.send = oldSend;
+      resolve({ peak, opacity: Number(flash.style.opacity) || 0 });
+    };
+    LANNET.send = () => true;
+    LAN_SURVIVAL_handleZombieAttack(p1, 10);
+    requestAnimationFrame(sample);
+  })`);
+  if (hostDamageFlashVisual.peak < 0.5) {
+    throw new Error(`Host zombie damage flash missing: ${JSON.stringify(hostDamageFlashVisual)}`);
+  }
   await waitForPageExpression(
     host,
     '!document.querySelector("#hud1 .centermsg").textContent.includes("回合")',
@@ -1742,6 +2533,45 @@ async function main() {
     `LAN.playerStates.get(${JSON.stringify(survivalAiId)})?.survivalWaveKills || 0`
   );
   await host.evaluate('LAN_AI.enabled = false; true');
+  const aiDownedPoseTest = await host.evaluate(`(() => {
+    const ai = LAN.models.get(${JSON.stringify(survivalAiId)});
+    const unit = LAN_AI.units.get(${JSON.stringify(survivalAiId)}) || { player: ai };
+    if (!ai) return null;
+    _lanAIUpdateUnit(unit, {
+      alive: false,
+      downed: true,
+      connected: true,
+      hp: 0,
+      armor: 0
+    }, performance.now(), 1 / 60);
+    const state = {
+      downed: !!ai.downed,
+      visible: !!ai.mesh.visible,
+      baseVisible: !!ai.baseVisible,
+      lying: Math.abs(ai.mesh.rotation.x + Math.PI / 2) < 0.05,
+      gunHidden: ai.gunHolder?.visible === false
+    };
+    const live = LAN.playerStates.get(${JSON.stringify(survivalAiId)});
+    if (live) {
+      ai.downed = false;
+      ai.deadUntil = 0;
+      ai.baseVisible = true;
+      ai.mesh.visible = true;
+      ai.mesh.rotation.x = 0;
+      ai.mesh.rotation.z = 0;
+      ai.mesh.position.y = ai.pos.y;
+      if (ai.gunHolder) ai.gunHolder.visible = true;
+    }
+    return state;
+  })()`);
+  if (!aiDownedPoseTest
+      || !aiDownedPoseTest.downed
+      || !aiDownedPoseTest.visible
+      || !aiDownedPoseTest.baseVisible
+      || !aiDownedPoseTest.lying
+      || !aiDownedPoseTest.gunHidden) {
+    throw new Error(`AI downed pose failed: ${JSON.stringify(aiDownedPoseTest)}`);
+  }
   let survivalKillZombieId = await joiner.evaluate(
     'getAllZombies().find(z => z.alive)?.netId || null'
   );
@@ -1827,6 +2657,31 @@ async function main() {
   const joinerRoomId = await host.evaluate(
     "LAN.room.players.find(player => player.name === '测试玩家B').id"
   );
+  await joiner.evaluate(`(() => {
+    const flash = document.querySelector('#hud1 .dmgflash');
+    window.__dmgFlashPeak = 0;
+    window.__dmgFlashObserver?.disconnect();
+    window.__dmgFlashObserver = new MutationObserver(() => {
+      window.__dmgFlashPeak = Math.max(
+        window.__dmgFlashPeak,
+        Number(flash.style.opacity) || 0
+      );
+    });
+    window.__dmgFlashObserver.observe(flash, {
+      attributes: true,
+      attributeFilter: ['style']
+    });
+    return true;
+  })()`);
+  await host.evaluate(`(() => {
+    window.__remoteDamageAudioCount = 0;
+    window.__originalSHit = sHit;
+    window.sHit = (...args) => {
+      window.__remoteDamageAudioCount++;
+      return window.__originalSHit(...args);
+    };
+    return true;
+  })()`);
   await host.evaluate(`(() => {
     const target = LAN.playerStates.get(${JSON.stringify(joinerRoomId)});
     const damage = Math.max(1, Math.min(100, target.armor + target.hp - 50));
@@ -1849,6 +2704,28 @@ async function main() {
     3000,
     'survival incoming damage flash'
   );
+  await sleep(50);
+  const joinerDamageFlashVisual = await joiner.evaluate(`(() => {
+    const result = {
+      peak: window.__dmgFlashPeak || 0,
+      opacity: Number(document.querySelector('#hud1 .dmgflash').style.opacity) || 0
+    };
+    window.__dmgFlashObserver?.disconnect();
+    window.__dmgFlashObserver = null;
+    return result;
+  })()`);
+  if (joinerDamageFlashVisual.peak < 0.5) {
+    throw new Error(`Joiner zombie damage flash missing: ${JSON.stringify(joinerDamageFlashVisual)}`);
+  }
+  const remoteDamageAudioCount = await host.evaluate(`(() => {
+    const count = window.__remoteDamageAudioCount || 0;
+    if (window.__originalSHit) window.sHit = window.__originalSHit;
+    window.__originalSHit = null;
+    return count;
+  })()`);
+  if (remoteDamageAudioCount !== 0) {
+    throw new Error(`Remote players heard another player's zombie hit: ${remoteDamageAudioCount}`);
+  }
   await host.evaluate(`(() => {
     const target = LAN.playerStates.get(${JSON.stringify(joinerRoomId)});
     p1.medkits = 1;
@@ -2249,6 +3126,7 @@ async function main() {
     musician: survivalMusicZombieTest,
     aiZombieKillsBefore: survivalAiKillsBefore,
     aiZombieKillsAfter: survivalAiKillsAfter,
+    aiDownedPose: aiDownedPoseTest,
     mapAfterPortal: await host.evaluate('getCurrentMapId()'),
     autoReviveHp: await joiner.evaluate('LAN.playerStates.get(LAN.selfId).hp'),
     aiState: await host.evaluate(`(() => {
@@ -2347,6 +3225,11 @@ async function main() {
     prepJumped,
     prepFireBlocked,
     combatTimerText,
+    weaponPanelLifecycleTest,
+    flashIndicatorTest,
+    minimapEnemyTest,
+    lanXrayTest,
+    xrayCommandFilterTest,
     trajectoryPreviewTest,
     smokeResultTest,
     smokeResultPositionError,
@@ -2361,6 +3244,9 @@ async function main() {
     meleeConeTargetCount,
     aiPerformanceBase,
     aiPerformanceAfterWeaponSwitch,
+    singleNewMatchReset,
+    securityLocalTest,
+    securityPeerTest,
     deathReportUi,
     survivorReportUi,
     barrelTest,
@@ -2373,8 +3259,13 @@ async function main() {
     storedMatch,
     returnButtonUi,
     returnedRoomUi,
+    lanSecurityTest,
     aiSeatTest,
     aiBehaviorTest,
+    lanNewMatchReset,
+    hostDamageFlashVisual,
+    joinerDamageFlashVisual,
+    remoteDamageAudioCount,
     survivalTest,
     endlessChoiceUi,
     victoryAnimation,

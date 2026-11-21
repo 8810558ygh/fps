@@ -151,6 +151,8 @@
     function applyRemoteDownedPose(player) {
         if (!player || !player.mesh) return;
         if (player.downed) {
+            player.baseVisible = true;
+            player.deadUntil = Infinity;
             player.mesh.visible = true;
             player.mesh.rotation.x = -Math.PI / 2;
             player.mesh.rotation.z = 0.08;
@@ -231,7 +233,12 @@
         hideRescue();
         updatePortalStatus('');
         hideEndlessChoice();
-        placePlayers(Array.from(LAN.playerStates.values()));
+        const initialPlayers = Array.from(LAN.playerStates.values());
+        if (initialPlayers.length > 0) {
+            placePlayers(initialPlayers);
+        } else {
+            S.playersPlaced = false;
+        }
     }
 
     function applyState(msg) {
@@ -1242,7 +1249,9 @@
         });
     };
     window.LAN_SURVIVAL_handleZombieAttack = function (target, damage) {
-        if (!S.isHost || !target) return;
+        if (!target) return;
+        if (target === p1) flashIncomingDamage();
+        if (!S.isHost) return;
         LANNET.send({
             type: 'survivalZombieAttack',
             targetId: target.netId || target.id,

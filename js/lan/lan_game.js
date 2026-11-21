@@ -1020,6 +1020,7 @@ function _lanUpdateHUD(msg) {
 function _lanHandleSnapshot(msg) {
     if (!LAN.active) return;
 
+    const previousPhase = LAN.phase;
     const players = Array.isArray(msg.players) ? msg.players : [];
     for (const state of players) {
         if (state.id === LAN.selfId) _lanSyncSelf(state, players);
@@ -1039,6 +1040,11 @@ function _lanHandleSnapshot(msg) {
     LAN.phase = msg.phase;
     LAN.round = msg.round;
     LAN.lastSnapshotAt = performance.now();
+    if (previousPhase === 'prep'
+        && msg.phase !== 'prep'
+        && typeof window.closeWeaponPanel === 'function') {
+        window.closeWeaponPanel(true);
+    }
     gameState = msg.phase === 'round' ? 'combat'
         : (msg.phase === 'prep' ? 'prep'
         : (msg.phase === 'roundEnd' ? 'roundEnd' : gameState));
@@ -1049,7 +1055,13 @@ function _lanHandleSnapshot(msg) {
 }
 
 function lanStartMatch(mapId, mode = 'team') {
+    if (typeof window.SECURITY_Exit === 'function') {
+        window.SECURITY_Exit('正在开始新比赛');
+    }
     if (typeof LAN_AI_reset === 'function') LAN_AI_reset();
+    if (typeof resetPlayerForNewMatch === 'function') {
+        resetPlayerForNewMatch(p1);
+    }
     LAN.active = true;
     LAN.mode = mode;
     LAN.mapId = mapId || LAN.mapId;
@@ -1078,6 +1090,9 @@ function lanStartMatch(mapId, mode = 'team') {
 
     if (getCurrentMapId() !== LAN.mapId && typeof loadMap === 'function') {
         loadMap(LAN.mapId);
+    }
+    if (typeof resetPlayer === 'function') {
+        resetPlayer(p1, performance.now());
     }
     if (typeof PERF_ReapplyMapQuality === 'function') PERF_ReapplyMapQuality();
     if (typeof clearAllSmokes === 'function') clearAllSmokes();
@@ -1137,6 +1152,9 @@ function _lanSaveMatchResult(msg) {
 function _lanMatchEnd(msg) {
     _lanSaveMatchResult(msg);
     _lanHideRoundReport(true);
+    if (typeof window.SECURITY_Exit === 'function') {
+        window.SECURITY_Exit('比赛已结束');
+    }
     LAN.returnedToRoom = false;
     running = false;
     gameState = 'idle';
@@ -1256,6 +1274,10 @@ function _lanHandleEvent(msg) {
 }
 
 window.LAN_handleMessage = function (msg) {
+    if (typeof window.SECURITY_HandleLANMessage === 'function'
+        && window.SECURITY_HandleLANMessage(msg)) {
+        return;
+    }
     if (msg.type === 'welcome') {
         LAN.selfId = msg.id;
         return;
@@ -1309,6 +1331,7 @@ window.LAN_handleMessage = function (msg) {
         LAN.reconnectPending = false;
         LAN.hostExitHandled = false;
         LAN.room = msg.room;
+        if (msg.room?.security) window.SECURITY_ApplyState?.(msg.room.security);
         if (msg.room && msg.room.phase === 'lobby') {
             const stillOnMatchEnd = _lanEl('lanEndOverlay')
                 && _lanEl('lanEndOverlay').style.display === 'flex'
@@ -1335,6 +1358,9 @@ window.LAN_handleMessage = function (msg) {
         return;
     }
     if (msg.type === 'snapshot') {
+        if (msg.security && typeof window.SECURITY_ApplyState === 'function') {
+            window.SECURITY_ApplyState(msg.security);
+        }
         if (msg.mode === 'survival' && typeof LAN_SURVIVAL_handleSnapshot === 'function') {
             LAN_SURVIVAL_handleSnapshot(msg);
             return;
@@ -1368,6 +1394,9 @@ window.LAN_handleMessage = function (msg) {
             if (LAN.roundReportCache) _lanShowRoundReport(LAN.roundReportCache);
         }
         if (msg.phase === 'round') {
+            if (typeof window.closeWeaponPanel === 'function') {
+                window.closeWeaponPanel(true);
+            }
             lanNotify('开始交战', 900);
             _lanHideRoundReport(true);
         }

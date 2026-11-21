@@ -25,6 +25,25 @@ const SURVIVAL_REVIVE_RANGE = 2.5;
 const SURVIVAL_HEAL_MS = 1500;
 const SURVIVAL_HEAL_RANGE = 3.2;
 const SURVIVAL_HEAL_AMOUNT = 50;
+const SECURITY_TERMINAL = { x: -35, z: 26, radius: 2.7 };
+const SECURITY_POWER_PANEL = { x: 35, z: -26, radius: 2.7 };
+const SECURITY_CAMERA_YAWS = [
+  0,
+  Math.PI,
+  Math.PI / 4,
+  -Math.PI * 3 / 4,
+  0,
+  Math.PI,
+  Math.PI / 2,
+  -Math.PI / 2,
+  -0.68,
+];
+const SECURITY_CAMERA_COUNT = SECURITY_CAMERA_YAWS.length;
+const SECURITY_YAW_LIMIT = 1.18;
+const SECURITY_BASE_PITCH = -0.17;
+const SECURITY_PITCH_MIN = -1.0;
+const SECURITY_PITCH_MAX = 0.55;
+const SECURITY_POWER_COOLDOWN_MS = 900;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -287,12 +306,70 @@ function roomLobby(room) {
       mapIndex: room.survival.mapIndex,
       mapId: room.survival.mapId,
     } : null,
+    security: securityPublicState(room),
     phase: room.phase,
     players: Array.from(room.memberIds)
       .map(id => clients.get(id))
       .filter(Boolean)
       .map(publicPlayer),
   };
+}
+
+function defaultSecurityState() {
+  return {
+    powered: true,
+    controllerId: null,
+    cameraIndex: 0,
+    yaw: SECURITY_CAMERA_YAWS[0],
+    pitch: SECURITY_BASE_PITCH,
+    lastPowerAt: 0,
+  };
+}
+
+function ensureSecurityState(room) {
+  if (!room.security) room.security = defaultSecurityState();
+  return room.security;
+}
+
+function securityPublicState(room) {
+  if (!room || (room.mode || 'team') !== 'team') return null;
+  const security = ensureSecurityState(room);
+  return {
+    powered: security.powered,
+    controllerId: security.controllerId,
+    cameraIndex: security.cameraIndex,
+    yaw: security.yaw,
+    pitch: security.pitch,
+  };
+}
+
+function broadcastSecurityState(room) {
+  if (!room || room.mode !== 'team') return;
+  broadcastRoom(room, {
+    type: 'securityState',
+    security: securityPublicState(room),
+  });
+}
+
+function resetSecurityState(room, broadcast = true) {
+  if (room.mode !== 'team') {
+    room.security = null;
+    return;
+  }
+  room.security = defaultSecurityState();
+  if (broadcast) broadcastSecurityState(room);
+}
+
+function isSecurityAvailable(room) {
+  return room
+    && room.mode === 'team'
+    && room.mapId === 'indoor_complex'
+    && (room.phase === 'prep' || room.phase === 'round');
+}
+
+function securityNear(state, point, radius) {
+  if (!state || !Number.isFinite(state.x) || !Number.isFinite(state.z)) return false;
+  return Math.hypot(state.x - point.x, state.z - point.z) <= radius;
 }
 
 function remapRoundInteractionId(room, oldId, newId) {
@@ -362,6 +439,9 @@ function tryMatchReconnect(room, newClient) {
   newClient.lastStateAt = oldClient.lastStateAt || 0;
   newClient.lastBarrelAt = oldClient.lastBarrelAt || 0;
   newClient._prevStateServerAt = oldClient._prevStateServerAt || 0;
+  if (room.security?.controllerId === oldId) {
+    room.security.controllerId = newId;
+  }
   remapRoundInteractionId(room, oldId, newId);
 
   send(newClient.ws, {
@@ -370,6 +450,7 @@ function tryMatchReconnect(room, newClient) {
     room: roomLobby(room),
   });
   if (room.survival) broadcastSurvivalState(room);
+  if (room.security) broadcastSecurityState(room);
   return { ok: true, oldId, newId };
 }
 
@@ -714,6 +795,10 @@ function leaveRoom(client, notify = true) {
   const room = client.roomId ? rooms.get(client.roomId) : null;
   if (!room) return;
 
+  if (room.security?.controllerId === client.id) {
+    room.security.controllerId = null;
+    if (notify) broadcastSecurityState(room);
+  }
   room.memberIds.delete(client.id);
   room.states.delete(client.id);
   client.roomId = null;
@@ -786,6 +871,7 @@ function beginPrep(room) {
   room.phase = 'prep';
   room.phaseEnd = Date.now() + PREP_MS;
   resetRound(room);
+  resetSecurityState(room, true);
   broadcastRoom(room, {
     type: 'round',
     phase: 'prep',
@@ -809,6 +895,7 @@ function startSurvivalMatch(room) {
     client.survivalCoins = 0;
   }
   room.phase = 'survival';
+  room.security = null;
   room.matchId = crypto.randomUUID();
   room.matchStartedAt = Date.now();
   room.matchAllowedIps = new Set(
@@ -920,6 +1007,7 @@ function startMatch(room) {
   room.roundWinner = null;
   room.roundEndsAt = 0;
   room.returnedIds.clear();
+  room.security = defaultSecurityState();
   room.matchId = crypto.randomUUID();
   room.matchStartedAt = Date.now();
   room.matchAllowedIps = new Set(
@@ -939,6 +1027,10 @@ function endRound(room, winnerTeam) {
   room.phase = 'roundEnd';
   room.phaseEnd = Date.now() + ROUND_END_MS;
   room.roundWinner = winnerTeam;
+  if (room.security) {
+    room.security.controllerId = null;
+    broadcastSecurityState(room);
+  }
   broadcastRoom(room, {
     type: 'roundEnd',
     winnerTeam,
@@ -1079,6 +1171,7 @@ function roomTick(room) {
     redScore: room.redScore,
     phaseRemain,
     players,
+    security: securityPublicState(room),
   });
 }
 
@@ -1128,15 +1221,17 @@ function applyDamage(room, attacker, target, weaponKey, part, distance, damageOv
   targetState.armor = Math.max(0, targetState.armor - absorb);
   targetState.hp = Math.max(0, targetState.hp - (damage - absorb));
 
-  broadcastRoom(room, {
-    type: 'damage',
-    attackerId: attacker.id,
-    targetId: target.id,
-    part,
-    damage: Math.round(damage),
-    hp: Math.round(targetState.hp),
-    armor: Math.round(targetState.armor),
-  });
+  if (!options.suppressDamageBroadcast) {
+    broadcastRoom(room, {
+      type: 'damage',
+      attackerId: attacker.id,
+      targetId: target.id,
+      part,
+      damage: Math.round(damage),
+      hp: Math.round(targetState.hp),
+      armor: Math.round(targetState.armor),
+    });
+  }
 
   if (targetState.hp <= 0) {
     targetState.alive = false;
@@ -1226,6 +1321,7 @@ wss.on('connection', ws => {
         round: 0,
         blueScore: 0,
         redScore: 0,
+        security: defaultSecurityState(),
         phaseEnd: 0,
       };
       rooms.set(code, room);
@@ -1404,6 +1500,114 @@ wss.on('connection', ws => {
       return;
     }
 
+    if (msg.type === 'securityEnter') {
+      const state = room.states.get(client.id);
+      if (!isSecurityAvailable(room)
+          || !ensureSecurityState(room).powered
+          || !state
+          || !state.alive) {
+        send(ws, { type: 'securityDenied', message: '当前无法使用监控终端' });
+        return;
+      }
+      const security = ensureSecurityState(room);
+      if (security.controllerId && security.controllerId !== client.id) {
+        send(ws, { type: 'securityDenied', message: '监控终端正在被队友使用' });
+        return;
+      }
+      if (!securityNear(state, SECURITY_TERMINAL, SECURITY_TERMINAL.radius)) {
+        send(ws, { type: 'securityDenied', message: '请靠近监控终端后按 F' });
+        return;
+      }
+      security.controllerId = client.id;
+      security.cameraIndex = 0;
+      security.yaw = SECURITY_CAMERA_YAWS[0];
+      security.pitch = SECURITY_BASE_PITCH;
+      broadcastSecurityState(room);
+      return;
+    }
+
+    if (msg.type === 'securityLook') {
+      const security = room.security;
+      if (!isSecurityAvailable(room)
+          || !security
+          || !security.powered
+          || security.controllerId !== client.id) {
+        return;
+      }
+      const index = Math.max(0, Math.min(
+        SECURITY_CAMERA_COUNT - 1,
+        Math.floor(Number(security.cameraIndex) || 0)
+      ));
+      const baseYaw = SECURITY_CAMERA_YAWS[index];
+      const yaw = Number(msg.yaw);
+      const pitch = Number(msg.pitch);
+      if (Number.isFinite(yaw)) {
+        security.yaw = Math.max(
+          baseYaw - SECURITY_YAW_LIMIT,
+          Math.min(baseYaw + SECURITY_YAW_LIMIT, yaw)
+        );
+      }
+      if (Number.isFinite(pitch)) {
+        security.pitch = Math.max(
+          SECURITY_PITCH_MIN,
+          Math.min(SECURITY_PITCH_MAX, pitch)
+        );
+      }
+      return;
+    }
+
+    if (msg.type === 'securityCamera') {
+      const security = room.security;
+      if (!isSecurityAvailable(room)
+          || !security
+          || !security.powered
+          || security.controllerId !== client.id) {
+        return;
+      }
+      const direction = Number(msg.direction) < 0 ? -1 : 1;
+      security.cameraIndex = (
+        (security.cameraIndex + direction) % SECURITY_CAMERA_COUNT
+        + SECURITY_CAMERA_COUNT
+      ) % SECURITY_CAMERA_COUNT;
+      security.yaw = SECURITY_CAMERA_YAWS[security.cameraIndex];
+      security.pitch = SECURITY_BASE_PITCH;
+      broadcastSecurityState(room);
+      return;
+    }
+
+    if (msg.type === 'securityExit') {
+      const security = room.security;
+      if (!security || security.controllerId !== client.id) return;
+      security.controllerId = null;
+      broadcastSecurityState(room);
+      return;
+    }
+
+    if (msg.type === 'securityPowerToggle') {
+      if (!isSecurityAvailable(room)) {
+        send(ws, { type: 'securityDenied', message: '当前地图没有可用的配电箱' });
+        return;
+      }
+      const state = room.states.get(client.id);
+      const security = ensureSecurityState(room);
+      if (!state
+          || !state.alive
+          || !securityNear(state, SECURITY_POWER_PANEL, SECURITY_POWER_PANEL.radius)) {
+        send(ws, { type: 'securityDenied', message: '请靠近配电箱后长按 F' });
+        return;
+      }
+      const now = Date.now();
+      if (now - (security.lastPowerAt || 0) < SECURITY_POWER_COOLDOWN_MS) return;
+      security.lastPowerAt = now;
+      security.powered = !security.powered;
+      security.cameraIndex = 0;
+      security.yaw = SECURITY_CAMERA_YAWS[0];
+      security.pitch = SECURITY_BASE_PITCH;
+      if (!security.powered) security.controllerId = null;
+      broadcastSecurityState(room);
+      return;
+    }
+
     if (msg.type === 'survivalSnapshot') {
       if (room.mode !== 'survival' || room.ownerId !== client.id || !room.survival) return;
       if (room.survival.phase !== 'wave') return;
@@ -1497,11 +1701,12 @@ wss.on('connection', ws => {
           allowSelf: true,
           allowDeadAttacker: true,
           deferElimination: true,
+          suppressDamageBroadcast: true,
         }
       );
       const updatedState = room.states.get(target.id);
       if (updatedState) {
-        broadcastRoom(room, {
+        send(target.ws, {
           type: 'survivalPlayerDamaged',
           playerId: target.id,
           hp: updatedState.hp,
@@ -2011,6 +2216,16 @@ wss.on('connection', ws => {
         const key = `${client.id}:${kind}:${id}`;
         if (room.finalProjectileFx.has(key)) return;
         room.finalProjectileFx.add(key);
+        if (kind === 'flashDetonate' && Array.isArray(payload.targets)) {
+          payload.targets = payload.targets
+            .map(targetId => String(targetId || ''))
+            .filter(targetId => room.memberIds.has(targetId))
+            .slice(0, 10);
+          payload.durationMs = Math.max(
+            100,
+            Math.min(10000, Number(payload.durationMs) || 3000)
+          );
+        }
       }
       broadcastRoom(room, {
         type: 'fx',
@@ -2050,6 +2265,7 @@ wss.on('connection', ws => {
           room.blueScore = 0;
           room.redScore = 0;
           room.states.clear();
+          resetSecurityState(room, false);
           room.matchAllowedIps = null;
           room.returnedIds?.clear();
           for (const id of room.memberIds) {
@@ -2079,6 +2295,7 @@ wss.on('connection', ws => {
       room.blueScore = 0;
       room.redScore = 0;
       room.states.clear();
+      resetSecurityState(room, false);
       room.survival = null;
       room.matchAllowedIps = null;
       room.returnedIds?.clear();

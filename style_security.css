@@ -1,0 +1,207 @@
+/* ===== 设备间监控与配电 ===== */
+
+#securityCameraHUD {
+    position: fixed;
+    inset: 0;
+    z-index: 42;
+    display: none;
+    pointer-events: none;
+    color: #d9f8ff;
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    text-shadow: 0 1px 4px #000;
+    background:
+        linear-gradient(180deg, rgba(2, 13, 18, 0.28), transparent 18%, transparent 78%, rgba(2, 13, 18, 0.46)),
+        repeating-linear-gradient(0deg, rgba(125, 230, 255, 0.022) 0 1px, transparent 1px 4px);
+}
+
+body.security-camera-active #securityCameraHUD {
+    display: block;
+}
+
+body.security-camera-active #hud1,
+body.security-camera-active #timer,
+body.security-camera-active #minimap,
+body.security-camera-active #lanMatchHud,
+body.security-camera-active #adsReticle,
+body.security-camera-active #throwCountdown,
+body.security-camera-active #medkitProgress,
+body.security-camera-active #slowIndicator {
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
+#securityCameraHUD::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    box-shadow:
+        inset 0 0 110px 28px rgba(0, 8, 12, 0.72),
+        inset 0 0 0 2px rgba(104, 217, 241, 0.12);
+}
+
+.sec-cam-top,
+.sec-cam-bottom {
+    position: absolute;
+    left: 28px;
+    right: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    letter-spacing: 1.5px;
+    color: rgba(218, 249, 255, 0.9);
+}
+
+.sec-cam-top {
+    top: 22px;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.sec-cam-bottom {
+    bottom: 24px;
+    justify-content: center;
+    gap: 34px;
+    font-size: 13px;
+    color: rgba(194, 232, 240, 0.78);
+}
+
+.sec-cam-bottom b {
+    display: inline-flex;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(112, 224, 249, 0.48);
+    border-radius: 4px;
+    color: #8be8ff;
+    background: rgba(4, 22, 29, 0.62);
+}
+
+.sec-cam-live {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #7ef4bc;
+    font-size: 13px;
+}
+
+.sec-cam-live i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #42ff9b;
+    box-shadow: 0 0 9px #42ff9b;
+    animation: securityLivePulse 1.2s ease-in-out infinite;
+}
+
+.sec-cam-frame {
+    position: absolute;
+    inset: 52px 22px 58px;
+    border: 1px solid rgba(116, 225, 250, 0.22);
+    clip-path: polygon(
+        0 20px, 20px 0, calc(100% - 20px) 0, 100% 20px,
+        100% calc(100% - 20px), calc(100% - 20px) 100%,
+        20px 100%, 0 calc(100% - 20px)
+    );
+}
+
+.sec-cam-frame::before,
+.sec-cam-frame::after {
+    content: "";
+    position: absolute;
+    width: 58px;
+    height: 58px;
+    border-color: rgba(110, 232, 255, 0.58);
+}
+
+.sec-cam-frame::before {
+    left: 10px;
+    bottom: 10px;
+    border-left: 2px solid;
+    border-bottom: 2px solid;
+}
+
+.sec-cam-frame::after {
+    right: 10px;
+    top: 10px;
+    border-right: 2px solid;
+    border-top: 2px solid;
+}
+
+.sec-cam-index {
+    position: absolute;
+    right: 34px;
+    bottom: 72px;
+    color: rgba(138, 224, 244, 0.64);
+    font: 12px/1 Consolas, monospace;
+    letter-spacing: 2px;
+}
+
+#securityInteractPrompt {
+    position: fixed;
+    left: 50%;
+    bottom: 13%;
+    z-index: 40;
+    min-width: 280px;
+    padding: 10px 18px 12px;
+    transform: translateX(-50%) translateY(8px);
+    border: 1px solid rgba(115, 205, 234, 0.32);
+    border-radius: 7px;
+    opacity: 0;
+    pointer-events: none;
+    color: #e8f8ff;
+    background: rgba(5, 16, 23, 0.82);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38);
+    font: 14px/1.5 "Microsoft YaHei", "Segoe UI", sans-serif;
+    text-align: center;
+    transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+#securityInteractPrompt.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+#securityPromptBar {
+    display: none;
+    height: 5px;
+    margin-top: 8px;
+    overflow: hidden;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+#securityPromptFill {
+    display: block;
+    width: 0;
+    height: 100%;
+    background: linear-gradient(90deg, #36bfd7, #86f3ff);
+    box-shadow: 0 0 10px rgba(54, 191, 215, 0.72);
+}
+
+@keyframes securityLivePulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+}
+
+@media (max-width: 720px) {
+    .sec-cam-top {
+        top: 14px;
+        left: 16px;
+        right: 16px;
+        font-size: 13px;
+    }
+
+    .sec-cam-bottom {
+        left: 12px;
+        right: 12px;
+        bottom: 14px;
+        gap: 12px;
+        font-size: 10px;
+    }
+
+    .sec-cam-frame {
+        inset: 42px 10px 46px;
+    }
+}

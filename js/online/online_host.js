@@ -89,6 +89,11 @@ function hostBroadcastTick() {
     packet.stateEndTimeRemain = (typeof stateEndTime !== 'undefined') ? Math.max(0, stateEndTime - now) : 0;
     packet.bluePlayer = _payloadBlue;
     packet.redPlayer = _payloadRed;
+    packet.security = (gameMode === 'online'
+        && getCurrentMapId() === 'indoor_complex'
+        && typeof window.SECURITY_GetPeerState === 'function')
+        ? window.SECURITY_GetPeerState()
+        : null;
 
     broadcast(packet);
 

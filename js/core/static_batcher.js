@@ -26,6 +26,7 @@
 
     function _canBatch(mesh) {
         if (!mesh || !mesh.isMesh || mesh.isInstancedMesh) return false;
+        if (mesh.userData && mesh.userData.noBatch) return false;
         if (!mesh.geometry || !mesh.material || Array.isArray(mesh.material)) return false;
         if (mesh.material.transparent || mesh.material.opacity < 1) return false;
         if (mesh.userData && mesh.userData.barrelRef) return false;

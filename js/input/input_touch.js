@@ -290,8 +290,12 @@ const weaponCloseBtn = document.getElementById('weaponCloseBtn');
 if (weaponCloseBtn) {
     weaponCloseBtn.addEventListener('click', (e) => {
         e.preventDefault();
-        const panel = document.getElementById('weaponPanel');
-        if (panel) panel.style.display = 'none';
+        if (typeof window.closeWeaponPanel === 'function') {
+            window.closeWeaponPanel(false);
+        } else {
+            const panel = document.getElementById('weaponPanel');
+            if (panel) panel.style.display = 'none';
+        }
     });
 }
 

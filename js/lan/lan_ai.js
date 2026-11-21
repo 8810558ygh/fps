@@ -467,13 +467,28 @@ function _lanAIFire(unit, now) {
 
 function _lanAIUpdateUnit(unit, state, now, dt) {
     const player = unit.player;
+    if (state.downed && state.connected !== false) {
+        player.downed = true;
+        player.deadUntil = Infinity;
+        player.baseVisible = true;
+        player.mesh.visible = true;
+        player.mesh.rotation.x = -Math.PI / 2;
+        player.mesh.rotation.z = 0.08;
+        player.mesh.position.y = player.pos.y + 0.24;
+        if (player.gunHolder) player.gunHolder.visible = false;
+        unit.targetId = null;
+        unit.target = null;
+        return;
+    }
     if (!state.alive || state.connected === false) {
+        player.downed = false;
         player.deadUntil = Infinity;
         player.baseVisible = false;
         player.mesh.visible = false;
         return;
     }
 
+    player.downed = false;
     player.deadUntil = 0;
     player.baseVisible = true;
     player.mesh.visible = true;

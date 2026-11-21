@@ -228,13 +228,17 @@ function checkFlashHit(target, flashPos, now) {
     return true;
 }
 
-function detonateFlash(pos, now) {
+function _playFlashDetonationEffects(pos) {
     spawnFlashBurst(pos);
     if (typeof emitWorldSound === 'function') {
         emitWorldSound('flashDetonate', pos.x, pos.y, pos.z, false);
     } else if (typeof sFlashDetonate === 'function') {
         sFlashDetonate();
     }
+}
+
+function detonateFlash(pos, now) {
+    _playFlashDetonationEffects(pos);
 
     if (checkFlashHit(p1, pos, now)) {
         p1.flashUntil = now + FLASH.flashDurationMs;
@@ -245,6 +249,45 @@ function detonateFlash(pos, now) {
             if (typeof NET_broadcast === 'function') {
                 NET_broadcast({ type: 'flashEvent', durationMs: FLASH.flashDurationMs });
             }
+        }
+    }
+}
+
+function buildLANFlashResult(pos, now) {
+    const targets = [];
+    if (typeof p1 !== 'undefined' && p1 && checkFlashHit(p1, pos, now)) {
+        targets.push(LAN.selfId);
+    }
+    if (typeof LAN !== 'undefined' && LAN.models) {
+        for (const [id, player] of LAN.models) {
+            const state = LAN.playerStates.get(id);
+            if (!player
+                || !state?.alive
+                || state.downed
+                || state.connected === false
+                || !player.baseVisible) {
+                continue;
+            }
+            if (checkFlashHit(player, pos, now)) targets.push(id);
+        }
+    }
+    return {
+        targets: [...new Set(targets)].slice(0, 10),
+        durationMs: FLASH.flashDurationMs,
+    };
+}
+
+function applyLANFlashResult(pos, now, targetIds, durationMs) {
+    _playFlashDetonationEffects(pos);
+    const until = now + Math.max(100, Number(durationMs) || FLASH.flashDurationMs);
+    const ids = new Set(Array.isArray(targetIds) ? targetIds : []);
+    if (ids.has(LAN.selfId) && typeof p1 !== 'undefined' && p1) {
+        p1.flashUntil = until;
+    }
+    if (typeof LAN !== 'undefined' && LAN.models) {
+        for (const id of ids) {
+            const player = LAN.models.get(id);
+            if (player) player.flashUntil = until;
         }
     }
 }
@@ -303,7 +346,24 @@ function updateFlashes(dt, now) {
                 scene.remove(s.mesh);
                 s.mesh = null;
 
-                detonateFlash(s.pos.clone(), now);
+                const flashPos = s.pos.clone();
+                if (gameMode === 'lan') {
+                    const result = buildLANFlashResult(flashPos, now);
+                    applyLANFlashResult(
+                        flashPos, now,
+                        result.targets, result.durationMs
+                    );
+                    if (typeof LAN_broadcastFx === 'function') {
+                        LAN_broadcastFx('flashDetonate', {
+                            id: s.id,
+                            px: flashPos.x, py: flashPos.y, pz: flashPos.z,
+                            targets: result.targets,
+                            durationMs: result.durationMs,
+                        });
+                    }
+                } else {
+                    detonateFlash(flashPos, now);
+                }
 
                 if (typeof gameMode !== 'undefined' && gameMode === 'online'
                     && typeof NET !== 'undefined' && NET.isHost
@@ -314,14 +374,6 @@ function updateFlashes(dt, now) {
                         px: s.pos.x, py: s.pos.y, pz: s.pos.z,
                     });
                 }
-                if (typeof gameMode !== 'undefined' && gameMode === 'lan'
-                    && typeof LAN_broadcastFx === 'function') {
-                    LAN_broadcastFx('flashDetonate', {
-                        id: s.id,
-                        px: s.pos.x, py: s.pos.y, pz: s.pos.z,
-                    });
-                }
-
                 activeFlashes.splice(i, 1);
             }
         } else if (s.state === 'waiting') {
@@ -408,7 +460,16 @@ function handleLANFlashDetonate(data) {
     if (typeof scene === 'undefined' || !scene) return;
     const pos = new THREE.Vector3(data.px, data.py, data.pz);
     _removeFlashForFinalResult(data);
-    detonateFlash(pos, performance.now());
+    const now = performance.now();
+    const fallback = Array.isArray(data.targets)
+        ? null
+        : buildLANFlashResult(pos, now);
+    applyLANFlashResult(
+        pos,
+        now,
+        Array.isArray(data.targets) ? data.targets : fallback.targets,
+        data.durationMs || fallback?.durationMs || FLASH.flashDurationMs
+    );
 }
 window.handleLANFlashDetonate = handleLANFlashDetonate;
 

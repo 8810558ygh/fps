@@ -448,7 +448,7 @@
 
             // ---------- 房间内部家具与掩体 ----------
             // 四个方房
-            _addCover(-35, 26, 4.0, 1.5, 2.0, woodTex);
+            // 西北角房：监控室，由安全监控系统生成终端和屏幕。
             _addCover(-40, 32, 1.4, 2.2, 4.0, metalTex);
             _addCover(-27, 32, 2.2, 2.0, 1.2, metalTex);
 
@@ -460,7 +460,7 @@
             _addCover(-40, -32, 1.4, 2.2, 4.0, metalTex);
             _addCover(-27, -32, 2.2, 2.0, 1.2, metalTex);
 
-            _addCover(35, -26, 4.0, 1.5, 2.0, woodTex);
+            // 东南角房：配电室，由安全监控系统生成配电柜。
             _addCover(40, -32, 1.4, 2.2, 4.0, metalTex);
             _addCover(27, -32, 2.2, 2.0, 1.2, metalTex);
 
@@ -538,6 +538,12 @@
             _addSign(16.58, 3.5, 0, -Math.PI / 2, '西长房入口', '#6db3ff');
             _addSign(0, 3.4, 19.58, 0, '北设备长房', '#7ee08a');
             _addSign(0, 3.4, -19.58, Math.PI, '南设备长房', '#7ee08a');
+            _addSign(-35, 3.65, 19.58, 0, '监控室', '#45d6ff');
+            _addSign(35, 3.65, -19.58, Math.PI, '配电室', '#ffb83d');
+
+            if (typeof window.SECURITY_BuildIndoorProps === 'function') {
+                window.SECURITY_BuildIndoorProps();
+            }
         },
     });
 })();

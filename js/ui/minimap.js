@@ -157,10 +157,9 @@
     }
 
     // ============================================================
-    // ★ 优化：可见性缓存（10Hz 节流）
+    // ★ 可见性缓存（每个敌人独立做 10Hz 节流）
     // ============================================================
-    let _enemyVisibleLastCheck = 0;
-    let _enemyVisibleCached = false;
+    const _enemyVisibleCache = new WeakMap();
 
     // ★ 优化：遮挡物列表缓存
     const _occluderCache = [];
@@ -176,32 +175,54 @@
         return _occluderCache;
     }
 
+    function getMinimapEnemies() {
+        if (typeof gameMode !== 'undefined'
+            && gameMode === 'lan'
+            && typeof LAN !== 'undefined'
+            && LAN.models) {
+            const enemies = [];
+            for (const [id, player] of LAN.models) {
+                const state = LAN.playerStates.get(id);
+                if (!player
+                    || !state
+                    || state.team === p1.team
+                    || !state.alive
+                    || state.downed
+                    || state.connected === false
+                    || !player.baseVisible) {
+                    continue;
+                }
+                enemies.push(player);
+            }
+            return enemies;
+        }
+        return (typeof p2 !== 'undefined' && p2 && p2.baseVisible) ? [p2] : [];
+    }
+
     // 敌人是否在我方视野内（水平视锥 + 3D 射线无遮挡）—— 带 100ms 缓存
-    function enemyVisible() {
+    function enemyVisible(target) {
         const now = performance.now();
-
-        if (now - _enemyVisibleLastCheck < 100) {
-            return _enemyVisibleCached;
-        }
-        _enemyVisibleLastCheck = now;
-
-        if (typeof p2 === 'undefined' || !p2 || !p2.baseVisible) {
-            _enemyVisibleCached = false;
-            return false;
-        }
+        const cached = _enemyVisibleCache.get(target);
+        if (cached && now - cached.at < 100) return cached.visible;
         if (typeof running !== 'undefined' && !running) {
-            _enemyVisibleCached = false;
+            _enemyVisibleCache.set(target, { at: now, visible: false });
             return false;
         }
 
-        _enemyVisibleCached = _enemyVisibleUncached();
-        return _enemyVisibleCached;
+        const visible = _enemyVisibleUncached(target);
+        _enemyVisibleCache.set(target, { at: now, visible });
+        return visible;
     }
 
     // 原 enemyVisible 的完整逻辑（重命名，不做节流）
-    function _enemyVisibleUncached() {
+    function _enemyVisibleUncached(target) {
+        if (!target || !target.baseVisible) return false;
         p1.cam.getWorldPosition(_eye);
-        _tpos.set(p2.pos.x, 1.0, p2.pos.z);
+        _tpos.set(
+            target.pos.x,
+            target.pos.y + Math.min(1.1, (target.height || HEIGHT_STAND) * 0.55),
+            target.pos.z
+        );
 
         _dir.copy(_tpos).sub(_eye);
         const dist = _dir.length();
@@ -289,11 +310,13 @@
 
         ctx.restore();
 
-        // ---- 敌人红点（仅当可见时） ----
-        if (enemyVisible()) {
+        // ---- 敌人红点（仅当各自可见时） ----
+        const enemies = getMinimapEnemies();
+        for (const enemy of enemies) {
+            if (!enemyVisible(enemy)) continue;
             // ★ 修改：坐标换算用 half
-            const ex = (p2.pos.x + half) * scale;
-            const ey = (p2.pos.z + half) * scale;
+            const ex = (enemy.pos.x + half) * scale;
+            const ey = (enemy.pos.z + half) * scale;
 
             // 呼吸脉冲
             const t = performance.now() / 450;
@@ -320,6 +343,20 @@
 
     // 暴露给主循环
     window.updateMinimap = draw;
+    window.MINIMAP_collectVisibleEnemies = function () {
+        return getMinimapEnemies()
+            .filter(enemy => enemyVisible(enemy))
+            .map(enemy => enemy.netId);
+    };
+    window.MINIMAP_collectEnemies = function () {
+        return getMinimapEnemies().map(enemy => enemy.netId);
+    };
+    window.MINIMAP_isEnemyVisible = function (id) {
+        const enemy = (typeof LAN !== 'undefined' && LAN.models)
+            ? LAN.models.get(id)
+            : null;
+        return enemy ? _enemyVisibleUncached(enemy) : false;
+    };
 
     // ★ 暴露静态层重绘（地图切换时由 scene.js 的 loadMap 调用）
     window.refreshMinimap = function () {

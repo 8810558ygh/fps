@@ -155,7 +155,29 @@ function resetPlayer(p, now) {
     }
 }
 
+function resetPlayerForNewMatch(p) {
+    if (!p) return;
+    if (typeof window.SECURITY_ResetLocal === 'function') {
+        window.SECURITY_ResetLocal();
+    }
+    p.primaryWeaponKey = 'rifle';
+    p.weaponAmmo = {};
+    p.damageDealt = {};
+    p.medkits = 0;
+    p.survivalKills = 0;
+    p.survivalWaveKills = 0;
+    p.survivalCoins = 0;
+    p.score = 0;
+    if (typeof setWeapon === 'function') {
+        setWeapon(p, 'rifle');
+    }
+}
+window.resetPlayerForNewMatch = resetPlayerForNewMatch;
+
 function startRound(now) {
+    if (typeof window.SECURITY_ResetForRound === 'function') {
+        window.SECURITY_ResetForRound();
+    }
     // ★ 新增：每回合开始时，清空油桶伤害统计
     window.RoundStats = {
         p1ToBarrel: 0,
@@ -306,6 +328,10 @@ function endMatch(winner) {
 
 function resetMatch() {
     const now = performance.now();
+    if (typeof resetPlayerForNewMatch === 'function') {
+        resetPlayerForNewMatch(p1);
+        resetPlayerForNewMatch(p2);
+    }
     p1.score = 0; p2.score = 0;
     roundNumber = 0; lastKillReport = null;
     matchStart = now;

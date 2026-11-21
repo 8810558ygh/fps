@@ -199,7 +199,17 @@ window.updateVulnIndicators = updateVulnIndicators;
 function updateFlashIndicators(now) {
     if (typeof p1 === 'undefined' || typeof p2 === 'undefined') return;
 
-    for (const p of [p1, p2]) {
+    const players = [p1, p2];
+    if (typeof gameMode !== 'undefined'
+        && gameMode === 'lan'
+        && typeof LAN !== 'undefined'
+        && LAN.models) {
+        for (const player of LAN.models.values()) {
+            if (player && player.flashIndicator) players.push(player);
+        }
+    }
+
+    for (const p of players) {
         if (!p || !p.flashIndicator) continue;
 
         const isFlashed = p.flashUntil > now

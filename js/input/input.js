@@ -109,6 +109,21 @@ function _canOpenWeaponPanel() {
     return false;
 }
 
+function closeWeaponPanel(restorePointerLock = true) {
+    const panel = document.getElementById('weaponPanel');
+    if (panel) panel.style.display = 'none';
+    if (restorePointerLock
+        && typeof isTouchDevice !== 'undefined' && !isTouchDevice
+        && typeof running !== 'undefined' && running
+        && typeof isChatOpen === 'function' && !isChatOpen()
+        && (typeof NET === 'undefined' || NET.role !== 'spectator')
+        && document.pointerLockElement !== renderer.domElement
+        && typeof window.requestGamePointerLock === 'function') {
+        window.requestGamePointerLock();
+    }
+}
+window.closeWeaponPanel = closeWeaponPanel;
+
 // ============================================================
 // 面板是否拦截输入
 // ============================================================
@@ -124,6 +139,12 @@ function _isAnyPanelOpen() {
 
 window.addEventListener('keydown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
+    if (typeof window.SECURITY_HandleKeyDown === 'function'
+        && window.SECURITY_HandleKeyDown(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
 
     if (typeof window.Shop !== 'undefined'
         && typeof window.Shop.isOpen === 'function'
@@ -228,6 +249,12 @@ window.addEventListener('keydown', e => {
         }
 
         if (e.code === 'KeyB') {
+            const panel = document.getElementById('weaponPanel');
+            if (panel && panel.style.display === 'flex') {
+                e.preventDefault();
+                closeWeaponPanel(true);
+                return;
+            }
             if (isSV) {
                 if (typeof window.Shop !== 'undefined'
                     && typeof window.Shop.canOpen === 'function'
@@ -239,25 +266,12 @@ window.addEventListener('keydown', e => {
                 return;
             }
             if (_canOpenWeaponPanel()) {
-                const panel = document.getElementById('weaponPanel');
                 if (panel) {
-                    const isOpen = panel.style.display === 'flex';
-                    if (isOpen) {
-                        panel.style.display = 'none';
-                        if (typeof isTouchDevice !== 'undefined' && !isTouchDevice) {
-                            if (document.pointerLockElement !== renderer.domElement) {
-                                if (typeof window.requestGamePointerLock === 'function') {
-                                    window.requestGamePointerLock();
-                                }
-                            }
-                        }
-                    } else {
-                        if (typeof window.updateWeaponPanelLocks === 'function') {
-                            window.updateWeaponPanelLocks();
-                        }
-                        panel.style.display = 'flex';
-                        if (document.pointerLockElement) document.exitPointerLock();
+                    if (typeof window.updateWeaponPanelLocks === 'function') {
+                        window.updateWeaponPanelLocks();
                     }
+                    panel.style.display = 'flex';
+                    if (document.pointerLockElement) document.exitPointerLock();
                 }
             }
         }
@@ -316,6 +330,12 @@ window.addEventListener('keydown', e => {
 });
 window.addEventListener('keyup', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
+    if (typeof window.SECURITY_HandleKeyUp === 'function'
+        && window.SECURITY_HandleKeyUp(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
     keys[e.code] = false;
 });
 window.addEventListener('blur', () => {
@@ -326,6 +346,12 @@ window.addEventListener('blur', () => {
 document.addEventListener('mousedown', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
     if (_isAnyPanelOpen()) return;
+    if (typeof window.SECURITY_HandleMouseDown === 'function'
+        && window.SECURITY_HandleMouseDown(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
 
     if (typeof gameMode !== 'undefined' && gameMode === 'lan'
         && typeof p1 !== 'undefined' && p1 && p1.deadUntil === Infinity
@@ -388,6 +414,12 @@ document.addEventListener('mousedown', e => {
 
 document.addEventListener('mouseup', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
+    if (typeof window.SECURITY_HandleMouseUp === 'function'
+        && window.SECURITY_HandleMouseUp(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
     if (_isSpectatorSafe()) { e.preventDefault(); e.stopPropagation(); return; }
     if (_isAnyPanelOpen()) return;
 
@@ -407,6 +439,12 @@ document.addEventListener('mouseup', e => {
 
 document.addEventListener('wheel', e => {
     if (typeof isChatOpen === 'function' && isChatOpen()) return;
+    if (typeof window.SECURITY_HandleWheel === 'function'
+        && window.SECURITY_HandleWheel(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
     if (_isSpectatorSafe()) return;
     if (_isAnyPanelOpen()) return;
 
