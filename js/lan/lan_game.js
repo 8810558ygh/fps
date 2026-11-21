@@ -28,6 +28,13 @@ const LAN = {
     reconnectPending: false,
     hostExitHandled: false,
     returnedToRoom: false,
+    preloadPromise: null,
+    preloadReadyKey: '',
+    preloadTaskCount: 0,
+    preloadWeaponProfile: '',
+    lastPreloadMs: 0,
+    loadingActive: false,
+    loadingReportTimer: 0,
     connectionLostTimer: 0,
 };
 
@@ -325,29 +332,44 @@ function _lanRenderLobby(room) {
             if (!player) {
                 const empty = document.createElement('div');
                 empty.className = 'lan-empty-slot';
-                empty.innerHTML = `
-                    <span class="lan-seat-number">${i + 1}</span>
-                    <span class="lan-empty-icon">+</span>
-                    <span>等待玩家加入</span>
-                `;
+                if (isOwner && lobbyActive) {
+                    empty.innerHTML = `
+                        <span class="lan-seat-number">${i + 1}</span>
+                        <span class="lan-empty-icon">+</span>
+                        <button class="lan-add-ai-btn" data-team="${team}" type="button">添加 AI</button>
+                    `;
+                } else {
+                    empty.innerHTML = `
+                        <span class="lan-seat-number">${i + 1}</span>
+                        <span class="lan-empty-icon">+</span>
+                        <span>${survival ? '等待队友加入' : '等待玩家或电脑加入'}</span>
+                    `;
+                }
                 list.appendChild(empty);
                 continue;
             }
             const row = document.createElement('div');
             row.className = 'lan-player-row'
                 + (player.id === LAN.selfId ? ' me' : '')
+                + (player.isAI ? ' is-ai' : '')
                 + (player.ready ? ' is-ready' : ' is-waiting');
             const avatar = Array.from(player.name || '玩')[0] || '玩';
+            const playerMeta = player.id === LAN.selfId
+                ? '本机玩家'
+                : (player.isAI ? '电脑玩家' : '联机玩家');
             row.innerHTML = `
                 <span class="lan-seat-number">${i + 1}</span>
                 <span class="lan-player-avatar">${_lanNameHtml(avatar)}</span>
                 <span class="lan-player-main">
                     <strong>${_lanNameHtml(player.name)}</strong>
-                    <small>${player.id === LAN.selfId ? '本机玩家' : '联机玩家'}</small>
+                    <small>${playerMeta}</small>
                 </span>
                 <span class="lan-player-tags">
                     ${player.owner ? '<span class="owner-tag">房主</span>' : ''}
-                    <span class="${player.ready ? 'ready-tag' : 'waiting-tag'}">${player.ready ? '已准备' : '未准备'}</span>
+                    ${player.isAI ? '<span class="ai-tag">AI</span>' : ''}
+                    ${isOwner && lobbyActive && player.isAI
+                        ? `<button class="lan-ai-remove-btn" data-ai-id="${_lanNameHtml(player.id)}" type="button">移除</button>`
+                        : `<span class="${player.ready ? 'ready-tag' : 'waiting-tag'}">${player.ready ? '已准备' : '未准备'}</span>`}
                 </span>
             `;
             list.appendChild(row);
@@ -371,6 +393,148 @@ function _lanRenderLobby(room) {
     }
 }
 
+function _lanPreloadKey(room) {
+    if (!room) return '';
+    const mode = room.mode === 'survival' ? 'survival' : 'team';
+    const mapId = mode === 'survival'
+        ? 'battlefield'
+        : (room.mapId || 'battlefield');
+    return `${mode}:${mapId}`;
+}
+
+function _lanTaskMode(mode) {
+    return mode === 'survival' ? 'lan-survival' : 'lan';
+}
+
+async function _lanRunFullPreload(room, key) {
+    const manager = window.LoadingManager;
+    const buildTasks = window.buildGameLoadTasks;
+    if (!manager || typeof buildTasks !== 'function') {
+        console.warn('[lan-preload] 加载模块不可用，跳过完整预加载');
+        return true;
+    }
+
+    const survival = room.mode === 'survival';
+    const mapId = survival ? 'battlefield' : (room.mapId || 'battlefield');
+    const taskMode = _lanTaskMode(room.mode);
+    const tasks = buildTasks(mapId, taskMode);
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+        console.warn('[lan-preload] 没有可执行的预加载任务');
+        return false;
+    }
+
+    manager.show(survival ? '正在载入局域网生存模式' : '正在载入局域网团队战');
+    const startedAt = performance.now();
+    LAN.preloadTaskCount = tasks.length;
+    LAN.preloadWeaponProfile = 'lan-simple-world';
+    try {
+        manager.setProgress(0);
+        manager.setStatus('准备局域网资源');
+        await manager.runTasks(tasks);
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        LAN.preloadReadyKey = key;
+        LAN.lastPreloadMs = Math.round(performance.now() - startedAt);
+        console.log('[lan-preload] 局域网完整预加载完成:', key);
+        return true;
+    } catch (error) {
+        console.warn('[lan-preload] 局域网预加载失败:', error);
+        return false;
+    } finally {
+        manager.hide();
+    }
+}
+
+async function _lanPreloadRoom(room) {
+    if (!room) return false;
+    const key = _lanPreloadKey(room);
+    if (!key) return false;
+    if (LAN.preloadReadyKey === key) return true;
+
+    while (LAN.preloadPromise) {
+        try { await LAN.preloadPromise; } catch {}
+        if (LAN.preloadReadyKey === key) return true;
+    }
+
+    const promise = _lanRunFullPreload(room, key).finally(() => {
+        if (LAN.preloadPromise === promise) LAN.preloadPromise = null;
+    });
+    LAN.preloadPromise = promise;
+    return promise;
+}
+
+window.LAN_PreloadRoom = _lanPreloadRoom;
+
+async function _lanBeginSyncedLoading(msg) {
+    if (LAN.loadingActive) return;
+    const manager = window.LoadingManager;
+    const players = Array.isArray(msg.players) ? msg.players : [];
+    const survival = msg.mode === 'survival';
+    const mapId = survival ? 'battlefield' : (msg.mapId || 'battlefield');
+    const taskMode = _lanTaskMode(msg.mode);
+    const tasks = (typeof window.buildGameLoadTasks === 'function')
+        ? window.buildGameLoadTasks(mapId, taskMode)
+        : [];
+
+    LAN.loadingActive = true;
+    LAN.preloadTaskCount = Array.isArray(tasks) ? tasks.length : 0;
+    LAN.preloadWeaponProfile = 'lan-simple-world';
+    const startedAt = performance.now();
+
+    if (!manager || !Array.isArray(tasks) || tasks.length === 0) {
+        LANNET.send({ type: 'lanLoadingComplete' });
+        return;
+    }
+
+    manager.show(survival ? '正在载入局域网生存模式' : '正在载入局域网团队战');
+    manager.setupPlayers(players.map(player => ({
+        ...player,
+        isSelf: player.id === LAN.selfId,
+    })));
+    manager.setProgress(0);
+    manager.setStatus('准备局域网资源');
+
+    const report = () => {
+        if (!LAN.loadingActive) return;
+        const progress = manager.getProgress();
+        manager.setPlayerProgress(LAN.selfId, progress);
+        LANNET.send({ type: 'lanLoadingProgress', progress });
+    };
+    clearInterval(LAN.loadingReportTimer);
+    LAN.loadingReportTimer = setInterval(report, 200);
+    report();
+
+    try {
+        await manager.runTasks(tasks);
+        manager.setPlayerProgress(LAN.selfId, 1);
+        LANNET.send({ type: 'lanLoadingComplete' });
+        manager.setProgress(1);
+        manager.setStatus('等待其他玩家...');
+        LAN.lastPreloadMs = Math.round(performance.now() - startedAt);
+        LAN.preloadReadyKey = _lanPreloadKey({
+            mode: msg.mode,
+            mapId,
+        });
+        console.log('[lan-preload] 全员同步加载完成:', LAN.preloadReadyKey);
+    } catch (error) {
+        console.warn('[lan-preload] 同步加载失败:', error);
+        manager.setStatus('加载失败，等待重试');
+    } finally {
+        clearInterval(LAN.loadingReportTimer);
+        LAN.loadingReportTimer = 0;
+    }
+}
+
+function _lanHideSyncedLoading() {
+    clearInterval(LAN.loadingReportTimer);
+    LAN.loadingReportTimer = 0;
+    LAN.loadingActive = false;
+    if (window.LoadingManager) window.LoadingManager.hide();
+}
+
+window.LAN_BeginSyncedLoading = _lanBeginSyncedLoading;
+window.LAN_HideSyncedLoading = _lanHideSyncedLoading;
+
 function lanShowLobby() {
     if (!LAN.room) LAN.hostExitHandled = false;
     if (!LANNET.connected) LANNET.connect();
@@ -385,7 +549,9 @@ function lanShowLobby() {
     if (_lanEl('lanLobbyOverlay')) _lanEl('lanLobbyOverlay').style.display = 'flex';
     if (_lanEl('lanEntrySection')) _lanEl('lanEntrySection').style.display = LAN.room ? 'none' : 'flex';
     if (_lanEl('lanRoomSection')) _lanEl('lanRoomSection').style.display = LAN.room ? 'block' : 'none';
-    if (LAN.room) _lanRenderLobby(LAN.room);
+    if (LAN.room) {
+        _lanRenderLobby(LAN.room);
+    }
 }
 
 function _lanHideLobby() {
@@ -442,6 +608,20 @@ function _lanSetRoomMode(mode) {
         _lanSetRoomMessage('模式修改失败：尚未连接局域网服务器');
         _lanSyncRoomMode(room, true);
     }
+}
+
+function _lanAddAI(team) {
+    const room = LAN.room;
+    if (!room || room.ownerId !== LAN.selfId || room.phase !== 'lobby') return;
+    if (room.mode === 'survival') team = 'blue';
+    if (!['blue', 'red'].includes(team)) return;
+    LANNET.send({ type: 'addAI', team });
+}
+
+function _lanRemoveAI(id) {
+    const room = LAN.room;
+    if (!room || room.ownerId !== LAN.selfId || room.phase !== 'lobby' || !id) return;
+    LANNET.send({ type: 'removeAI', id });
 }
 
 async function _lanJoinRoom() {
@@ -506,6 +686,27 @@ function _lanBindUI() {
         _lanEl('lanEndOverlay').style.display = 'none';
         lanShowLobby();
     });
+
+    for (const listId of ['lanBlueList', 'lanRedList']) {
+        const list = _lanEl(listId);
+        list?.addEventListener('click', event => {
+            const addButton = event.target.closest?.('.lan-add-ai-btn');
+            if (addButton) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (typeof audio === 'function') audio();
+                _lanAddAI(addButton.dataset.team);
+                return;
+            }
+            const removeButton = event.target.closest?.('.lan-ai-remove-btn');
+            if (removeButton) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (typeof audio === 'function') audio();
+                _lanRemoveAI(removeButton.dataset.aiId);
+            }
+        });
+    }
 
     const mapSelect = _lanEl('lanRoomMapSelect');
     mapSelect?.addEventListener('change', () => {
@@ -848,6 +1049,7 @@ function _lanHandleSnapshot(msg) {
 }
 
 function lanStartMatch(mapId, mode = 'team') {
+    if (typeof LAN_AI_reset === 'function') LAN_AI_reset();
     LAN.active = true;
     LAN.mode = mode;
     LAN.mapId = mapId || LAN.mapId;
@@ -964,6 +1166,7 @@ function _lanHandleReturnedToLobby(msg) {
     running = false;
     gameState = 'idle';
     LAN.active = false;
+    if (typeof LAN_AI_reset === 'function') LAN_AI_reset();
     LAN.returnedToRoom = true;
     if (msg.room) LAN.room = msg.room;
     if (document.pointerLockElement) document.exitPointerLock();
@@ -1016,14 +1219,20 @@ function _lanHandleEvent(msg) {
             spawnSmokeProjectile(
                 new THREE.Vector3(p.px, p.py, p.pz),
                 new THREE.Vector3(p.vx, p.vy, p.vz),
-                p.fuseMs, performance.now(), p.id, p.team
+                p.fuseMs, performance.now(), p.id, p.team, true
             );
         } else if (msg.kind === 'flash' && typeof spawnFlashProjectile === 'function') {
             spawnFlashProjectile(
                 new THREE.Vector3(p.px, p.py, p.pz),
                 new THREE.Vector3(p.vx, p.vy, p.vz),
-                p.fuseMs, performance.now(), p.id
+                p.fuseMs, performance.now(), p.id, true
             );
+        } else if (msg.kind === 'smokePop'
+            && typeof handleRemoteSmokePop === 'function') {
+            handleRemoteSmokePop(p);
+        } else if (msg.kind === 'flashDetonate'
+            && typeof handleLANFlashDetonate === 'function') {
+            handleLANFlashDetonate(p);
         }
         return;
     }
@@ -1071,6 +1280,25 @@ window.LAN_handleMessage = function (msg) {
         _lanHandleReturnedToLobby(msg);
         return;
     }
+    if (msg.type === 'lanLoadingStart') {
+        void _lanBeginSyncedLoading(msg);
+        return;
+    }
+    if (msg.type === 'lanLoadingStatus') {
+        if (window.LoadingManager && msg.progress) {
+            for (const id in msg.progress) {
+                window.LoadingManager.setPlayerProgress(id, msg.progress[id]);
+            }
+        }
+        return;
+    }
+    if (msg.type === 'lanLoadingAllComplete') {
+        if (window.LoadingManager) {
+            window.LoadingManager.setProgress(1);
+            window.LoadingManager.setStatus('全员就绪');
+        }
+        return;
+    }
     if (msg.type === 'error') {
         _lanSetRoomMessage(msg.message || '操作失败');
         return;
@@ -1101,6 +1329,7 @@ window.LAN_handleMessage = function (msg) {
         return;
     }
     if (msg.type === 'matchStart') {
+        _lanHideSyncedLoading();
         LAN.mode = msg.mode || 'team';
         lanStartMatch(msg.mapId, LAN.mode);
         return;
@@ -1208,6 +1437,7 @@ function LAN_mainTick(dt, now) {
             }
         });
     }
+    if (typeof LAN_AI_tick === 'function') LAN_AI_tick(dt, now);
 }
 
 function LAN_foreachRemote(callback) {

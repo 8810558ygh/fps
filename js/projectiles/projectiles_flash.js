@@ -112,9 +112,15 @@ function _findFlashById(id) {
 // ============================================================
 // 闪光投掷物生成
 // ============================================================
-function spawnFlashProjectile(pos, vel, fuseMs, now, serverId) {
-    const id = (serverId != null) ? serverId : (++_flashIdCounter);
+function spawnFlashProjectile(pos, vel, fuseMs, now, serverId, waitForLanResult = false) {
+    const nextLocalId = ++_flashIdCounter;
+    const id = (serverId != null)
+        ? serverId
+        : (gameMode === 'lan' && typeof LAN !== 'undefined' && LAN.selfId
+            ? `${LAN.selfId}:flash:${nextLocalId}`
+            : nextLocalId);
     const isClientSide = _isOnlineNonHostFlash();
+    const waitForResult = gameMode === 'lan' && !!waitForLanResult;
 
     const mesh = createThrownProjectileMesh('flash');
     mesh.position.copy(pos);
@@ -135,6 +141,7 @@ function spawnFlashProjectile(pos, vel, fuseMs, now, serverId) {
         body,
         _waitUntil: 0,
         _clientSide: isClientSide,
+        _waitForLanResult: waitForResult,
         _targetX: 0, _targetY: 0, _targetZ: 0,
         _hasTarget: false,
     };
@@ -286,9 +293,9 @@ function updateFlashes(dt, now) {
                 }
 
                 // ★ 客户端：不 detonate，进入 waiting
-                if (s._clientSide) {
+                if (s._clientSide || s._waitForLanResult) {
                     s.state = 'waiting';
-                    s._waitUntil = now + 5000;
+                    s._waitUntil = now + (s._waitForLanResult ? 8000 : 5000);
                     continue;
                 }
 
@@ -303,6 +310,13 @@ function updateFlashes(dt, now) {
                     && typeof NET_broadcast === 'function') {
                     NET_broadcast({
                         type: 'flashDetonate',
+                        id: s.id,
+                        px: s.pos.x, py: s.pos.y, pz: s.pos.z,
+                    });
+                }
+                if (typeof gameMode !== 'undefined' && gameMode === 'lan'
+                    && typeof LAN_broadcastFx === 'function') {
+                    LAN_broadcastFx('flashDetonate', {
                         id: s.id,
                         px: s.pos.x, py: s.pos.y, pz: s.pos.z,
                     });
@@ -349,12 +363,7 @@ window.handleProjectilesUpdateFlashes = handleProjectilesUpdateFlashes;
 // ============================================================
 // ★ 客户端：收到房主 flashDetonate 广播
 // ============================================================
-function handleRemoteFlashDetonate(data) {
-    if (typeof scene === 'undefined' || !scene) return;
-
-    const pos = new THREE.Vector3(data.px, data.py, data.pz);
-
-    // 找 waiting 的投掷物删掉
+function _removeFlashForFinalResult(data) {
     let target = null;
     if (data.id != null) target = _findFlashById(data.id);
     if (!target) {
@@ -366,6 +375,10 @@ function handleRemoteFlashDetonate(data) {
         }
     }
     if (target) {
+        if (target.body && typeof window.PHYSICS?.removeProjectileBody === 'function') {
+            window.PHYSICS.removeProjectileBody(target.body);
+            target.body = null;
+        }
         if (target.mesh) {
             scene.remove(target.mesh);
             target.mesh = null;
@@ -373,6 +386,13 @@ function handleRemoteFlashDetonate(data) {
         const idx = activeFlashes.indexOf(target);
         if (idx >= 0) activeFlashes.splice(idx, 1);
     }
+}
+
+function handleRemoteFlashDetonate(data) {
+    if (typeof scene === 'undefined' || !scene) return;
+
+    const pos = new THREE.Vector3(data.px, data.py, data.pz);
+    _removeFlashForFinalResult(data);
 
     // 显示爆闪特效（是否被闪由 flashEvent 决定）
     spawnFlashBurst(pos);
@@ -383,6 +403,14 @@ function handleRemoteFlashDetonate(data) {
     }
 }
 window.handleRemoteFlashDetonate = handleRemoteFlashDetonate;
+
+function handleLANFlashDetonate(data) {
+    if (typeof scene === 'undefined' || !scene) return;
+    const pos = new THREE.Vector3(data.px, data.py, data.pz);
+    _removeFlashForFinalResult(data);
+    detonateFlash(pos, performance.now());
+}
+window.handleLANFlashDetonate = handleLANFlashDetonate;
 
 // ============================================================
 // 闪光覆盖层

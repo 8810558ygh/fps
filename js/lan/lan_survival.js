@@ -222,7 +222,11 @@
         SurvivalState.endlessLoop = 0;
         if (typeof SurvivalStats !== 'undefined') SurvivalStats.reset();
         if (typeof clearAllZombies === 'function') clearAllZombies();
+        if (typeof PlayerZombie?.forceStopMusic === 'function') {
+            PlayerZombie.forceStopMusic();
+        }
         if (typeof despawnSurvivalPortal === 'function') despawnSurvivalPortal();
+        if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
         ensureUi();
         hideRescue();
         updatePortalStatus('');
@@ -231,6 +235,8 @@
     }
 
     function applyState(msg) {
+        const previousPhase = S.phase;
+        const previousWave = S.wave;
         S.phase = msg.phase || S.phase;
         S.wave = Number(msg.wave) || 0;
         S.mapIndex = Number(msg.mapIndex) || 0;
@@ -245,18 +251,30 @@
         SurvivalState.endlessMode = !!msg.endlessMode;
         SurvivalState.endlessLoop = Number(msg.endlessLoop) || 0;
         SurvivalState.prepEndTime = performance.now() + Math.max(0, Number(msg.phaseRemain) || 0);
-        gameState = S.phase === 'wave' ? 'combat'
-            : (['prep', 'portal', 'mapLoading', 'endlessChoice'].includes(S.phase) ? 'prep' : gameState);
+        const activePhase = ['prep', 'wave', 'portal'].includes(S.phase);
+        if (activePhase) running = true;
+        gameState = activePhase ? 'combat'
+            : (['mapLoading', 'endlessChoice'].includes(S.phase) ? 'prep' : gameState);
+        if (_lanEl('timer') && activePhase) _lanEl('timer').style.display = 'block';
         roundNumber = S.wave;
         if (S.phase !== 'wave' && typeof clearAllZombies === 'function') {
             clearAllZombies();
             S.waveQueue = [];
             SurvivalState.waveQueue = [];
+            if (S.phase !== 'prep'
+                && typeof PlayerZombie?.forceStopMusic === 'function') {
+                PlayerZombie.forceStopMusic();
+            }
         }
         if (S.phase === 'portal' && typeof spawnSurvivalPortal === 'function') {
             spawnSurvivalPortal();
         } else if (S.phase !== 'portal' && typeof despawnSurvivalPortal === 'function') {
             despawnSurvivalPortal();
+        }
+        if (S.phase === 'wave'
+            && (previousPhase !== 'wave' || previousWave !== S.wave)
+            && typeof despawnAmmoDrop === 'function') {
+            despawnAmmoDrop();
         }
         if (S.phase === 'wave' && S.isHost && S.hostWaveStarted !== S.wave) {
             startHostWave(S.wave);
@@ -302,7 +320,7 @@
                 { length: 3 + globalWave * 2 + endlessBonus },
                 () => 'normal'
             );
-        const synced = base.map(type => type === 'musician' ? 'big' : type);
+        const synced = base.slice();
         const extraPlayers = Math.max(0, survivalPlayers().length - 1);
         const extra = Math.round(synced.length * 0.22 * extraPlayers);
         for (let i = 0; i < extra; i++) synced.push('normal');
@@ -311,6 +329,10 @@
 
     function startHostWave(wave) {
         S.hostWaveStarted = wave;
+        if (typeof PlayerZombie !== 'undefined'
+            && typeof PlayerZombie.resetWaveFlag === 'function') {
+            PlayerZombie.resetWaveFlag();
+        }
         S.waveQueue = scaledWaveComposition(wave);
         SurvivalState.wave = wave;
         SurvivalState.phase = 'wave';
@@ -365,6 +387,22 @@
                 yaw: zombie.yaw,
             });
         }
+        if (typeof PlayerZombie !== 'undefined'
+            && PlayerZombie.active
+            && !PlayerZombie.active.dead) {
+            const zombie = PlayerZombie.active;
+            if (!zombie.netId) zombie.netId = `m${++S.zombieCounter}`;
+            zombies.push({
+                netId: zombie.netId,
+                type: 'musician',
+                hp: zombie.hp,
+                maxHp: zombie.maxHp,
+                x: zombie.pos.x,
+                y: zombie.pos.y,
+                z: zombie.pos.z,
+                yaw: zombie.yaw,
+            });
+        }
         LANNET.send({
             type: 'survivalSnapshot',
             zombies,
@@ -378,6 +416,12 @@
         for (const zombie of getAllZombies()) {
             if (!zombie.alive || !zombie.netId) continue;
             active.set(zombie.netId, zombie);
+        }
+        if (typeof PlayerZombie !== 'undefined'
+            && PlayerZombie.active
+            && !PlayerZombie.active.dead
+            && PlayerZombie.active.netId) {
+            active.set(PlayerZombie.active.netId, PlayerZombie.active);
         }
 
         for (const [netId, item] of incoming) {
@@ -393,6 +437,12 @@
             if (!zombie._netTargetPos) zombie._netTargetPos = new THREE.Vector3();
             zombie.hp = item.hp;
             zombie.maxHp = item.maxHp;
+            if (zombie._isPlayerZombie) {
+                zombie.pos.set(item.x, item.y, item.z);
+                zombie.mesh.position.copy(zombie.pos);
+                zombie.yaw = Number(item.yaw) || zombie.yaw;
+                zombie.mesh.rotation.y = zombie.yaw;
+            }
             zombie._netTargetPos.set(item.x, item.y, item.z);
             zombie._netTargetYaw = item.yaw;
             active.set(netId, zombie);
@@ -400,6 +450,10 @@
 
         for (const [netId, zombie] of active) {
             if (incoming.has(netId)) continue;
+            if (zombie._isPlayerZombie) {
+                PlayerZombie.applyNetworkState(0, true);
+                continue;
+            }
             zombie.alive = false;
             zombie.hp = 0;
             zombie.mesh.visible = false;
@@ -795,7 +849,11 @@
         gameState = 'prep';
         running = false;
         if (typeof clearAllZombies === 'function') clearAllZombies();
+        if (typeof PlayerZombie?.forceStopMusic === 'function') {
+            PlayerZombie.forceStopMusic();
+        }
         if (typeof despawnSurvivalPortal === 'function') despawnSurvivalPortal();
+        if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
         updatePortalStatus('正在加载下一张地图…');
         const ready = () => {
             S.mapId = mapId;
@@ -871,10 +929,22 @@
             return;
         }
         if (msg.type === 'survivalZombieDamaged') {
-            const zombie = getAllZombies().find(item => item.alive && item.netId === msg.zombieId);
+            let zombie = getAllZombies().find(
+                item => item.alive && item.netId === msg.zombieId
+            );
+            if (!zombie
+                && typeof PlayerZombie !== 'undefined'
+                && PlayerZombie.active?.netId === msg.zombieId) {
+                zombie = PlayerZombie.active;
+            }
             if (zombie) {
-                zombie.hp = msg.hp;
-                if (msg.killed) {
+                if (zombie._isPlayerZombie
+                    && typeof PlayerZombie.applyNetworkState === 'function') {
+                    PlayerZombie.applyNetworkState(msg.hp, msg.killed);
+                } else {
+                    zombie.hp = msg.hp;
+                }
+                if (msg.killed && !zombie._isPlayerZombie) {
                     zombie.alive = false;
                     zombie.mesh.visible = false;
                 }
@@ -1029,6 +1099,19 @@
             showSummary(msg.summary || { wave: S.wave, totalKills: 0, players: [] });
             return;
         }
+        if (msg.type === 'survivalAmmoDrop') {
+            if (typeof spawnAmmoDrop === 'function') {
+                spawnAmmoDrop(
+                    Number(msg.x) || 0,
+                    Number(msg.y) || 0,
+                    Number(msg.z) || 0
+                );
+            }
+            if (typeof feed === 'function') {
+                feed(p1, '💛 精英波清空 · 弹药箱已掉落');
+            }
+            return;
+        }
         if (msg.type === 'survivalEndlessChoice') {
             showEndlessChoice(msg);
             return;
@@ -1056,7 +1139,8 @@
             S.playersPlaced = false;
             S.activeRescue = null;
             running = true;
-            gameState = 'prep';
+            gameState = 'combat';
+            if (_lanEl('timer')) _lanEl('timer').style.display = 'block';
             updatePortalStatus('');
             if (typeof clearAllZombies === 'function') clearAllZombies();
             placePlayers(Array.from(LAN.playerStates.values()));
@@ -1071,6 +1155,11 @@
 
     function tick(dt, now) {
         if (!isSurvivalContext()) return;
+        if (typeof updateAmmoDrop === 'function') updateAmmoDrop(dt, now);
+        if (typeof PlayerZombie !== 'undefined'
+            && typeof PlayerZombie.tick === 'function') {
+            PlayerZombie.tick(dt, now);
+        }
         if (S.isHost) hostTick(dt, now);
         else updateClientZombies(dt, now);
 
@@ -1103,7 +1192,11 @@
         SurvivalState.phase = 'idle';
         SurvivalState.waveQueue = [];
         if (typeof clearAllZombies === 'function') clearAllZombies();
+        if (typeof PlayerZombie?.forceStopMusic === 'function') {
+            PlayerZombie.forceStopMusic();
+        }
         if (typeof despawnSurvivalPortal === 'function') despawnSurvivalPortal();
+        if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
         const endOverlay = document.getElementById('survivalEndOverlay');
         if (endOverlay) endOverlay.style.display = 'none';
         const summary = document.getElementById('survivalWaveSummary');
@@ -1122,19 +1215,30 @@
     window.LAN_SURVIVAL_stop = stop;
     window.LAN_SURVIVAL_tryPortalConfirm = tryPortalConfirm;
     window.LAN_SURVIVAL_debugHealTarget = teammateUnderCrosshair;
-    window.LAN_SURVIVAL_handleZombieHit = function (zombie, damage, part, point) {
+    window.LAN_SURVIVAL_debugWaveComposition = scaledWaveComposition;
+    window.LAN_SURVIVAL_handleZombieHit = function (zombie, damage, part, point, attackerId = null) {
         if (!zombie || !zombie.alive) return;
-        zombie.hp -= damage;
-        if (zombie.hp <= 0) {
-            zombie.hp = 0;
-            zombie.alive = false;
-            zombie.mesh.visible = false;
+        if (!zombie.netId) {
+            zombie.netId = zombie._isPlayerZombie
+                ? `m${++S.zombieCounter}`
+                : `z${++S.zombieCounter}`;
+        }
+        if (zombie._isPlayerZombie && typeof PlayerZombie?.damage === 'function') {
+            PlayerZombie.damage(damage, null);
+        } else {
+            zombie.hp -= damage;
+            if (zombie.hp <= 0) {
+                zombie.hp = 0;
+                zombie.alive = false;
+                zombie.mesh.visible = false;
+            }
         }
         LANNET.send({
             type: 'survivalZombieHit',
             zombieId: zombie.netId,
             damage,
             part,
+            attackerId,
         });
     };
     window.LAN_SURVIVAL_handleZombieAttack = function (target, damage) {

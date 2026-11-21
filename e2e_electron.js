@@ -210,6 +210,51 @@ async function main() {
   if (!aiUsesHdWeapon || aiCharacterPartCount !== 13) {
     throw new Error('AI opponent did not retain the standard HD weapon');
   }
+  const musicianAmmoDropTest = await host.evaluate(`(() => {
+    const saved = {
+      active: SurvivalState.active,
+      phase: SurvivalState.phase,
+      wave: SurvivalState.wave,
+      mapIndex: SurvivalState.mapIndex,
+      endlessMode: SurvivalState.endlessMode,
+      endlessLoop: SurvivalState.endlessLoop,
+      waveQueue: SurvivalState.waveQueue.slice()
+    };
+    try {
+      if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
+      if (typeof clearAllZombies === 'function') clearAllZombies();
+      PlayerZombie.forceStopMusic();
+      SurvivalState.active = true;
+      SurvivalState.phase = 'wave';
+      SurvivalState.wave = 3;
+      SurvivalState.mapIndex = 0;
+      SurvivalState.endlessMode = true;
+      SurvivalState.endlessLoop = 0;
+      SurvivalState.waveQueue = [];
+      PlayerZombie.resetWaveFlag();
+      const musician = PlayerZombie.spawn(0, 0);
+      musician.hp = 1;
+      PlayerZombie.damage(10, null);
+      return {
+        dropped: isAmmoDropActive(),
+        musicianDead: !!musician.dead
+      };
+    } finally {
+      if (typeof despawnAmmoDrop === 'function') despawnAmmoDrop();
+      if (typeof clearAllZombies === 'function') clearAllZombies();
+      PlayerZombie.forceStopMusic();
+      SurvivalState.active = saved.active;
+      SurvivalState.phase = saved.phase;
+      SurvivalState.wave = saved.wave;
+      SurvivalState.mapIndex = saved.mapIndex;
+      SurvivalState.endlessMode = saved.endlessMode;
+      SurvivalState.endlessLoop = saved.endlessLoop;
+      SurvivalState.waveQueue = saved.waveQueue;
+    }
+  })()`);
+  if (!musicianAmmoDropTest.dropped || !musicianAmmoDropTest.musicianDead) {
+    throw new Error(`Musician ammo drop failed: ${JSON.stringify(musicianAmmoDropTest)}`);
+  }
   const meleeConeTargetCount = await host.evaluate(`
     (() => {
       const savedPosition = p1.cam.position.clone();
@@ -485,7 +530,7 @@ async function main() {
     host.evaluate("document.getElementById('lanReadyBtn').click(); true"),
     joiner.evaluate("document.getElementById('lanReadyBtn').click(); true"),
   ]);
-  await waitForPageExpression(host, 'LAN.room.players.every(player => player.ready)', 6000, 'ready state');
+  await waitForPageExpression(host, 'LAN.room.players.every(player => player.ready)', 30000, 'ready state');
 
   const defaultRoomMode = await Promise.all([
     host.evaluate(`({
@@ -584,13 +629,57 @@ async function main() {
     host.evaluate("document.getElementById('lanReadyBtn').click(); true"),
     joiner.evaluate("document.getElementById('lanReadyBtn').click(); true"),
   ]);
-  await waitForPageExpression(host, 'LAN.room.players.every(player => player.ready)', 6000, 'ready after mode restore');
-  await waitForPageExpression(host, '!document.getElementById(\'lanStartBtn\').disabled', 6000, 'start button');
+  await waitForPageExpression(host, 'LAN.room.players.every(player => player.ready)', 30000, 'ready after mode restore');
+  await waitForPageExpression(host, '!document.getElementById(\'lanStartBtn\').disabled', 30000, 'start button');
   await host.evaluate("document.getElementById('lanStartBtn').click(); true");
   await Promise.all([
-    waitForPageExpression(host, 'LAN.active && LAN.phase !== "lobby"', 8000, 'host match start'),
-    waitForPageExpression(joiner, 'LAN.active && LAN.phase !== "lobby"', 8000, 'joiner match start'),
+    waitForPageExpression(
+      host,
+      'LAN.loadingActive && window.LoadingManager.isActive() && document.querySelectorAll(".loading-player-row").length === 2',
+      10000,
+      'host synced loading UI'
+    ),
+    waitForPageExpression(
+      joiner,
+      'LAN.loadingActive && window.LoadingManager.isActive() && document.querySelectorAll(".loading-player-row").length === 2',
+      10000,
+      'joiner synced loading UI'
+    ),
   ]);
+  const lanLoadingUi = await Promise.all([
+    host.evaluate(`({
+      players: document.querySelectorAll('.loading-player-row').length,
+      status: document.getElementById('loadingStatus').textContent,
+      progress: window.LoadingManager.getProgress()
+    })`),
+    joiner.evaluate(`({
+      players: document.querySelectorAll('.loading-player-row').length,
+      status: document.getElementById('loadingStatus').textContent,
+      progress: window.LoadingManager.getProgress()
+    })`),
+  ]);
+  await Promise.all([
+    waitForPageExpression(host, 'LAN.active && LAN.phase !== "lobby"', 30000, 'host match start'),
+    waitForPageExpression(joiner, 'LAN.active && LAN.phase !== "lobby"', 30000, 'joiner match start'),
+  ]);
+  const lanPreloadTest = await Promise.all([
+    host.evaluate(`({
+      key: LAN.preloadReadyKey,
+      tasks: LAN.preloadTaskCount,
+      durationMs: LAN.lastPreloadMs,
+      loadingActive: window.LoadingManager.isActive()
+    })`),
+    joiner.evaluate(`({
+      key: LAN.preloadReadyKey,
+      tasks: LAN.preloadTaskCount,
+      durationMs: LAN.lastPreloadMs,
+      loadingActive: window.LoadingManager.isActive()
+    })`),
+  ]);
+  if (lanLoadingUi.some(ui => ui.players !== 2)
+      || lanPreloadTest.some(state => !state.key || state.tasks < 10 || state.loadingActive)) {
+    throw new Error(`LAN synchronized loading failed: ${JSON.stringify({ lanLoadingUi, lanPreloadTest })}`);
+  }
   await waitForPageExpression(host, 'LAN.phase === "prep"', 4000, 'LAN preparation phase');
   const prepTimerText = await host.evaluate("document.getElementById('lanRoundTimer').textContent");
   if (!/^准备 \d{2}:\d{2}$/.test(prepTimerText)) {
@@ -676,6 +765,137 @@ async function main() {
   if (!/^战斗 \d{2}:\d{2}$/.test(combatTimerText) || !combatTimerText.startsWith('战斗 03:') && !combatTimerText.startsWith('战斗 02:')) {
     throw new Error(`LAN combat timer format is invalid: ${combatTimerText}`);
   }
+  const trajectoryPreviewTest = await host.evaluate(`
+    (() => {
+      const wall = colliders
+        .filter(c => Number.isFinite(c.x0) && Number.isFinite(c.x1)
+          && Number.isFinite(c.z0) && Number.isFinite(c.z1)
+          && c.top >= 1.2
+          && Math.abs(c.x1 - c.x0) >= 0.8
+          && Math.abs(c.z1 - c.z0) >= 0.8)
+        .sort((a, b) => {
+          const ad = Math.hypot((a.x0 + a.x1) / 2, (a.z0 + a.z1) / 2);
+          const bd = Math.hypot((b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2);
+          return ad - bd;
+        })[0];
+      if (!wall) return { ok: false, reason: 'wall missing' };
+
+      const origin = new THREE.Vector3(
+        (wall.x0 + wall.x1) / 2,
+        Math.min(1.0, wall.top - 0.1),
+        Math.min(wall.z0, wall.z1) - 0.5
+      );
+      const path = simulateThrowTrajectory(
+        origin,
+        new THREE.Vector3(0, 0, 1),
+        20, 0.35, GRAV, 0.35, 0.55,
+        SMOKE_TRAJ_STEPS, SMOKE_TRAJ_DT, 5
+      );
+      return {
+        ok: true,
+        pathLength: path.length,
+        visibleCount: path.visibleCount,
+        firstImpact: path.impacts[0] || null,
+        bounced: path.bounceLevels.includes(1),
+        visualReady: !!(smokeTrajLine?.userData?.points
+          && smokeTrajLine?.userData?.marker),
+        warmupReady: warmupTrajectoryPreview()
+      };
+    })()
+  `);
+  if (!trajectoryPreviewTest.ok
+      || trajectoryPreviewTest.firstImpact?.kind !== 'world'
+      || !trajectoryPreviewTest.bounced
+      || !trajectoryPreviewTest.visualReady
+      || !trajectoryPreviewTest.warmupReady) {
+    throw new Error(`Trajectory preview regression: ${JSON.stringify(trajectoryPreviewTest)}`);
+  }
+  const smokeResultId = `e2e-smoke-${Date.now()}`;
+  await host.evaluate(`
+    (() => {
+      const id = ${JSON.stringify(smokeResultId)};
+      const origin = new THREE.Vector3(0, 2.2, 0);
+      const velocity = new THREE.Vector3(0, 0, 0);
+      spawnSmokeProjectile(
+        origin,
+        velocity,
+        180,
+        performance.now(),
+        id,
+        'blue'
+      );
+      LAN_broadcastFx('smoke', {
+        id,
+        px: origin.x, py: origin.y, pz: origin.z,
+        vx: 0, vy: 0, vz: 0,
+        fuseMs: 180,
+        team: 'blue'
+      });
+      return true;
+    })()
+  `);
+  await Promise.all([
+    waitForPageExpression(
+      host,
+      `activeSmokes.some(s => s.id === ${JSON.stringify(smokeResultId)} && !!s.cloudMesh)`,
+      6000,
+      'host authoritative smoke result'
+    ),
+    waitForPageExpression(
+      joiner,
+      `activeSmokes.some(s => s.id === ${JSON.stringify(smokeResultId)} && !!s.cloudMesh)`,
+      6000,
+      'joiner authoritative smoke result'
+    ),
+  ]);
+  await sleep(1400);
+  const smokeResultTest = await Promise.all([
+    host.evaluate(`(() => {
+      const entries = activeSmokes.filter(s => s.id === ${JSON.stringify(smokeResultId)});
+      const smoke = entries[0];
+      return smoke ? {
+        count: entries.length,
+        state: smoke.state,
+        waitingForLanResult: !!smoke._waitForLanResult,
+        x: smoke.pos.x,
+        y: smoke.pos.y,
+        z: smoke.pos.z
+      } : null;
+    })()`),
+    joiner.evaluate(`(() => {
+      const entries = activeSmokes.filter(s => s.id === ${JSON.stringify(smokeResultId)});
+      const smoke = entries[0];
+      return smoke ? {
+        count: entries.length,
+        state: smoke.state,
+        waitingForLanResult: !!smoke._waitForLanResult,
+        x: smoke.pos.x,
+        y: smoke.pos.y,
+        z: smoke.pos.z
+      } : null;
+    })()`),
+  ]);
+  const [hostSmokeResult, joinerSmokeResult] = smokeResultTest;
+  const smokeResultPositionError = Math.hypot(
+    hostSmokeResult.x - joinerSmokeResult.x,
+    hostSmokeResult.y - joinerSmokeResult.y,
+    hostSmokeResult.z - joinerSmokeResult.z
+  );
+  if (hostSmokeResult.count !== 1
+      || joinerSmokeResult.count !== 1
+      || hostSmokeResult.waitingForLanResult
+      || joinerSmokeResult.waitingForLanResult
+      || smokeResultPositionError > 0.001) {
+    throw new Error(`LAN smoke result mismatch: ${JSON.stringify({
+      hostSmokeResult,
+      joinerSmokeResult,
+      smokeResultPositionError,
+    })}`);
+  }
+  await Promise.all([
+    host.evaluate('clearAllSmokes(); true'),
+    joiner.evaluate('clearAllSmokes(); true'),
+  ]);
   const shotVisualTest = await host.evaluate(`
     (() => {
       const savedQuaternion = p1.cam.quaternion.clone();
@@ -1006,6 +1226,202 @@ async function main() {
       || returnedRoomUi.readyDisabled || returnedRoomUi.teamSwitchDisabled) {
     throw new Error(`Player did not return to an actionable room: ${JSON.stringify(returnedRoomUi)}`);
   }
+
+  await Promise.all([
+    host.evaluate('running = false; gameState = "idle"; true'),
+    joiner.evaluate('running = false; gameState = "idle"; true'),
+  ]);
+  await host.evaluate("LANNET.send({ type: 'returnLobby' }); true");
+  await Promise.all([
+    waitForPageExpression(host, 'LAN.room && LAN.room.phase === "lobby"', 8000, 'AI test lobby'),
+    waitForPageExpression(joiner, 'LAN.room && LAN.room.phase === "lobby"', 8000, 'AI test joiner lobby'),
+  ]);
+  await host.evaluate(`
+    _lanHandleReturnedToLobby({ room: { ...LAN.room, phase: 'lobby' } });
+    true;
+  `);
+
+  await host.evaluate(`
+    document.querySelector('#lanRedList .lan-add-ai-btn')?.click();
+    true;
+  `);
+  await waitForPageExpression(
+    host,
+    'LAN.room.players.some(player => player.isAI && player.team === "red")',
+    5000,
+    'host AI seat'
+  );
+  await waitForPageExpression(
+    joiner,
+    'LAN.room.players.some(player => player.isAI && player.team === "red")',
+    5000,
+    'joiner AI seat'
+  );
+  const aiSeatTest = await Promise.all([
+    host.evaluate(`(() => ({
+      name: LAN.room.players.find(player => player.isAI)?.name || '',
+      addButtons: document.querySelectorAll('.lan-add-ai-btn').length,
+      removeButtons: document.querySelectorAll('.lan-ai-remove-btn').length,
+      aiRows: document.querySelectorAll('.lan-player-row.is-ai').length
+    }))()`),
+    joiner.evaluate(`(() => ({
+      name: LAN.room.players.find(player => player.isAI)?.name || '',
+      addButtons: document.querySelectorAll('.lan-add-ai-btn').length,
+      removeButtons: document.querySelectorAll('.lan-ai-remove-btn').length,
+      aiRows: document.querySelectorAll('.lan-player-row.is-ai').length
+    }))()`),
+  ]);
+  if (!aiSeatTest[0].name.startsWith('电脑')
+      || aiSeatTest[0].addButtons < 1
+      || aiSeatTest[0].removeButtons !== 1
+      || aiSeatTest[0].aiRows !== 1
+      || aiSeatTest[1].addButtons !== 0
+      || aiSeatTest[1].removeButtons !== 0
+      || aiSeatTest[1].aiRows !== 1) {
+    throw new Error(`LAN AI lobby seat UI is invalid: ${JSON.stringify(aiSeatTest)}`);
+  }
+
+  const aiBehaviorTest = await host.evaluate(`
+    (() => {
+      const aiId = LAN.room.players.find(player => player.isAI)?.id;
+      if (!aiId) return { ok: false, reason: 'missing AI seat' };
+      const saved = {
+        active: LAN.active,
+        mode: LAN.mode,
+        phase: LAN.phase,
+        round: LAN.round,
+        running,
+        gameState,
+        team: p1.team,
+        pos: p1.pos.clone(),
+        meshPos: p1.mesh.position.clone(),
+        yaw: p1.yaw,
+        deadUntil: p1.deadUntil,
+        baseVisible: p1.baseVisible,
+        send: LANNET.send,
+        prepare: prepareShotTargets
+      };
+      const fake = makePlayer(
+        9999,
+        0xd54a3a,
+        { x: 0, z: 4, yaw: 0 },
+        'rifle',
+        true
+      );
+      fake.netId = aiId;
+      fake.team = 'red';
+      fake.baseVisible = true;
+      fake._lanRemote = true;
+      fake._shadowDisabled = true;
+      fake.setWeapon = undefined;
+      _lanInstallSimpleWeapon(fake, 'rifle');
+      fake.mesh.position.set(0, 0, 4);
+      fake.mesh.updateMatrixWorld(true);
+      LAN.models.set(aiId, fake);
+      LAN.playerStates.set(aiId, {
+        id: aiId,
+        name: '电脑1',
+        team: 'red',
+        isAI: true,
+        x: 0, y: 0, z: 4,
+        yaw: 0, pitch: 0,
+        height: HEIGHT_STAND,
+        weapon: 'rifle',
+        alive: true,
+        connected: true,
+        hp: 100,
+        maxHp: 100,
+        armor: 50,
+        spawnSlot: 0
+      });
+      LAN.active = true;
+      LAN.mode = 'team';
+      LAN.phase = 'round';
+      LAN.round = 99;
+      running = true;
+      gameState = 'combat';
+      p1.team = 'blue';
+      p1.pos.set(0, 0, 0);
+      p1.mesh.position.copy(p1.pos);
+      p1.mesh.rotation.y = 0;
+      p1.mesh.updateMatrixWorld(true);
+      p1.yaw = 0;
+      p1.pitch = 0;
+      p1.deadUntil = 0;
+      p1.baseVisible = true;
+      const packets = [];
+      LANNET.send = packet => {
+        packets.push(packet);
+        return true;
+      };
+      prepareShotTargets = () => [];
+
+      let statePacket = false;
+      let shotPacket = null;
+      let targetIsEnemy = false;
+      try {
+        const now = performance.now();
+        LAN_AI_tick(1 / 30, now);
+        const unit = LAN_AI.units.get(aiId);
+        statePacket = packets.some(packet => packet.type === 'lanAIStates');
+        if (!unit) return { ok: false, reason: 'AI unit missing', statePacket };
+
+        unit.player.pos.set(0, 0, 4);
+        unit.player.mesh.position.copy(unit.player.pos);
+        unit.player.yaw = 0;
+        unit.player.pitch = 0;
+        unit.player.mesh.rotation.y = 0;
+        unit.player.mesh.updateMatrixWorld(true);
+        unit.targetId = LAN.selfId;
+        unit.target = {
+          id: LAN.selfId,
+          player: p1,
+          state: { alive: true, connected: true }
+        };
+        targetIsEnemy = unit.player.team !== p1.team;
+        unit.player.nextShot = 0;
+        unit.player.reloadEnd = 0;
+        unit.player.ammo = unit.player.weapon.mag;
+        _lanAIFire(unit, now + 1000);
+        shotPacket = packets.find(packet => packet.type === 'lanAIShot') || null;
+      } finally {
+        LAN_AI_reset();
+        LAN.models.delete(aiId);
+        LAN.playerStates.delete(aiId);
+        _lanDisposeRemote(fake);
+        LAN.active = saved.active;
+        LAN.mode = saved.mode;
+        LAN.phase = saved.phase;
+        LAN.round = saved.round;
+        running = saved.running;
+        gameState = saved.gameState;
+        p1.team = saved.team;
+        p1.pos.copy(saved.pos);
+        p1.mesh.position.copy(saved.meshPos);
+        p1.yaw = saved.yaw;
+        p1.deadUntil = saved.deadUntil;
+        p1.baseVisible = saved.baseVisible;
+        p1.mesh.position.copy(p1.pos);
+        p1.mesh.rotation.y = p1.yaw;
+        p1.mesh.updateMatrixWorld(true);
+        LANNET.send = saved.send;
+        prepareShotTargets = saved.prepare;
+      }
+      return {
+        ok: !!statePacket && !!shotPacket && targetIsEnemy,
+        statePacket,
+        targetIsEnemy,
+        shotWeapon: shotPacket?.weapon || null,
+        hitCount: shotPacket?.hits?.length || 0
+      };
+    })()
+  `);
+  if (!aiBehaviorTest.ok
+      || !aiBehaviorTest.targetIsEnemy
+      || aiBehaviorTest.hitCount < 1) {
+    throw new Error(`LAN AI behavior test failed: ${JSON.stringify(aiBehaviorTest)}`);
+  }
+
   const matchesFile = path.join(dataDirectories.get('host'), 'matches.json');
   const storedMatch = await waitFor(() => {
     const stored = JSON.parse(fs.readFileSync(matchesFile, 'utf8'));
@@ -1046,16 +1462,24 @@ async function main() {
     waitForPageExpression(host, 'LAN.room.mode === "survival"', 6000, 'host survival mode'),
     waitForPageExpression(joiner, 'LAN.room.mode === "survival"', 6000, 'joiner survival mode'),
   ]);
+  const survivalAiId = await host.evaluate(
+    'LAN.room.players.find(player => player.isAI && player.team === "blue")?.id || null'
+  );
+  if (!survivalAiId) {
+    throw new Error('Survival AI was not added to the blue squad');
+  }
   const survivalLobbyUi = await joiner.evaluate(`({
     blueSlots: document.getElementById('lanBlueList').children.length,
     redVisible: getComputedStyle(document.querySelector('.lan-team.red')).display !== 'none',
     teamSwitchVisible: getComputedStyle(document.getElementById('lanSwitchBlue')).display !== 'none',
-    title: document.querySelector('.lan-team.blue .lan-team-title span:first-child').textContent
+    title: document.querySelector('.lan-team.blue .lan-team-title span:first-child').textContent,
+    aiRows: document.querySelectorAll('#lanBlueList .lan-player-row.is-ai').length
   })`);
   if (survivalLobbyUi.blueSlots !== 10
       || survivalLobbyUi.redVisible
       || survivalLobbyUi.teamSwitchVisible
-      || !survivalLobbyUi.title.includes('生 存')) {
+      || !survivalLobbyUi.title.includes('生 存')
+      || survivalLobbyUi.aiRows !== 1) {
     throw new Error(`Survival lobby UI is invalid: ${JSON.stringify(survivalLobbyUi)}`);
   }
 
@@ -1063,22 +1487,68 @@ async function main() {
     host.evaluate("document.getElementById('lanReadyBtn').click(); true"),
     joiner.evaluate("document.getElementById('lanReadyBtn').click(); true"),
   ]);
-  await waitForPageExpression(host, '!document.getElementById("lanStartBtn").disabled', 6000, 'survival start button');
+  await waitForPageExpression(
+    host,
+    'LAN.room.players.every(player => player.ready)',
+    10000,
+    'survival players ready'
+  );
+  await waitForPageExpression(host, '!document.getElementById("lanStartBtn").disabled', 30000, 'survival start button');
   await host.evaluate("document.getElementById('lanStartBtn').click(); true");
   await Promise.all([
     waitForPageExpression(
       host,
-      'LAN.mode === "survival" && LAN_SURVIVAL_STATE.active && SurvivalState.active',
+      'LAN.loadingActive && window.LoadingManager.isActive() && document.querySelectorAll(".loading-player-row").length === 2',
       10000,
+      'host survival synced loading'
+    ),
+    waitForPageExpression(
+      joiner,
+      'LAN.loadingActive && window.LoadingManager.isActive() && document.querySelectorAll(".loading-player-row").length === 2',
+      10000,
+      'joiner survival synced loading'
+    ),
+  ]);
+  await waitForPageExpression(
+    joiner,
+    'LAN.mode === "survival" && LAN_SURVIVAL_STATE.active && SurvivalState.active',
+    60000,
+    'joiner survival match start after loading'
+  );
+  const survivalStartDebug = await joiner.evaluate(`({
+    lanMode: LAN.mode,
+    lanActive: LAN.active,
+    roomPhase: LAN.room?.phase,
+    roomMode: LAN.room?.mode,
+    survivalActive: SurvivalState.active,
+    survivalPhase: SurvivalState.phase,
+    clientSurvivalActive: LAN_SURVIVAL_STATE.active,
+    running,
+    gameState,
+    connected: LANNET.connected,
+    loadingActive: window.LoadingManager?.isActive?.() || false,
+    preloadKey: LAN.preloadReadyKey
+  })`);
+  if (!(survivalStartDebug.lanMode === 'survival'
+      && survivalStartDebug.survivalActive
+      && survivalStartDebug.clientSurvivalActive)) {
+    throw new Error(`Joiner did not enter survival after host start: ${JSON.stringify(survivalStartDebug)}`);
+  }
+  await Promise.all([
+    waitForPageExpression(
+      host,
+      'LAN.mode === "survival" && LAN_SURVIVAL_STATE.active && SurvivalState.active',
+      30000,
       'host survival start'
     ),
     waitForPageExpression(
       joiner,
       'LAN.mode === "survival" && LAN_SURVIVAL_STATE.active && SurvivalState.active',
-      10000,
+      30000,
       'joiner survival start'
     ),
   ]);
+  await host.evaluate('LAN_AI.enabled = false; true');
   await waitForPageExpression(
     host,
     '!document.querySelector("#hud1 .centermsg").textContent.includes("回合")',
@@ -1113,6 +1583,49 @@ async function main() {
     3000,
     'survival shop close'
   );
+  const prepActionTest = await host.evaluate(`(async () => {
+    setWeapon(p1, 'rifle');
+    p1.ammo = 5;
+    p1.reserve = 40;
+    p1.reloadEnd = 0;
+    p1.nextShot = 0;
+    p1.boltEnd = 0;
+    p1.input.aim = false;
+    mouse.aim = false;
+    const beforeAmmo = p1.ammo;
+    p1.input.fire = true;
+    tryFire(p1, performance.now());
+    p1.input.fire = false;
+    const fired = p1.ammo < beforeAmmo;
+
+    p1.reloadEnd = 0;
+    p1.ammo = 1;
+    p1.reserve = 40;
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'KeyR', bubbles: true, cancelable: true
+    }));
+    const reloadStarted = p1.reloadEnd > performance.now();
+
+    p1.reloadEnd = 0;
+    p1.boltEnd = 0;
+    p1.aiming = false;
+    p1.input.aim = false;
+    mouse.aim = false;
+    toggleAim();
+    const aimed = !!(p1.aiming || p1.input.aim || mouse.aim);
+    return {
+      gameState,
+      fired,
+      reloadStarted,
+      aimed
+    };
+  })()`);
+  if (prepActionTest.gameState !== 'combat'
+      || !prepActionTest.fired
+      || !prepActionTest.reloadStarted
+      || !prepActionTest.aimed) {
+    throw new Error(`Survival preparation actions are blocked: ${JSON.stringify(prepActionTest)}`);
+  }
 
   await Promise.all([
     waitForPageExpression(host, 'SurvivalState.phase === "wave" && SurvivalState.wave === 1', 20000, 'survival wave 1'),
@@ -1139,7 +1652,120 @@ async function main() {
   if (hostIds.size === 0 || !survivalZombieSync[1].some(z => hostIds.has(z.netId))) {
     throw new Error(`Survival zombie snapshots did not sync: ${JSON.stringify(survivalZombieSync)}`);
   }
-  const survivalKillZombieId = survivalZombieSync[1][0].netId;
+  const musicianWaveComposition = await host.evaluate(`(() => {
+    const savedEndless = SurvivalState.endlessMode;
+    try {
+      SurvivalState.endlessMode = true;
+      let types = [];
+      let includesMusician = false;
+      for (let attempt = 0; attempt < 200; attempt++) {
+        PlayerZombie.resetWaveFlag();
+        types = LAN_SURVIVAL_debugWaveComposition(3);
+        if (types.includes('musician')) {
+          includesMusician = true;
+          break;
+        }
+      }
+      return {
+        includesMusician,
+        types
+      };
+    } finally {
+      PlayerZombie.resetWaveFlag();
+      SurvivalState.endlessMode = savedEndless;
+    }
+  })()`);
+  if (!musicianWaveComposition.includesMusician) {
+    throw new Error(`LAN wave composition lost musician: ${JSON.stringify(musicianWaveComposition)}`);
+  }
+  const lanMusicianSpawned = await host.evaluate(`(() => {
+    const source = LAN.models.get(LAN.selfId)?.pos || p1.pos;
+    PlayerZombie.resetWaveFlag();
+    const musician = PlayerZombie.spawn(source.x + 3, source.z + 3);
+    if (!musician) return false;
+    musician.netId = 'musician-lan-test';
+    musician.mesh.visible = true;
+    return true;
+  })()`);
+  if (!lanMusicianSpawned) {
+    throw new Error('Could not spawn the LAN musician test zombie');
+  }
+  await waitForPageExpression(
+    joiner,
+    'PlayerZombie.active?.netId === "musician-lan-test" && !PlayerZombie.active.dead',
+    6000,
+    'LAN musician snapshot'
+  );
+  await joiner.evaluate(`LANNET.send({
+    type: 'survivalZombieHit',
+    zombieId: 'musician-lan-test',
+    damage: 999,
+    part: 'head'
+  }); true`);
+  await Promise.all([
+    waitForPageExpression(host, '!PlayerZombie.active || PlayerZombie.active.dead', 5000, 'host musician death'),
+    waitForPageExpression(joiner, '!PlayerZombie.active || PlayerZombie.active.dead', 5000, 'joiner musician death'),
+  ]);
+  const survivalMusicZombieTest = {
+    compositionIncludesMusician: musicianWaveComposition.includesMusician,
+    syncedToJoiner: true,
+    killedOnBothClients: true
+  };
+  const survivalAiKillsBefore = await host.evaluate(
+    `LAN.playerStates.get(${JSON.stringify(survivalAiId)})?.survivalWaveKills || 0`
+  );
+  const aiZombieSpawned = await host.evaluate(`(() => {
+    const ai = LAN.models.get(${JSON.stringify(survivalAiId)});
+    if (!ai || typeof spawnZombieByType !== 'function') return false;
+    const x = ai.pos.x - Math.sin(ai.yaw) * 2.2;
+    const z = ai.pos.z - Math.cos(ai.yaw) * 2.2;
+    const zombie = spawnZombieByType(x, z, SurvivalState.wave, 'normal');
+    if (!zombie) return false;
+    zombie.netId = 'ai-survival-test';
+    zombie.hp = 20;
+    zombie.maxHp = 20;
+    zombie.mesh.visible = true;
+    return true;
+  })()`);
+  if (!aiZombieSpawned) {
+    throw new Error('Could not spawn the survival AI test zombie');
+  }
+  await sleep(350);
+  await host.evaluate('LAN_AI.enabled = true; true');
+  await waitForPageExpression(
+    host,
+    `(LAN.playerStates.get(${JSON.stringify(survivalAiId)})?.survivalWaveKills || 0) > ${survivalAiKillsBefore}`,
+    10000,
+    'survival AI zombie kill'
+  );
+  const survivalAiKillsAfter = await host.evaluate(
+    `LAN.playerStates.get(${JSON.stringify(survivalAiId)})?.survivalWaveKills || 0`
+  );
+  await host.evaluate('LAN_AI.enabled = false; true');
+  let survivalKillZombieId = await joiner.evaluate(
+    'getAllZombies().find(z => z.alive)?.netId || null'
+  );
+  if (!survivalKillZombieId) {
+    const fallbackZombieSpawned = await host.evaluate(`(() => {
+      const zombie = spawnZombieByType(0, 0, SurvivalState.wave, 'normal');
+      if (!zombie) return false;
+      zombie.netId = 'survival-kill-reward-test';
+      zombie.hp = 120;
+      zombie.maxHp = 120;
+      zombie.mesh.visible = true;
+      return true;
+    })()`);
+    if (!fallbackZombieSpawned) {
+      throw new Error('Could not spawn the survival reward test zombie');
+    }
+    await waitForPageExpression(
+      joiner,
+      'getAllZombies().some(z => z.alive && z.netId === "survival-kill-reward-test")',
+      6000,
+      'survival reward zombie sync'
+    );
+    survivalKillZombieId = 'survival-kill-reward-test';
+  }
   await joiner.evaluate(`LANNET.send({
     type: 'survivalZombieHit',
     zombieId: ${JSON.stringify(survivalKillZombieId)},
@@ -1471,11 +2097,22 @@ async function main() {
   );
   await host.evaluate('keys.KeyE = false; true');
 
-  await host.evaluate("LANNET.send({ type: 'survivalWaveClear', wave: 1 }); true");
+  await host.evaluate("LANNET.send({ type: 'survivalWaveClear', wave: 3 }); true");
   await Promise.all([
     waitForPageExpression(host, 'SurvivalState.phase === "prep" && SurvivalState.wave === 1', 6000, 'host wave summary'),
     waitForPageExpression(joiner, 'document.getElementById("survivalWaveSummary").style.display === "block"', 6000, 'joiner wave summary'),
   ]);
+  await Promise.all([
+    waitForPageExpression(host, 'isAmmoDropActive()', 5000, 'host ammo drop'),
+    waitForPageExpression(joiner, 'isAmmoDropActive()', 5000, 'joiner ammo drop'),
+  ]);
+  const ammoDropUi = await Promise.all([
+    host.evaluate('({ active: isAmmoDropActive(), hasMesh: !!_ammoDropMesh?.visible })'),
+    joiner.evaluate('({ active: isAmmoDropActive(), hasMesh: !!_ammoDropMesh?.visible })'),
+  ]);
+  if (ammoDropUi.some(drop => !drop.active || !drop.hasMesh)) {
+    throw new Error(`LAN ammo drop did not sync: ${JSON.stringify(ammoDropUi)}`);
+  }
   const survivalSummaryUi = await host.evaluate(`({
     visible: document.getElementById('survivalWaveSummary').style.display === 'block',
     rows: Array.from(document.querySelectorAll('#svSummaryList .sv-summary-row')).map(row => ({
@@ -1483,7 +2120,9 @@ async function main() {
       tag: row.querySelector('.sv-summary-tag')?.textContent || ''
     }))
   })`);
-  if (!survivalSummaryUi.visible || survivalSummaryUi.rows.length !== 2) {
+  if (!survivalSummaryUi.visible
+      || survivalSummaryUi.rows.length !== 3
+      || !survivalSummaryUi.rows.some(row => row.text.includes('电脑'))) {
     throw new Error(`Survival summary UI is invalid: ${JSON.stringify(survivalSummaryUi)}`);
   }
 
@@ -1573,16 +2212,30 @@ async function main() {
   await Promise.all([
     waitForPageExpression(
       host,
-      'getCurrentMapId() === "desert" && SurvivalState.phase === "prep"',
+      'getCurrentMapId() === "desert" && SurvivalState.phase === "prep" && running && document.getElementById("timer").style.display === "block" && document.getElementById("timer").textContent.includes("沙漠")',
       25000,
       'host loaded desert'
     ),
     waitForPageExpression(
       joiner,
-      'getCurrentMapId() === "desert" && SurvivalState.phase === "prep"',
+      'getCurrentMapId() === "desert" && SurvivalState.phase === "prep" && running && document.getElementById("timer").style.display === "block" && document.getElementById("timer").textContent.includes("沙漠")',
       25000,
       'joiner loaded desert'
     ),
+  ]);
+  const secondMapHud = await Promise.all([
+    host.evaluate(`({
+      running,
+      gameState,
+      text: document.getElementById('timer').textContent,
+      display: document.getElementById('timer').style.display
+    })`),
+    joiner.evaluate(`({
+      running,
+      gameState,
+      text: document.getElementById('timer').textContent,
+      display: document.getElementById('timer').style.display
+    })`),
   ]);
   const survivalTest = {
     zombieNetIds: Array.from(hostIds),
@@ -1592,9 +2245,30 @@ async function main() {
     teammateHealTest,
     healRangeInterrupt,
     summary: survivalSummaryUi,
+    ammoDropUi,
+    musician: survivalMusicZombieTest,
+    aiZombieKillsBefore: survivalAiKillsBefore,
+    aiZombieKillsAfter: survivalAiKillsAfter,
     mapAfterPortal: await host.evaluate('getCurrentMapId()'),
     autoReviveHp: await joiner.evaluate('LAN.playerStates.get(LAN.selfId).hp'),
+    aiState: await host.evaluate(`(() => {
+      const state = LAN.playerStates.get(${JSON.stringify(survivalAiId)});
+      return state ? {
+        name: state.name,
+        isAI: state.isAI,
+        team: state.team,
+        alive: state.alive,
+        downed: state.downed
+      } : null;
+    })()`),
+    prepActionTest,
+    secondMapHud,
   };
+  if (!survivalTest.aiState?.isAI
+      || survivalTest.aiState.team !== 'blue'
+      || !survivalTest.aiState.name.startsWith('电脑')) {
+    throw new Error(`Survival AI state is invalid: ${JSON.stringify(survivalTest.aiState)}`);
+  }
   await Promise.all([
     host.evaluate(`
       LAN_handleMessage({
@@ -1665,12 +2339,17 @@ async function main() {
     room,
     roomMapSync,
     roomModeSync,
+    lanPreloadTest,
+    lanLoadingUi,
     lobbyLayout,
     prepTimerText,
     prepMoved,
     prepJumped,
     prepFireBlocked,
     combatTimerText,
+    trajectoryPreviewTest,
+    smokeResultTest,
+    smokeResultPositionError,
     lanWeaponModels,
     profileId: savedProfile.playerId,
     dataFolder: dataDirectories.get('host'),
@@ -1678,6 +2357,7 @@ async function main() {
     aiScoreboardUi,
     aiUsesHdWeapon,
     aiCharacterPartCount,
+    musicianAmmoDropTest,
     meleeConeTargetCount,
     aiPerformanceBase,
     aiPerformanceAfterWeaponSwitch,
@@ -1693,6 +2373,8 @@ async function main() {
     storedMatch,
     returnButtonUi,
     returnedRoomUi,
+    aiSeatTest,
+    aiBehaviorTest,
     survivalTest,
     endlessChoiceUi,
     victoryAnimation,

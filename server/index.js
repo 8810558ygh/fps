@@ -269,6 +269,7 @@ function publicPlayer(client) {
     name: client.name,
     team: client.team,
     ready: !!client.ready,
+    isAI: !!client.isAI,
     connected: client.connected !== false,
     owner: client.roomId && rooms.get(client.roomId)?.ownerId === client.id,
   };
@@ -383,10 +384,75 @@ function survivalPortalCenter(mapId) {
   };
 }
 
+function isSurvivalAmmoDropWave(room, wave) {
+  const survival = room.survival;
+  if (!survival) return false;
+  const mapsPerLoop = SURVIVAL_MAPS.length;
+  const mapWaves = 5;
+  const globalWave = Math.max(0, survival.endlessLoop || 0) * mapsPerLoop * mapWaves
+    + Math.max(0, survival.mapIndex || 0) * mapWaves
+    + Math.max(0, Number(wave) || 0);
+  return globalWave % 10 === 3 || globalWave % 10 === 8;
+}
+
+function connectedHumanPlayers(room) {
+  return Array.from(room.memberIds)
+    .map(id => clients.get(id))
+    .filter(client => client && !client.isAI && client.connected !== false);
+}
+
 function connectedSurvivalPlayers(room) {
   return Array.from(room.memberIds)
     .map(id => clients.get(id))
     .filter(client => client && client.connected !== false);
+}
+
+function removeAllAI(room) {
+  for (const id of Array.from(room.memberIds)) {
+    const member = clients.get(id);
+    if (!member?.isAI) continue;
+    room.memberIds.delete(id);
+    room.states?.delete(id);
+    clients.delete(id);
+  }
+}
+
+function addAIClient(room, team) {
+  const survival = room.mode === 'survival';
+  const normalizedTeam = survival ? 'blue' : (team === 'red' ? 'red' : 'blue');
+  const count = survival ? room.memberIds.size : teamPlayers(room, normalizedTeam).length;
+  const limit = survival ? MAX_SURVIVAL_PLAYERS : MAX_TEAM;
+  if (count >= limit) return null;
+  if (!room.nextAiNumber) {
+    room.nextAiNumber = 1;
+  }
+  let number = room.nextAiNumber++;
+  let id = `ai:${room.code}:${number}`;
+  while (clients.has(id)) {
+    number = room.nextAiNumber++;
+    id = `ai:${room.code}:${number}`;
+  }
+  const aiClient = {
+    id,
+    ws: null,
+    ip: null,
+    isAI: true,
+    connected: true,
+    name: `电脑${number}`,
+    roomId: room.code,
+    team: normalizedTeam,
+    ready: true,
+    lastShotAt: 0,
+    lastStateAt: 0,
+    lastBarrelAt: 0,
+    matchKills: 0,
+    matchDeaths: 0,
+    matchDamage: 0,
+    roundStats: createRoundStats(),
+  };
+  clients.set(id, aiClient);
+  room.memberIds.add(id);
+  return aiClient;
 }
 
 function buildSurvivalSummary(room) {
@@ -417,6 +483,7 @@ function buildSurvivalSummary(room) {
 }
 
 function resetSurvivalRoundState(room) {
+  room.finalProjectileFx?.clear();
   let slot = 0;
   for (const id of room.memberIds) {
     const client = clients.get(id);
@@ -440,7 +507,7 @@ function resetSurvivalRoundState(room) {
       spawnSlot: slot++,
       aimStage: 0,
     });
-    client.ready = false;
+    client.ready = !!client.isAI;
   }
 }
 
@@ -483,7 +550,7 @@ function broadcastSurvivalState(room) {
     endlessMode: !!survival.endlessMode,
     endlessLoop: survival.endlessLoop || 0,
     portalReady: Array.from(survival.portalReady || []),
-    portalRequired: connectedSurvivalPlayers(room).map(client => client.id),
+    portalRequired: connectedHumanPlayers(room).map(client => client.id),
   });
 }
 
@@ -524,7 +591,7 @@ function checkSurvivalWipe(room) {
 function finishSurvivalMapLoad(room, now) {
   const survival = room.survival;
   if (!survival || survival.phase !== 'mapLoading') return;
-  const required = connectedSurvivalPlayers(room).map(client => client.id);
+  const required = connectedHumanPlayers(room).map(client => client.id);
   if (required.length > 0 && !required.every(id => survival.mapReady.has(id))) return;
 
   survival.phase = 'prep';
@@ -653,7 +720,10 @@ function leaveRoom(client, notify = true) {
   client.team = null;
   client.ready = false;
 
-  if (room.memberIds.size === 0) {
+  const hasHumanMember = Array.from(room.memberIds)
+    .some(id => !clients.get(id)?.isAI);
+  if (!hasHumanMember) {
+    removeAllAI(room);
     rooms.delete(room.code);
     return;
   }
@@ -686,6 +756,7 @@ function aliveCount(room, team) {
 }
 
 function resetRound(room) {
+  room.finalProjectileFx?.clear();
   let blueSlot = 0;
   let redSlot = 0;
   for (const id of room.memberIds) {
@@ -707,7 +778,7 @@ function resetRound(room) {
       armor: 50,
       spawnSlot: slot,
     });
-    client.ready = false;
+    client.ready = !!client.isAI;
   }
 }
 
@@ -761,6 +832,8 @@ function startSurvivalMatch(room) {
     queueRemaining: 0,
     activeHeals: new Map(),
     activeRescue: null,
+    lastZombieDeath: null,
+    lastAmmoDropKey: '',
   };
   resetSurvivalRoundState(room);
   broadcastRoom(room, {
@@ -769,6 +842,59 @@ function startSurvivalMatch(room) {
     mapId,
   });
   broadcastSurvivalState(room);
+}
+
+function beginLanLoading(room) {
+  const players = connectedHumanPlayers(room);
+  const progress = {};
+  for (const player of players) progress[player.id] = 0;
+  room.phase = 'loading';
+  room.loading = {
+    mapId: room.mode === 'survival' ? 'battlefield' : room.mapId,
+    mode: room.mode || 'team',
+    progress,
+    startedAt: Date.now(),
+    allDone: false,
+    startAt: 0,
+  };
+  broadcastRoom(room, {
+    type: 'lanLoadingStart',
+    mapId: room.loading.mapId,
+    mode: room.loading.mode,
+    players: players.map(player => ({
+      id: player.id,
+      name: player.name,
+      isSelf: false,
+    })),
+  });
+}
+
+function broadcastLanLoadingStatus(room) {
+  if (!room.loading) return;
+  broadcastRoom(room, {
+    type: 'lanLoadingStatus',
+    progress: { ...room.loading.progress },
+  });
+}
+
+function tickLanLoading(room, now) {
+  if (room.phase !== 'loading' || !room.loading) return false;
+  const required = connectedHumanPlayers(room).map(client => client.id);
+  for (const id of required) {
+    if (room.loading.progress[id] === undefined) room.loading.progress[id] = 0;
+  }
+  const allLoaded = required.length > 0
+    && required.every(id => room.loading.progress[id] >= 1);
+  if (allLoaded && !room.loading.allDone) {
+    room.loading.allDone = true;
+    room.loading.startAt = now + 350;
+    broadcastRoom(room, { type: 'lanLoadingAllComplete' });
+  }
+  if (room.loading.allDone && now >= room.loading.startAt) {
+    room.loading = null;
+    startMatch(room);
+  }
+  return true;
 }
 
 function startMatch(room) {
@@ -837,6 +963,7 @@ function checkElimination(room) {
 
 function roomTick(room) {
   const now = Date.now();
+  if (tickLanLoading(room, now)) return;
   if (room.mode === 'survival' && room.survival) {
     const survival = room.survival;
     if (survival.phase === 'prep' && now >= survival.phaseEnd) {
@@ -910,6 +1037,7 @@ function roomTick(room) {
       id,
       name: client.name,
       team: client.team,
+      isAI: !!client.isAI,
       x: state.x, y: state.y, z: state.z,
       yaw: state.yaw, pitch: state.pitch,
       height: state.height,
@@ -1092,6 +1220,8 @@ wss.on('connection', ws => {
         memberIds: new Set([client.id]),
         states: new Map(),
         returnedIds: new Set(),
+        finalProjectileFx: new Set(),
+        nextAiNumber: 1,
         phase: 'lobby',
         round: 0,
         blueScore: 0,
@@ -1166,6 +1296,36 @@ wss.on('connection', ws => {
       return;
     }
 
+    if (msg.type === 'addAI') {
+      if (room.ownerId !== client.id || room.phase !== 'lobby') {
+        return;
+      }
+      const team = room.mode === 'survival' ? 'blue' : (msg.team === 'red' ? 'red' : 'blue');
+      const aiClient = addAIClient(room, team);
+      if (!aiClient) {
+        send(ws, {
+          type: 'error',
+          message: room.mode === 'survival'
+            ? '生存小队已满（最多 10 人）'
+            : '该队伍已满，无法添加电脑玩家',
+        });
+        return;
+      }
+      broadcastLobby(room);
+      return;
+    }
+
+    if (msg.type === 'removeAI') {
+      if (room.ownerId !== client.id || room.phase !== 'lobby') return;
+      const target = clients.get(String(msg.id || ''));
+      if (!target?.isAI || target.roomId !== room.code) return;
+      room.memberIds.delete(target.id);
+      room.states.delete(target.id);
+      clients.delete(target.id);
+      broadcastLobby(room);
+      return;
+    }
+
     if (msg.type === 'ready') {
       if (room.phase !== 'lobby') return;
       client.ready = !!msg.ready;
@@ -1193,7 +1353,7 @@ wss.on('connection', ws => {
             const member = clients.get(id);
             if (member) {
               member.team = 'blue';
-              member.ready = false;
+              member.ready = !!member.isAI;
             }
           }
         } else {
@@ -1202,7 +1362,7 @@ wss.on('connection', ws => {
             const member = clients.get(id);
             if (member) {
               member.team = index++ % 2 === 0 ? 'blue' : 'red';
-              member.ready = false;
+              member.ready = !!member.isAI;
             }
           }
         }
@@ -1220,11 +1380,27 @@ wss.on('connection', ws => {
           send(ws, { type: 'error', message: '所有生存小队成员准备后才能开始' });
           return;
         }
-      } else if (members < 2 || !allReady) {
+      } else if (!teamPlayers(room, 'blue').length
+          || !teamPlayers(room, 'red').length
+          || !allReady) {
         send(ws, { type: 'error', message: '双方至少各一人，且所有玩家准备后才能开始' });
         return;
       }
-      startMatch(room);
+      beginLanLoading(room);
+      return;
+    }
+
+    if (msg.type === 'lanLoadingProgress' || msg.type === 'lanLoadingComplete') {
+      if (room.phase !== 'loading' || !room.loading) return;
+      if (room.loading.progress[client.id] === undefined) return;
+      const progress = msg.type === 'lanLoadingComplete'
+        ? 1
+        : Math.max(0, Math.min(1, Number(msg.progress) || 0));
+      room.loading.progress[client.id] = Math.max(
+        room.loading.progress[client.id],
+        progress
+      );
+      broadcastLanLoadingStatus(room);
       return;
     }
 
@@ -1242,7 +1418,9 @@ wss.on('connection', ws => {
         if (![x, y, z].every(Number.isFinite)) continue;
         nextZombies.set(netId, {
           netId,
-          type: ['normal', 'small', 'big'].includes(item.type) ? item.type : 'normal',
+          type: ['normal', 'small', 'big', 'musician'].includes(item.type)
+            ? item.type
+            : 'normal',
           hp: Math.max(1, Math.min(10000, Math.round(Number(item.hp) || 1))),
           maxHp: Math.max(1, Math.min(10000, Math.round(Number(item.maxHp) || 1))),
           x, y, z,
@@ -1264,6 +1442,13 @@ wss.on('connection', ws => {
       if (room.mode !== 'survival' || !room.survival || room.survival.phase !== 'wave') return;
       const zombie = room.survival.zombies.get(String(msg.zombieId || ''));
       if (!zombie || room.survival.deadZombies.has(zombie.netId)) return;
+      let attacker = client;
+      if (msg.attackerId != null) {
+        if (room.ownerId !== client.id) return;
+        const requestedAttacker = clients.get(String(msg.attackerId));
+        if (!requestedAttacker?.isAI || requestedAttacker.roomId !== room.code) return;
+        attacker = requestedAttacker;
+      }
       const damage = Math.max(1, Math.min(500, Math.round(Number(msg.damage) || 0)));
       zombie.hp = Math.max(0, zombie.hp - damage);
       let killed = false;
@@ -1271,17 +1456,22 @@ wss.on('connection', ws => {
       if (zombie.hp <= 0) {
         killed = true;
         room.survival.deadZombies.add(zombie.netId);
-        client.survivalKills = (client.survivalKills || 0) + 1;
-        client.survivalWaveKills = (client.survivalWaveKills || 0) + 1;
-        coinReward = zombie.type === 'big' ? 2 : 1;
-        client.survivalCoins = (client.survivalCoins || 0) + coinReward;
+        room.survival.lastZombieDeath = {
+          x: zombie.x,
+          y: zombie.y,
+          z: zombie.z,
+        };
+        attacker.survivalKills = (attacker.survivalKills || 0) + 1;
+        attacker.survivalWaveKills = (attacker.survivalWaveKills || 0) + 1;
+        coinReward = (zombie.type === 'big' || zombie.type === 'musician') ? 2 : 1;
+        attacker.survivalCoins = (attacker.survivalCoins || 0) + coinReward;
       }
       broadcastRoom(room, {
         type: 'survivalZombieDamaged',
         zombieId: zombie.netId,
         hp: zombie.hp,
         killed,
-        killerId: killed ? client.id : null,
+        killerId: killed ? attacker.id : null,
         coinReward,
       });
       return;
@@ -1326,8 +1516,25 @@ wss.on('connection', ws => {
       if (room.mode !== 'survival' || room.ownerId !== client.id || !room.survival) return;
       if (room.survival.phase !== 'wave') return;
       const now = Date.now();
+      const clearedWave = Math.max(1, Number(msg.wave) || room.survival.wave);
+      if (isSurvivalAmmoDropWave(room, clearedWave)) {
+        const dropKey = `${room.survival.endlessLoop || 0}:${room.survival.mapIndex || 0}:${clearedWave}`;
+        if (room.survival.lastAmmoDropKey !== dropKey) {
+          room.survival.lastAmmoDropKey = dropKey;
+          const death = room.survival.lastZombieDeath;
+          const center = survivalPortalCenter(room.survival.mapId);
+          broadcastRoom(room, {
+            type: 'survivalAmmoDrop',
+            wave: clearedWave,
+            x: Number.isFinite(death?.x) ? death.x : center.x,
+            y: Number.isFinite(death?.y) ? death.y : 0,
+            z: Number.isFinite(death?.z) ? death.z : center.z,
+          });
+        }
+      }
       const summary = buildSurvivalSummary(room);
       broadcastRoom(room, { type: 'survivalWaveSummary', summary });
+      room.survival.lastZombieDeath = null;
       room.survival.zombies.clear();
       if (room.survival.wave >= 5) {
         reviveAllDowned(room, SURVIVAL_REVIVE_HP);
@@ -1499,7 +1706,7 @@ wss.on('connection', ws => {
       const center = survivalPortalCenter(room.survival.mapId);
       if (Math.hypot(state.x - center.x, state.z - center.z) > SURVIVAL_PORTAL_RADIUS + 0.5) return;
       room.survival.portalReady.add(client.id);
-      const required = connectedSurvivalPlayers(room).map(player => player.id);
+      const required = connectedHumanPlayers(room).map(player => player.id);
       broadcastRoom(room, {
         type: 'survivalPortalProgress',
         ready: Array.from(room.survival.portalReady),
@@ -1535,6 +1742,90 @@ wss.on('connection', ws => {
       if (room.mode !== 'survival' || !room.survival || room.survival.phase !== 'mapLoading') return;
       room.survival.mapReady.add(client.id);
       finishSurvivalMapLoad(room, Date.now());
+      return;
+    }
+
+    if (msg.type === 'lanAIStates') {
+      if (room.ownerId !== client.id) return;
+      const survivalMode = room.mode === 'survival' && room.survival;
+      if (survivalMode) {
+        if (!['prep', 'wave', 'portal'].includes(room.survival.phase)) return;
+      } else if (room.mode !== 'team' || !['prep', 'round'].includes(room.phase)) {
+        return;
+      }
+      const list = Array.isArray(msg.states) ? msg.states.slice(0, MAX_TEAM * 2) : [];
+      const now = Date.now();
+      for (const item of list) {
+        const aiClient = clients.get(String(item?.id || ''));
+        if (!aiClient?.isAI || aiClient.roomId !== room.code) continue;
+        const state = room.states.get(aiClient.id);
+        if (!state || !state.alive) continue;
+        if (now - (aiClient.lastStateAt || 0) < 16) continue;
+        aiClient.lastStateAt = now;
+
+        const x = Number(item.x);
+        const y = Number(item.y);
+        const z = Number(item.z);
+        if (![x, y, z].every(Number.isFinite)) continue;
+        if (Math.abs(x) > 180 || Math.abs(y) > 80 || Math.abs(z) > 180) continue;
+        const prevAt = aiClient._prevStateServerAt || 0;
+        if ((room.phase === 'round' || room.survival?.phase === 'wave') && prevAt > 0) {
+          const elapsed = Math.max(0.016, (now - prevAt) / 1000);
+          const dist = Math.hypot(x - state.x, y - state.y, z - state.z);
+          if (dist / elapsed > 20) continue;
+        }
+
+        state.x = x;
+        state.y = y;
+        state.z = z;
+        state.yaw = Number(item.yaw) || 0;
+        state.pitch = Number(item.pitch) || 0;
+        state.height = Math.max(0.8, Math.min(2.2, Number(item.height) || 1.84));
+        state.weapon = String(item.weapon || 'rifle').slice(0, 16);
+        state.crouching = !!item.crouching;
+        state.aiming = !!item.aiming;
+        state.aimStage = Math.max(0, Math.min(2, Number(item.aimStage) || 0));
+        state.reloadRemain = Math.max(0, Math.min(10000, Number(item.reloadRemain) || 0));
+        aiClient._prevStateServerAt = now;
+      }
+      return;
+    }
+
+    if (msg.type === 'lanAIShot') {
+      if (room.ownerId !== client.id) return;
+      const survivalShot = room.mode === 'survival' && room.survival?.phase === 'wave';
+      if (!survivalShot && (room.mode !== 'team' || room.phase !== 'round')) return;
+      const attacker = clients.get(String(msg.attackerId || ''));
+      if (!attacker?.isAI || attacker.roomId !== room.code) return;
+      const weapon = WEAPON_DAMAGE[msg.weapon];
+      if (!weapon) return;
+      const now = Date.now();
+      if (now - (attacker.lastShotAt || 0) < weapon.fireMs * 0.7) return;
+      attacker.lastShotAt = now;
+
+      if (msg.visual) {
+        const v = msg.visual;
+        if ([v.sx, v.sy, v.sz, v.ex, v.ey, v.ez].every(Number.isFinite)) {
+          broadcastRoom(room, {
+            type: 'shotVisual',
+            shooterId: attacker.id,
+            weapon: msg.weapon,
+            payload: {
+              sx: v.sx, sy: v.sy, sz: v.sz,
+              ex: v.ex, ey: v.ey, ez: v.ez,
+            },
+          }, client);
+        }
+      }
+      const hits = survivalShot
+        ? []
+        : (Array.isArray(msg.hits) ? msg.hits.slice(0, 16) : []);
+      for (const hit of hits) {
+        const target = clients.get(String(hit?.targetId || ''));
+        if (!target || target.roomId !== room.code) continue;
+        const part = ['head', 'body', 'leg'].includes(hit.part) ? hit.part : 'body';
+        applyDamage(room, attacker, target, msg.weapon, part, hit.distance);
+      }
       return;
     }
 
@@ -1689,7 +1980,7 @@ wss.on('connection', ws => {
             room.survival.deadZombies.add(zombie.netId);
             client.survivalKills = (client.survivalKills || 0) + 1;
             client.survivalWaveKills = (client.survivalWaveKills || 0) + 1;
-            coinReward = zombie.type === 'big' ? 2 : 1;
+            coinReward = (zombie.type === 'big' || zombie.type === 'musician') ? 2 : 1;
             client.survivalCoins = (client.survivalCoins || 0) + coinReward;
           }
           broadcastRoom(room, {
@@ -1707,11 +1998,25 @@ wss.on('connection', ws => {
     }
 
     if (msg.type === 'fx') {
+      const kind = msg.kind;
+      const payload = msg.payload || {};
+      if (kind === 'smokePop' || kind === 'flashDetonate') {
+        const x = Number(payload.px);
+        const y = Number(payload.py);
+        const z = Number(payload.pz);
+        if (![x, y, z].every(Number.isFinite)) return;
+        if (payload.id == null) return;
+        const id = String(payload.id).slice(0, 96);
+        if (!room.finalProjectileFx) room.finalProjectileFx = new Set();
+        const key = `${client.id}:${kind}:${id}`;
+        if (room.finalProjectileFx.has(key)) return;
+        room.finalProjectileFx.add(key);
+      }
       broadcastRoom(room, {
         type: 'fx',
         fromId: client.id,
-        kind: msg.kind,
-        payload: msg.payload || {},
+        kind,
+        payload,
       }, client);
       return;
     }
@@ -1749,7 +2054,7 @@ wss.on('connection', ws => {
           room.returnedIds?.clear();
           for (const id of room.memberIds) {
             const member = clients.get(id);
-            if (member) member.ready = false;
+            if (member) member.ready = !!member.isAI;
           }
         }
         client.ready = false;
@@ -1779,7 +2084,7 @@ wss.on('connection', ws => {
       room.returnedIds?.clear();
       for (const id of room.memberIds) {
         const member = clients.get(id);
-        if (member) member.ready = false;
+        if (member) member.ready = !!member.isAI;
       }
       broadcastLobby(room);
       return;

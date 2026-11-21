@@ -235,6 +235,9 @@
 
         _kill(from) {
             if (!this.active || this.active.dead) return;
+            const deathX = this.active.pos.x;
+            const deathY = this.active.pos.y;
+            const deathZ = this.active.pos.z;
             this.active.dead = true;
             this.active.alive = false;
 
@@ -247,6 +250,9 @@
             this.slowStartTime = 0;
             MusicEngine.stop();
             if (this.active.mesh) this.active.mesh.visible = false;
+            if (typeof maybeSpawnSurvivalAmmoDrop === 'function') {
+                maybeSpawnSurvivalAmmoDrop(deathX, deathY, deathZ);
+            }
 
             const deadRef = this.active;
             setTimeout(() => {
@@ -255,6 +261,15 @@
                     this.active = null;
                 }
             }, 1000);
+        },
+
+        applyNetworkState(hp, killed) {
+            if (!this.active || this.active.dead) return;
+            if (Number.isFinite(hp)) this.active.hp = Math.max(0, hp);
+            if (killed) {
+                this.active.hp = 0;
+                this._kill(null);
+            }
         },
 
         forceStopMusic() {

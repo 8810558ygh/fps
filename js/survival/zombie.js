@@ -776,29 +776,8 @@ function _killZombie(zombie, from) {
         }
     }
 
-    // 弹药掉落
-    if (getZombiesAliveCount() === 0
-        && typeof SurvivalState !== 'undefined'
-        && SurvivalState
-        && SurvivalState.wave > 0) {
-
-        const baseGlobalWave = SurvivalState.mapIndex * SurvivalState.maxWaves + SurvivalState.wave;
-        const globalWave = SurvivalState.endlessLoop * (SurvivalState.maps.length * SurvivalState.maxWaves) + baseGlobalWave;
-
-        // 全局第 3/8 波对应每张地图的第 3 波
-        const isDropWave = (globalWave % 10 === 3) || (globalWave % 10 === 8);
-
-        if (isDropWave) {
-            const queueLen = (SurvivalState.waveQueue && SurvivalState.waveQueue.length)
-                ? SurvivalState.waveQueue.length : 0;
-
-            if (queueLen === 0 && typeof spawnAmmoDrop === 'function') {
-                spawnAmmoDrop(zombie.pos.x, zombie.pos.y, zombie.pos.z);
-                if (typeof feed === 'function' && typeof p1 !== 'undefined' && p1) {
-                    feed(p1, `💛 精英波清空！掉落弹药箱`);
-                }
-            }
-        }
+    if (typeof maybeSpawnSurvivalAmmoDrop === 'function') {
+        maybeSpawnSurvivalAmmoDrop(zombie.pos.x, zombie.pos.y, zombie.pos.z);
     }
 }
 

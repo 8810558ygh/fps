@@ -183,17 +183,42 @@
         });
     }
 
-    function forceUploadAllTextures() {
+    function disposeWarmupGeometry(obj) {
+        if (!obj) return;
+        obj.traverse(o => {
+            if (o.geometry && typeof o.geometry.dispose === 'function') {
+                o.geometry.dispose();
+            }
+        });
+    }
+
+    function forceUploadAllTextures(options = {}) {
         if (typeof renderer === 'undefined' || !renderer) return;
         if (typeof renderer.initTexture !== 'function') return;
 
+        const includeHdWorld = options.includeHdWorld !== false;
+        const includeViewmodels = options.includeViewmodels !== false;
+        const includeSimpleWorld = options.includeSimpleWorld === true;
         const set = new Set();
         for (const type of ALL_WEAPON_TYPES) {
             try {
-                const w = (typeof _getWorldTemplate === 'function') ? _getWorldTemplate(type) : null;
-                const v = (typeof _getViewTemplate  === 'function') ? _getViewTemplate(type)  : null;
-                collectTexturesFromObject(w, set);
-                collectTexturesFromObject(v, set);
+                if (includeHdWorld) {
+                    const w = (typeof _getWorldTemplate === 'function')
+                        ? _getWorldTemplate(type)
+                        : null;
+                    collectTexturesFromObject(w, set);
+                }
+                if (includeViewmodels) {
+                    const v = (typeof _getViewTemplate === 'function')
+                        ? _getViewTemplate(type)
+                        : null;
+                    collectTexturesFromObject(v, set);
+                }
+                if (includeSimpleWorld && typeof window.makeWeaponModel === 'function') {
+                    const simple = window.makeWeaponModel(type, p1.mat, { useHd: false });
+                    collectTexturesFromObject(simple, set);
+                    disposeWarmupGeometry(simple);
+                }
             } catch (e) {}
         }
         try { collectTexturesFromObject(scene, set); } catch (e) {}
@@ -214,18 +239,27 @@
     // ============================================================
     // 场景 shader 编译
     // ============================================================
-    function compileSceneShaders() {
+    function compileSceneShaders(options = {}) {
         if (typeof renderer === 'undefined' || !renderer) return;
         if (typeof scene === 'undefined' || !scene) return;
 
+        const includeHdWorld = options.includeHdWorld !== false;
+        const includeViewmodels = options.includeViewmodels !== false;
+        const includeSimpleWorld = options.includeSimpleWorld === true;
         withWarmupCamera(() => {
             const tempObjects = [];
+            const simpleObjects = [];
 
             ALL_WEAPON_TYPES.forEach(type => {
                 try {
-                    const w = (typeof _getWorldTemplate === 'function') ? _getWorldTemplate(type) : null;
-                    const v = (typeof _getViewTemplate  === 'function') ? _getViewTemplate(type)  : null;
-                    [w, v].forEach(tpl => {
+                    const templates = [];
+                    if (includeHdWorld && typeof _getWorldTemplate === 'function') {
+                        templates.push(_getWorldTemplate(type));
+                    }
+                    if (includeViewmodels && typeof _getViewTemplate === 'function') {
+                        templates.push(_getViewTemplate(type));
+                    }
+                    templates.forEach(tpl => {
                         if (!tpl) return;
                         const _savedUD = tpl.userData;
                         tpl.userData = {};
@@ -238,6 +272,16 @@
                         scene.add(clone);
                         tempObjects.push(clone);
                     });
+                    if (includeSimpleWorld && typeof window.makeWeaponModel === 'function') {
+                        const simple = window.makeWeaponModel(type, p1.mat, { useHd: false });
+                        if (simple) {
+                            simple.position.set(0, 0.5, 0);
+                            simple.traverse(o => { o.visible = true; });
+                            scene.add(simple);
+                            tempObjects.push(simple);
+                            simpleObjects.push(simple);
+                        }
+                    }
                 } catch (e) {}
             });
 
@@ -257,6 +301,7 @@
             tempObjects.forEach(o => {
                 if (o.parent === scene) scene.remove(o);
             });
+            simpleObjects.forEach(disposeWarmupGeometry);
         });
     }
 
@@ -387,20 +432,29 @@
     // ============================================================
     // 单个武器 world model
     // ============================================================
-    function warmupSingleWorldModel(type) {
+    function warmupSingleWorldModel(type, options = {}) {
         if (typeof window.makeWeaponModel !== 'function') return;
         if (typeof p2 === 'undefined' || !p2 || !p2.gunHolder) return;
 
         let wm = null;
-        try { wm = window.makeWeaponModel(type, p2.mat); } catch (e) { return; }
+        const makeOptions = options.useHd === false ? { useHd: false } : undefined;
+        try { wm = window.makeWeaponModel(type, p2.mat, makeOptions); } catch (e) { return; }
         if (!wm) return;
 
+        const wasVisible = p2.gunHolder.visible;
+        p2.gunHolder.visible = true;
         p2.gunHolder.add(wm);
         try {
             renderer.compile(scene, p1.cam);
             renderer.render(scene, p1.cam);
         } catch (e) {}
         p2.gunHolder.remove(wm);
+        if (options.useHd === false) disposeWarmupGeometry(wm);
+        p2.gunHolder.visible = wasVisible;
+    }
+
+    function warmupSingleSimpleWorldModel(type) {
+        warmupSingleWorldModel(type, { useHd: false });
     }
 
     // ============================================================
@@ -446,6 +500,15 @@
             console.log('[loading_warmup] 特效材质预热完成');
         } catch (e) {
             console.warn('[loading_warmup] 特效材质预热失败:', e);
+        }
+    }
+
+    function warmupTrajectoryPreview() {
+        if (typeof window.warmupTrajectoryPreview !== 'function') return;
+        try {
+            window.warmupTrajectoryPreview();
+        } catch (e) {
+            console.warn('[loading_warmup] 投掷轨迹预热失败:', e);
         }
     }
 
@@ -682,16 +745,38 @@
         }
     }
 
-    function finalSceneRender() {
+    function finalSceneRender(options = {}) {
         if (typeof renderer === 'undefined' || !renderer) return;
+        const includeHdWorld = options.includeHdWorld !== false;
+        const includeViewmodels = options.includeViewmodels !== false;
+        const includeSimpleWorld = options.includeSimpleWorld === true;
         withWarmupCamera(() => {
             const finalGroup = new THREE.Group();
+            const simpleObjects = [];
             ALL_WEAPON_TYPES.forEach(type => {
                 try {
-                    const wm = window.makeWeaponModel ? window.makeWeaponModel(type, p1.mat) : null;
-                    if (wm) { wm.position.set(0, 0.5, 0); finalGroup.add(wm); }
-                    const vm = window.makeViewmodel ? window.makeViewmodel(type, p1.mat) : null;
-                    if (vm) { vm.position.set(0, 0.5, 0); finalGroup.add(vm); }
+                    if (includeHdWorld) {
+                        const wm = window.makeWeaponModel
+                            ? window.makeWeaponModel(type, p1.mat)
+                            : null;
+                        if (wm) { wm.position.set(0, 0.5, 0); finalGroup.add(wm); }
+                    }
+                    if (includeSimpleWorld) {
+                        const simple = window.makeWeaponModel
+                            ? window.makeWeaponModel(type, p1.mat, { useHd: false })
+                            : null;
+                        if (simple) {
+                            simple.position.set(0, 0.5, 0);
+                            finalGroup.add(simple);
+                            simpleObjects.push(simple);
+                        }
+                    }
+                    if (includeViewmodels) {
+                        const vm = window.makeViewmodel
+                            ? window.makeViewmodel(type, p1.mat)
+                            : null;
+                        if (vm) { vm.position.set(0, 0.5, 0); finalGroup.add(vm); }
+                    }
                 } catch (e) {}
             });
             scene.add(finalGroup);
@@ -702,6 +787,7 @@
                 forceGpuSync();
             } catch (e) {}
             scene.remove(finalGroup);
+            simpleObjects.forEach(disposeWarmupGeometry);
         });
         try {
             const prevAuto = renderer.shadowMap.autoUpdate;
@@ -731,7 +817,9 @@
         warmupMapOnly,
         warmupSingleViewmodel,
         warmupSingleWorldModel,
+        warmupSingleSimpleWorldModel,
         warmupEffectMaterials,
+        warmupTrajectoryPreview,
         warmupSmokeCloud,
         warmupFlashBurst,
         warmupExplosion,

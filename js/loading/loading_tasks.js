@@ -14,7 +14,15 @@
             return [];
         }
 
-        const isSurvival = (mode === 'survival');
+        const isLan = (mode === 'lan' || mode === 'lan-survival');
+        const isSurvival = (mode === 'survival' || mode === 'lan-survival');
+        const weaponRenderOptions = isLan
+            ? {
+                includeHdWorld: false,
+                includeViewmodels: true,
+                includeSimpleWorld: true,
+            }
+            : undefined;
 
         const ALL_WEAPON_TYPES = W.ALL_WEAPON_TYPES;
         const WEAPON_TYPES = isSurvival
@@ -50,18 +58,29 @@
         // ---- 武器模板 ----
         WEAPON_TYPES.forEach(type => {
             tasks.push({
-                name: '构建武器模板：' + (WEAPON_NAMES[type] || type),
+                name: (isLan ? '构建第一人称武器模板：' : '构建武器模板：')
+                    + (WEAPON_NAMES[type] || type),
                 weight: 3,
                 fn: () => {
-                    if (typeof _getWorldTemplate === 'function') _getWorldTemplate(type);
+                    if (!isLan && typeof _getWorldTemplate === 'function') {
+                        _getWorldTemplate(type);
+                    }
                     if (typeof _getViewTemplate  === 'function') _getViewTemplate(type);
                 },
             });
         });
 
         // ---- 纹理上传 / shader 编译 ----
-        tasks.push({ name: '上传全部纹理到 GPU', weight: 8, fn: () => W.forceUploadAllTextures() });
-        tasks.push({ name: '编译场景基础着色器', weight: 6, fn: () => W.compileSceneShaders() });
+        tasks.push({
+            name: isLan ? '上传局域网所需纹理到 GPU' : '上传全部纹理到 GPU',
+            weight: 8,
+            fn: () => W.forceUploadAllTextures(weaponRenderOptions),
+        });
+        tasks.push({
+            name: '编译场景基础着色器',
+            weight: 6,
+            fn: () => W.compileSceneShaders(weaponRenderOptions),
+        });
 
         // ---- 第一人称渲染 ----
         WEAPON_TYPES.forEach(type => {
@@ -75,9 +94,13 @@
         // ---- 第三人称渲染 ----
         WEAPON_TYPES.forEach(type => {
             tasks.push({
-                name: '渲染第三人称：' + (WEAPON_NAMES[type] || type),
+                name: (isLan ? '渲染远端简易枪：' : '渲染第三人称：')
+                    + (WEAPON_NAMES[type] || type),
                 weight: 3,
-                fn: () => W.warmupSingleWorldModel(type),
+                fn: () => {
+                    if (isLan) W.warmupSingleSimpleWorldModel(type);
+                    else W.warmupSingleWorldModel(type);
+                },
             });
         });
 
@@ -85,6 +108,7 @@
         tasks.push({ name: '预热特效材质', weight: 6, fn: () => W.warmupEffectMaterials() });
 
         if (!isSurvival) {
+            tasks.push({ name: '预热投掷轨迹', weight: 2, fn: () => W.warmupTrajectoryPreview() });
             tasks.push({ name: '预热烟雾云', weight: 3, fn: () => W.warmupSmokeCloud() });
             tasks.push({ name: '预热闪光爆发', weight: 2, fn: () => W.warmupFlashBurst() });
         }
@@ -106,7 +130,11 @@
 
         // ---- HUD / 最终渲染 ----
         tasks.push({ name: '预热 HUD 样式', weight: 2, fn: () => W.warmupHudDom() });
-        tasks.push({ name: '最终场景渲染', weight: 5, fn: () => W.finalSceneRender() });
+        tasks.push({
+            name: '最终场景渲染',
+            weight: 5,
+            fn: () => W.finalSceneRender(weaponRenderOptions),
+        });
 
         return tasks;
     }

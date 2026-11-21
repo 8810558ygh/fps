@@ -95,6 +95,32 @@ function spawnAmmoDrop(x, y, z) {
 }
 window.spawnAmmoDrop = spawnAmmoDrop;
 
+function maybeSpawnSurvivalAmmoDrop(x, y, z) {
+    if (typeof gameMode !== 'undefined' && gameMode === 'lan') return false;
+    if (typeof SurvivalState === 'undefined' || !SurvivalState?.active) return false;
+    if ((SurvivalState.wave || 0) <= 0) return false;
+    if (typeof getZombiesAliveCount !== 'function' || getZombiesAliveCount() !== 0) {
+        return false;
+    }
+    const queueLen = SurvivalState.waveQueue?.length || 0;
+    if (queueLen > 0) return false;
+
+    const globalWave = (SurvivalState.endlessLoop || 0)
+        * (SurvivalState.maps?.length || 3)
+        * (SurvivalState.maxWaves || 5)
+        + (SurvivalState.mapIndex || 0) * (SurvivalState.maxWaves || 5)
+        + SurvivalState.wave;
+    if (globalWave % 10 !== 3 && globalWave % 10 !== 8) return false;
+    if (typeof spawnAmmoDrop !== 'function') return false;
+
+    spawnAmmoDrop(x, y, z);
+    if (typeof feed === 'function' && typeof p1 !== 'undefined' && p1) {
+        feed(p1, '💛 精英波清空 · 弹药箱已掉落');
+    }
+    return true;
+}
+window.maybeSpawnSurvivalAmmoDrop = maybeSpawnSurvivalAmmoDrop;
+
 function despawnAmmoDrop() {
     if (_ammoDropMesh) _ammoDropMesh.visible = false;
     _ammoDrop = null;

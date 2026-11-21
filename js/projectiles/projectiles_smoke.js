@@ -92,9 +92,15 @@ function createSmokeCloud(pos, radius, verticalRadius, centerHeight, team) {
 //   serverId：客户端从广播里拿到的 id；房主 / 单机不传（自动分配）
 //   返回：创建的投掷物对象（供房主广播时取 id）
 // ============================================================
-function spawnSmokeProjectile(pos, vel, fuseMs, now, serverId, team) {
-    const id = (serverId != null) ? serverId : (++_smokeIdCounter);
+function spawnSmokeProjectile(pos, vel, fuseMs, now, serverId, team, waitForLanResult = false) {
+    const nextLocalId = ++_smokeIdCounter;
+    const id = (serverId != null)
+        ? serverId
+        : (gameMode === 'lan' && typeof LAN !== 'undefined' && LAN.selfId
+            ? `${LAN.selfId}:smoke:${nextLocalId}`
+            : nextLocalId);
     const isClientSide = _isOnlineNonHostSmoke();
+    const waitForResult = gameMode === 'lan' && !!waitForLanResult;
 
     const mesh = createThrownProjectileMesh('smoke');
     mesh.position.copy(pos);
@@ -120,6 +126,7 @@ function spawnSmokeProjectile(pos, vel, fuseMs, now, serverId, team) {
         body,
         _waitUntil: 0,
         _clientSide: isClientSide,
+        _waitForLanResult: waitForResult,
         // ★ 客户端插值目标（由 projectilesUpdate 写入）
         _targetX: 0, _targetY: 0, _targetZ: 0,
         _hasTarget: false,
@@ -177,9 +184,9 @@ function updateSmokes(dt, now) {
                 }
 
                 // ★ 客户端：不 pop，保留 mesh 进入 waiting，等房主广播
-                if (s._clientSide) {
+                if (s._clientSide || s._waitForLanResult) {
                     s.state = 'waiting';
-                    s._waitUntil = now + 5000;
+                    s._waitUntil = now + (s._waitForLanResult ? 8000 : 5000);
                     continue;
                 }
 
@@ -205,6 +212,14 @@ function updateSmokes(dt, now) {
                     && typeof NET_broadcast === 'function') {
                     NET_broadcast({
                         type: 'smokePop',
+                        id: s.id,
+                        team: s.team,
+                        px: s.pos.x, py: s.pos.y, pz: s.pos.z,
+                    });
+                }
+                if (typeof gameMode !== 'undefined' && gameMode === 'lan'
+                    && typeof LAN_broadcastFx === 'function') {
+                    LAN_broadcastFx('smokePop', {
                         id: s.id,
                         team: s.team,
                         px: s.pos.x, py: s.pos.y, pz: s.pos.z,
@@ -325,6 +340,10 @@ function handleRemoteSmokePop(data) {
     }
 
     if (target) {
+        if (target.body && typeof window.PHYSICS?.removeProjectileBody === 'function') {
+            window.PHYSICS.removeProjectileBody(target.body);
+            target.body = null;
+        }
         if (target.mesh) {
             scene.remove(target.mesh);
             target.mesh = null;
@@ -338,9 +357,11 @@ function handleRemoteSmokePop(data) {
         // ★ 修改：加上 pos.y
         cloud.position.y = pos.y + SMOKE.radius * 0.3;
         scene.add(cloud);
+        target.pos.copy(pos);
         target.cloudMesh = cloud;
         target.state = 'expanding';
         target.expandStart = now;
+        target._waitForLanResult = false;
     } else {
         // 没有 waiting 的 → 直接新建
         const team = data.team || 'blue';
@@ -360,6 +381,7 @@ function handleRemoteSmokePop(data) {
             cloudMesh: cloud, body: null,
             team,
             _waitUntil: 0, _clientSide: false,
+            _waitForLanResult: false,
             _targetX: 0, _targetY: 0, _targetZ: 0, _hasTarget: false,
         });
     }
